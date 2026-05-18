@@ -1,0 +1,15 @@
+# Files Cursor must not include in context or send to its model.
+# https://docs.cursor.com/context/ignore-files
+
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+.env.test
+.env.staging
+.env.keys
+
+*.pem
+*.key
+secrets.*.json

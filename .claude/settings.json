@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.local)",
+      "Read(./.env.*.local)",
+      "Read(./.env.production)",
+      "Read(./.env.development)",
+      "Read(./.env.test)",
+      "Read(./.env.staging)",
+      "Read(./.env.keys)",
+      "Edit(./.env)",
+      "Edit(./.env.local)",
+      "Edit(./.env.*.local)",
+      "Edit(./.env.production)",
+      "Edit(./.env.development)",
+      "Edit(./.env.test)",
+      "Edit(./.env.staging)",
+      "Edit(./.env.keys)",
+      "Write(./.env)",
+      "Write(./.env.local)",
+      "Write(./.env.*.local)",
+      "Write(./.env.production)",
+      "Write(./.env.development)",
+      "Write(./.env.test)",
+      "Write(./.env.staging)",
+      "Write(./.env.keys)",
+      "Bash(cat .env*)",
+      "Bash(type .env*)",
+      "Bash(Get-Content .env*)",
+      "Bash(gc .env*)",
+      "Bash(more .env*)",
+      "Bash(head .env*)",
+      "Bash(tail .env*)",
+      "Bash(less .env*)",
+      "Bash(printenv:*)"
+    ]
+  }
+}

@@ -1,9 +1,5 @@
+import "../../scripts/_load-env";
 import { neon } from "@neondatabase/serverless";
-import { config } from "dotenv";
-
-// Load in Next.js precedence order; first wins for each key.
-config({ path: ".env.local" });
-config({ path: ".env" });
 
 async function main() {
   const url = process.env.DATABASE_URL;

@@ -2,6 +2,10 @@
   "name": "inklings",
   "version": "0.0.1",
   "private": true,
+  "packageManager": "pnpm@11.0.9",
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -17,11 +21,19 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
-    "db:ping": "tsx lib/db/ping.ts"
+    "db:ping": "tsx lib/db/ping.ts",
+    "db:migrate:prod": "cross-env DRIZZLE_ENV=prod drizzle-kit migrate",
+    "seed:tracer:prod": "cross-env DRIZZLE_ENV=prod tsx scripts/seed-tracer.ts",
+    "seed:tracer": "tsx scripts/seed-tracer.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "esbuild"
+      "esbuild",
+      "sharp"
+    ],
+    "ignoredBuiltDependencies": [
+      "@vaadin/vaadin-usage-statistics",
+      "protobufjs"
     ]
   },
   "dependencies": {
@@ -29,11 +41,11 @@
     "@ai-sdk/openai": "^3.0.64",
     "@neondatabase/serverless": "^1.1.0",
     "@t3-oss/env-nextjs": "^0.13.11",
-    "@tanstack/react-query": "^5.100.10",
+    "@tanstack/react-query": "^5.100.11",
     "@tiptap/pm": "^3.23.4",
     "@tiptap/react": "^3.23.4",
     "@tiptap/starter-kit": "^3.23.4",
-    "ai": "^6.0.184",
+    "ai": "^6.0.185",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "deck.gl": "^9.3.2",
@@ -41,7 +53,7 @@
     "inngest": "^4.4.0",
     "iron-session": "^8.0.4",
     "lucide-react": "^1.16.0",
-    "motion": "^12.38.0",
+    "motion": "^12.39.0",
     "next": "16.2.6",
     "next-safe-action": "^8.5.2",
     "radix-ui": "^1.4.3",
@@ -62,10 +74,11 @@
     "@testing-library/dom": "^10.4.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
-    "@types/node": "^25.8.0",
+    "@types/node": "^25.9.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
+    "cross-env": "^10.1.0",
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
     "jsdom": "^29.1.1",

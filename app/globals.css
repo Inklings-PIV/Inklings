@@ -126,3 +126,67 @@
     background-size: 28px 28px;
   }
 }
+
+@layer utilities {
+  @keyframes inklings-float {
+    0%,
+    100% {
+      transform: translateY(0) rotate(-2deg);
+    }
+    50% {
+      transform: translateY(-14px) rotate(2deg);
+    }
+  }
+  @keyframes inklings-drift {
+    0%,
+    100% {
+      transform: translate(0, 0) rotate(0deg);
+    }
+    33% {
+      transform: translate(10px, -8px) rotate(8deg);
+    }
+    66% {
+      transform: translate(-8px, 6px) rotate(-6deg);
+    }
+  }
+  @keyframes inklings-bar-fill {
+    from {
+      width: 0;
+    }
+    to {
+      width: var(--bar-w, 50%);
+    }
+  }
+  @keyframes inklings-spin-slow {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes inklings-pulse-soft {
+    0%,
+    100% {
+      opacity: 0.55;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.95;
+      transform: scale(1.06);
+    }
+  }
+  .inklings-float {
+    animation: inklings-float 6s ease-in-out infinite;
+  }
+  .inklings-drift {
+    animation: inklings-drift 11s ease-in-out infinite;
+  }
+  .inklings-bar {
+    width: 0;
+    animation: inklings-bar-fill 1.3s cubic-bezier(0.18, 0.9, 0.3, 1) forwards;
+  }
+  .inklings-spin-slow {
+    animation: inklings-spin-slow 60s linear infinite;
+  }
+  .inklings-pulse {
+    animation: inklings-pulse-soft 4s ease-in-out infinite;
+  }
+}

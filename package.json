@@ -50,6 +50,7 @@
     "clsx": "^2.1.1",
     "deck.gl": "^9.3.2",
     "drizzle-orm": "^0.45.2",
+    "fast-xml-parser": "^5.8.0",
     "inngest": "^4.4.0",
     "iron-session": "^8.0.4",
     "lucide-react": "^1.16.0",

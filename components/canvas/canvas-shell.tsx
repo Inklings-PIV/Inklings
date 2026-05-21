@@ -4,16 +4,17 @@ import { Minus, Plus, RotateCcw } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { InkwellCanvas } from "./inkwell-canvas";
 
 export type CanvasDot = {
   id: string;
-  /** Normalised X in [-1, 1]; rendered as a percentage of canvas width. */
+  /** Normalised X in [-1, 1]; the canvas maps this to pixel space. */
   x: number;
-  /** Normalised Y in [-1, 1]; rendered as a percentage of canvas height. */
+  /** Normalised Y in [-1, 1]; the canvas maps this to pixel space. */
   y: number;
   title: string;
   subtitle: string;
-  /** Optional CSS colour. If omitted, dot uses neutral ink. */
+  /** Optional CSS colour for Colour mode. Unused by the WebGL renderer until #20. */
   color?: string;
 };
 
@@ -24,8 +25,6 @@ type CanvasShellProps = {
   dots?: CanvasDot[];
   colourMode?: boolean;
 };
-
-const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
 
 export function CanvasShell({
   toolbar,
@@ -60,34 +59,8 @@ export function CanvasShell({
             />
 
             {hasDots ? (
-              <div className="relative h-full">
-                {dots.map((dot) => {
-                  const left = clamp((dot.x + 1) * 50, 2, 98);
-                  const top = clamp((dot.y + 1) * 50, 2, 98);
-                  return (
-                    <div
-                      key={dot.id}
-                      className="group absolute -translate-x-1/2 -translate-y-1/2"
-                      style={{ left: `${left}%`, top: `${top}%` }}
-                    >
-                      <div
-                        className="size-3 rounded-full shadow-md ring-1 ring-background transition-transform duration-200 group-hover:scale-150"
-                        style={{ backgroundColor: dot.color ?? "var(--ink-deep)" }}
-                        title={`${dot.title} — ${dot.subtitle}`}
-                      />
-                      <div
-                        className={cn(
-                          "pointer-events-none absolute left-1/2 top-full mt-2 -translate-x-1/2 whitespace-nowrap",
-                          "rounded-sm border border-border bg-background/95 px-2 py-1 text-[11px]",
-                          "opacity-0 shadow-sm transition-opacity duration-150 group-hover:opacity-100",
-                        )}
-                      >
-                        <span className="font-serif text-ink-deep">{dot.title}</span>
-                        <span className="ml-1 text-muted-foreground">· {dot.subtitle}</span>
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="absolute inset-0">
+                <InkwellCanvas dots={dots} />
               </div>
             ) : (
               <div className="relative flex h-full items-center justify-center">

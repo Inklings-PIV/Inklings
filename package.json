@@ -25,7 +25,8 @@
     "db:migrate:prod": "cross-env DRIZZLE_ENV=prod drizzle-kit migrate",
     "seed:tracer:prod": "cross-env DRIZZLE_ENV=prod tsx scripts/seed-tracer.ts",
     "seed:tracer": "tsx scripts/seed-tracer.ts",
-    "ingest:book": "tsx scripts/ingest-book.ts"
+    "ingest:book": "tsx scripts/ingest-book.ts",
+    "recompute:layout": "tsx scripts/recompute-layout.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

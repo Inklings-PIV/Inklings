@@ -2,29 +2,25 @@
 
 import { useState } from "react";
 import { type CanvasDot, CanvasShell } from "@/components/canvas/canvas-shell";
+import { MethodologyDialog } from "@/components/inkwell/methodology-dialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 
-type CanvasMode = "classical" | "modern" | "colour";
-type ColourLayout = "over-classical" | "over-modern" | "by-hue";
+type Layout = "classical" | "modern" | "by-hue";
 type HueSource = "algorithmic" | "llm" | "crowd" | "blended";
 
-const modeBlurb: Record<CanvasMode, string> = {
-  classical: "shape view · classical stylometry",
-  modern: "shape view · modern embeddings",
-  colour: "hue view · ink on the canvas",
+const layoutBlurb: Record<Layout, string> = {
+  classical: "shape via classical stylometry",
+  modern: "shape via modern embeddings",
+  "by-hue": "clustered by hue",
 };
 
-const layoutLabel: Record<ColourLayout, string> = {
-  "over-classical": "over Classical",
-  "over-modern": "over Modern",
-  "by-hue": "by Hue",
-};
-
-const sourceLabel: Record<HueSource, string> = {
-  algorithmic: "Algorithmic",
-  llm: "LLM",
-  crowd: "Crowd",
-  blended: "Blended",
+// Small visible nudge per source so toggling the source toggle visibly
+// changes dot hues until real colour data (#24-#27) lands.
+const sourceHueOffset: Record<HueSource, number> = {
+  algorithmic: 0,
+  llm: 35,
+  crowd: 70,
+  blended: 15,
 };
 
 export type Blot = {
@@ -38,27 +34,12 @@ export type Blot = {
   };
 };
 
-function resolveLayoutKey(
-  mode: CanvasMode,
-  layout: ColourLayout,
-): "classical" | "modern" | "by-hue" {
-  if (mode === "classical") return "classical";
-  if (mode === "modern") return "modern";
-  if (layout === "over-classical") return "classical";
-  if (layout === "over-modern") return "modern";
-  return "by-hue";
-}
-
 export function InkwellView({ blots }: { blots: Blot[] }) {
-  const [mode, setMode] = useState<CanvasMode>("classical");
-  const [layout, setLayout] = useState<ColourLayout>("over-classical");
+  const [layout, setLayout] = useState<Layout>("classical");
   const [source, setSource] = useState<HueSource>("blended");
 
-  const isColour = mode === "colour";
-  const layoutKey = resolveLayoutKey(mode, layout);
-
   const dots: CanvasDot[] = blots.flatMap((b) => {
-    const coord = b.layouts[layoutKey];
+    const coord = b.layouts[layout];
     if (!coord) return [];
     return [
       {
@@ -67,72 +48,61 @@ export function InkwellView({ blots }: { blots: Blot[] }) {
         y: coord.y,
         title: b.title,
         subtitle: b.authorName,
+        color: hueFor(b.bookId, source),
       },
     ];
   });
 
-  const emptyCaption = isColour
-    ? `Every blot wears its hue — ${sourceLabel[source].toLowerCase()} ink, laid out ${layoutLabel[layout]}.`
-    : "The Inkwell will hold every blot here — authors arranged by the shape of their writing. Pan and zoom to read names; click a blot to open it.";
+  const caption =
+    "The Inkwell awaits — once books are ingested, blots will appear here. Pan, zoom, and hover to read.";
 
   return (
     <CanvasShell
-      colourMode={isColour}
-      caption={emptyCaption}
+      caption={caption}
       dots={dots}
       toolbar={
         <>
           <div className="flex flex-col">
             <span className="font-serif text-lg tracking-tight text-ink-deep">The Inkwell</span>
             <span className="text-xs text-muted-foreground">
-              {modeBlurb[mode]} · {blots.length} {blots.length === 1 ? "blot" : "blots"}
+              {layoutBlurb[layout]} · {blots.length} {blots.length === 1 ? "blot" : "blots"}
             </span>
           </div>
-          <div className="flex flex-col items-end gap-2">
-            <ToggleGroup
-              type="single"
-              value={mode}
-              onValueChange={(v) => v && setMode(v as CanvasMode)}
-              variant="outline"
-              size="sm"
-            >
-              <ToggleGroupItem value="classical">Classical</ToggleGroupItem>
-              <ToggleGroupItem value="modern">Modern</ToggleGroupItem>
-              <ToggleGroupItem value="colour">Colour</ToggleGroupItem>
-            </ToggleGroup>
-            {isColour && (
-              <div className="flex flex-wrap items-center justify-end gap-2">
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                  layout
-                </span>
-                <ToggleGroup
-                  type="single"
-                  value={layout}
-                  onValueChange={(v) => v && setLayout(v as ColourLayout)}
-                  variant="outline"
-                  size="sm"
-                >
-                  <ToggleGroupItem value="over-classical">Over Classical</ToggleGroupItem>
-                  <ToggleGroupItem value="over-modern">Over Modern</ToggleGroupItem>
-                  <ToggleGroupItem value="by-hue">By Hue</ToggleGroupItem>
-                </ToggleGroup>
-                <span className="ml-2 text-[10px] uppercase tracking-wider text-muted-foreground">
-                  source
-                </span>
-                <ToggleGroup
-                  type="single"
-                  value={source}
-                  onValueChange={(v) => v && setSource(v as HueSource)}
-                  variant="outline"
-                  size="sm"
-                >
-                  <ToggleGroupItem value="algorithmic">Algo</ToggleGroupItem>
-                  <ToggleGroupItem value="llm">LLM</ToggleGroupItem>
-                  <ToggleGroupItem value="crowd">Crowd</ToggleGroupItem>
-                  <ToggleGroupItem value="blended">Blended</ToggleGroupItem>
-                </ToggleGroup>
-              </div>
-            )}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                layout
+              </span>
+              <ToggleGroup
+                type="single"
+                value={layout}
+                onValueChange={(v) => v && setLayout(v as Layout)}
+                variant="outline"
+                size="sm"
+              >
+                <ToggleGroupItem value="classical">Classical</ToggleGroupItem>
+                <ToggleGroupItem value="modern">Modern</ToggleGroupItem>
+                <ToggleGroupItem value="by-hue">By Hue</ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                source
+              </span>
+              <ToggleGroup
+                type="single"
+                value={source}
+                onValueChange={(v) => v && setSource(v as HueSource)}
+                variant="outline"
+                size="sm"
+              >
+                <ToggleGroupItem value="algorithmic">Algo</ToggleGroupItem>
+                <ToggleGroupItem value="llm">LLM</ToggleGroupItem>
+                <ToggleGroupItem value="crowd">Crowd</ToggleGroupItem>
+                <ToggleGroupItem value="blended">Blended</ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+            <MethodologyDialog />
           </div>
         </>
       }
@@ -146,22 +116,6 @@ export function InkwellView({ blots }: { blots: Blot[] }) {
               Click a blot on the canvas to read its hand.
             </p>
           </div>
-          {isColour && (
-            <div className="grid grid-cols-2 gap-2">
-              {(["algorithmic", "llm", "crowd", "blended"] as const).map((s) => (
-                <div
-                  key={s}
-                  className="flex items-center gap-2 rounded-md border border-border bg-card p-2"
-                >
-                  <div className="size-6 rounded-full border border-border bg-muted" />
-                  <div className="flex flex-col">
-                    <span className="text-xs font-medium">{sourceLabel[s]}</span>
-                    <span className="text-[10px] text-muted-foreground">—</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
           <div className="mt-auto rounded-md border border-dashed border-border p-4 text-xs text-muted-foreground">
             Neighbours · stylometric features · open in Quill / Blots — will appear here.
           </div>
@@ -169,4 +123,29 @@ export function InkwellView({ blots }: { blots: Blot[] }) {
       }
     />
   );
+}
+
+// ---------------------------------------------------------------------------
+// Placeholder colouring until real hue data lands (#24 algorithmic, #25 LLM,
+// #26 crowd, #27 blended). Hashes the bookId to a stable hue and shifts by
+// the selected source so toggling the source toggle is visibly meaningful.
+// ---------------------------------------------------------------------------
+
+function hueFor(bookId: string, source: HueSource): [number, number, number] {
+  let h = 0;
+  for (let i = 0; i < bookId.length; i++) {
+    h = (h * 31 + bookId.charCodeAt(i)) | 0;
+  }
+  const baseHue = ((h % 360) + 360) % 360;
+  const hue = (baseHue + sourceHueOffset[source]) % 360;
+  return hslToRgb(hue, 60, 55);
+}
+
+function hslToRgb(h: number, s: number, l: number): [number, number, number] {
+  const sat = s / 100;
+  const lit = l / 100;
+  const k = (n: number) => (n + h / 30) % 12;
+  const a = sat * Math.min(lit, 1 - lit);
+  const f = (n: number) => lit - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+  return [Math.round(255 * f(0)), Math.round(255 * f(8)), Math.round(255 * f(4))];
 }

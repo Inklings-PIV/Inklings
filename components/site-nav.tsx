@@ -1,8 +1,10 @@
 "use client";
 
+import { Menu, X } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
 export const GITHUB_URL = "https://github.com/Inklings-PIV/Inklings";
@@ -17,10 +19,28 @@ const TABS = [
 export function SiteNav() {
   const pathname = usePathname();
   const onHome = pathname === "/";
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  // Close the mobile menu when the route changes. The body doesn't read
+  // pathname; it's the trigger.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname is the trigger
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [pathname]);
+
+  // Close on Escape.
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMobileOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mobileOpen]);
 
   return (
     <header className="sticky top-0 z-50 border-b border-border bg-background/70 backdrop-blur-md">
-      <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-6 px-6 py-3">
+      <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-4 px-4 py-3 sm:gap-6 sm:px-6">
         <Brand />
         <nav className="flex items-center gap-1">
           <ul className="hidden items-center gap-1 md:flex">
@@ -32,8 +52,44 @@ export function SiteNav() {
           </ul>
           <GithubLink />
           {onHome && <CtaButton href="/inkwell" label="Enter the Inkwell" />}
+          <button
+            type="button"
+            className="ml-1 inline-flex size-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground md:hidden"
+            onClick={() => setMobileOpen((v) => !v)}
+            aria-label={mobileOpen ? "Close menu" : "Open menu"}
+            aria-expanded={mobileOpen}
+            aria-controls="mobile-nav"
+          >
+            {mobileOpen ? <X size={18} /> : <Menu size={18} />}
+          </button>
         </nav>
       </div>
+
+      {mobileOpen && (
+        <div
+          id="mobile-nav"
+          className="border-t border-border bg-background/95 backdrop-blur-md md:hidden"
+        >
+          <ul className="mx-auto flex max-w-[1400px] flex-col gap-1 px-4 py-3 sm:px-6">
+            {TABS.map((t) => (
+              <li key={t.href}>
+                <Link
+                  href={t.href}
+                  aria-current={isActive(pathname, t.href) ? "page" : undefined}
+                  className={cn(
+                    "block rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                    isActive(pathname, t.href)
+                      ? "bg-accent text-accent-foreground"
+                      : "text-ink-deep hover:bg-accent/60",
+                  )}
+                >
+                  The {t.label}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </header>
   );
 }

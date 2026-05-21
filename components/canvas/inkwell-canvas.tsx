@@ -7,9 +7,9 @@ import type { CanvasDot } from "./canvas-shell";
 // Tracer-era layouts live in [-1, 1]; scale to deck.gl pixel-ish units.
 const SCALE = 200;
 
-// Default ink-deep colour as RGB (deck.gl can't read CSS variables).
-const INK_DEEP_RGB: [number, number, number] = [40, 50, 80];
-const PAPER_RGB: [number, number, number] = [248, 245, 235];
+// Default colour when a dot has no `color` set.
+const DEFAULT_RGB: [number, number, number] = [40, 50, 80];
+const STROKE_RGB: [number, number, number] = [248, 245, 235];
 
 const INITIAL_VIEW_STATE: OrthographicViewState = {
   target: [0, 0, 0],
@@ -37,8 +37,11 @@ export function InkwellCanvas({ dots }: Props) {
     lineWidthMinPixels: 1,
     getPosition: (d) => [d.x * SCALE, d.y * SCALE, 0],
     getRadius: 8,
-    getFillColor: INK_DEEP_RGB,
-    getLineColor: PAPER_RGB,
+    getFillColor: (d) => d.color ?? DEFAULT_RGB,
+    getLineColor: STROKE_RGB,
+    updateTriggers: {
+      getFillColor: dots.map((d) => d.color),
+    },
   });
 
   return (

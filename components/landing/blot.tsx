@@ -42,7 +42,8 @@ export function Blot({
       width={size}
       height={size}
       aria-hidden="true"
-      className={cn("inline-block", className)}
+      overflow="visible"
+      className={cn("inline-block overflow-visible", className)}
       style={{ transform: `rotate(${rotate}deg)`, opacity }}
     >
       {splatter &&

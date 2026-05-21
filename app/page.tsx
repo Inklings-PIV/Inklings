@@ -10,8 +10,6 @@ import { QuillMock } from "@/components/landing/quill-mock";
 import { Abstract, CorpusStats, MethodPipeline, References } from "@/components/landing/research";
 import { ArrowIcon, GITHUB_URL, GithubIcon } from "@/components/site-nav";
 
-const TEAM = ["Alperen Adatepe", "Jovana Dinic", "Nayun Gao", "Noel Huibers", "Yannick Martin"];
-
 const BOOKS = [
   { title: "Mrs Dalloway", author: "Virginia Woolf", color: "oklch(0.72 0.12 200)" },
   { title: "The Sun Also Rises", author: "Ernest Hemingway", color: "oklch(0.66 0.17 240)" },
@@ -42,7 +40,6 @@ export default function LandingPage() {
       <StylometricFingerprint />
       <CorpusStats />
       <References />
-      <Team />
       <Footer />
     </div>
   );
@@ -75,12 +72,8 @@ function Hero() {
 
       <div className="mx-auto grid max-w-[1400px] items-center gap-10 px-6 py-20 md:py-28 lg:grid-cols-[1.2fr_1fr]">
         <div>
-          <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-border bg-card/70 px-3 py-1 text-[11px] tracking-wide text-muted-foreground uppercase backdrop-blur">
-            <span className="size-1.5 rounded-full bg-ink-bleed inklings-pulse" />
-            LMU SS 26 · Praktikum Information Visualization
-          </div>
           <h1 className="font-serif text-[14vw] leading-[1.05] tracking-tight text-ink-deep sm:text-[110px] md:text-[140px]">
-            <span className="inline-block bg-gradient-to-br from-ink-deep via-ink-bleed to-purple-600 bg-clip-text pb-2 text-transparent">
+            <span className="inline-block bg-gradient-to-br from-ink-deep via-ink-bleed to-purple-600 bg-clip-text pb-[0.2em] text-transparent">
               Inklings
             </span>
           </h1>
@@ -646,123 +639,58 @@ function StylometricFingerprint() {
 }
 
 /* ------------------------------------------------------------------ */
-/* Team                                                                */
-/* ------------------------------------------------------------------ */
-function Team() {
-  const hues = [30, 90, 160, 240, 300];
-  return (
-    <section className="border-b border-border">
-      <div className="mx-auto max-w-[1400px] px-6 py-20 md:py-28">
-        <SectionHeading eyebrow="The hands">Five readers. One inkwell.</SectionHeading>
-        <p className="mt-4 max-w-2xl text-base text-muted-foreground">
-          Built for the Information Visualization practical at LMU Munich, Summer Semester 2026.
-        </p>
-        <div className="mt-12 grid gap-6 sm:grid-cols-2 lg:grid-cols-5">
-          {TEAM.map((name, i) => (
-            <div
-              key={name}
-              className="group flex flex-col items-center rounded-xl border border-border bg-card/70 p-6 text-center transition-shadow hover:shadow-[0_24px_60px_-30px_rgba(40,30,80,0.35)]"
-            >
-              <Blot
-                color={`oklch(0.62 0.18 ${hues[i]})`}
-                size={72}
-                shape={i % 4}
-                className="transition-transform group-hover:scale-110"
-              />
-              <div className="mt-3 font-serif text-base text-ink-deep">{name}</div>
-              <div className="text-[11px] text-muted-foreground">student · LMU</div>
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ------------------------------------------------------------------ */
 /* Footer                                                              */
 /* ------------------------------------------------------------------ */
 function Footer() {
   return (
-    <footer className="relative overflow-hidden">
-      <div className="pointer-events-none absolute -bottom-24 -right-24 -z-10 opacity-40">
+    <footer className="relative overflow-hidden border-t border-border">
+      <div className="pointer-events-none absolute -right-24 -bottom-24 -z-10 opacity-40">
         <Blot color="oklch(0.55 0.2 290)" size={420} shape={1} />
       </div>
-      <div className="mx-auto grid max-w-[1400px] gap-10 px-6 py-20 md:grid-cols-[1.4fr_1fr_1fr]">
-        <div>
-          <div className="flex items-center gap-3">
+      <div className="mx-auto max-w-[1400px] px-6 py-8">
+        <div className="flex flex-wrap items-center gap-x-8 gap-y-4">
+          <div className="flex items-center gap-2.5">
             <Image
               src="/inkling-mascot-no-background.png"
               alt=""
-              width={48}
-              height={48}
+              width={36}
+              height={36}
               className="inklings-float"
             />
-            <div>
-              <div className="font-serif text-2xl text-ink-deep">Inklings</div>
-              <div className="text-xs text-muted-foreground">authors in shape &amp; hue</div>
-            </div>
+            <div className="font-serif text-xl text-ink-deep">Inklings</div>
           </div>
-          <p className="mt-4 max-w-md text-sm text-muted-foreground">
-            A stylometric atlas built for the LMU Praktikum Information Visualization, SS 26.
-            Translating writing style into colour, shape, and play.
-          </p>
+
+          <nav className="flex flex-wrap items-center gap-x-5 text-sm">
+            <Link href="/inkwell" className="text-ink-deep hover:text-ink-bleed">
+              The Inkwell
+            </Link>
+            <Link href="/blots" className="text-ink-deep hover:text-ink-bleed">
+              The Blots
+            </Link>
+            <Link href="/game" className="text-ink-deep hover:text-ink-bleed">
+              The Blotting Game
+            </Link>
+            <Link href="/quill" className="text-ink-deep hover:text-ink-bleed">
+              The Quill
+            </Link>
+          </nav>
+
+          <a
+            href={GITHUB_URL}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="inline-flex items-center gap-1.5 text-sm text-ink-deep hover:text-ink-bleed md:ml-auto"
+          >
+            <GithubIcon /> Inklings-PIV/Inklings
+          </a>
         </div>
 
-        <div>
-          <div className="text-[11px] tracking-widest text-muted-foreground uppercase">
-            surfaces
-          </div>
-          <ul className="mt-3 space-y-1.5 text-sm">
-            <li>
-              <Link href="/inkwell" className="text-ink-deep hover:text-ink-bleed">
-                The Inkwell
-              </Link>
-            </li>
-            <li>
-              <Link href="/blots" className="text-ink-deep hover:text-ink-bleed">
-                The Blots
-              </Link>
-            </li>
-            <li>
-              <Link href="/game" className="text-ink-deep hover:text-ink-bleed">
-                The Blotting Game
-              </Link>
-            </li>
-            <li>
-              <Link href="/quill" className="text-ink-deep hover:text-ink-bleed">
-                The Quill
-              </Link>
-            </li>
-          </ul>
-        </div>
-
-        <div>
-          <div className="text-[11px] tracking-widest text-muted-foreground uppercase">project</div>
-          <ul className="mt-3 space-y-1.5 text-sm">
-            <li>
-              <a
-                href={GITHUB_URL}
-                target="_blank"
-                rel="noreferrer noopener"
-                className="inline-flex items-center gap-2 text-ink-deep hover:text-ink-bleed"
-              >
-                <GithubIcon /> Inklings-PIV/Inklings
-              </a>
-            </li>
-            <li className="text-muted-foreground">LMU München · SS 26</li>
-            <li className="text-muted-foreground">Praktikum Information Visualization</li>
-            <li className="text-muted-foreground">Next.js · React 19 · Tailwind v4</li>
-          </ul>
-        </div>
-      </div>
-
-      <div className="border-t border-border">
-        <div className="mx-auto flex max-w-[1400px] flex-col items-center justify-between gap-3 px-6 py-6 text-[11px] text-muted-foreground sm:flex-row">
+        <div className="mt-4 flex flex-wrap items-baseline justify-between gap-x-6 gap-y-1 text-[11px] text-muted-foreground">
           <div>
-            © {new Date().getFullYear()} Inklings · Adatepe · Dinic · Gao · Huibers · Martin
+            © {new Date().getFullYear()} Inklings · Adatepe · Dinic · Gao · Huibers · Martin · A
+            stylometric atlas translating writing style into colour, shape, and play.
           </div>
-          <div className="font-serif italic">What color is Shakespeare?</div>
+          <div className="shrink-0 font-serif italic">What color is Shakespeare?</div>
         </div>
       </div>
     </footer>

@@ -16,9 +16,9 @@ export function Abstract() {
               Stylometric atlases for human readers.
             </h2>
             <div className="mt-6 grid grid-cols-2 gap-4 text-xs text-muted-foreground">
-              <Meta label="Course" value="WP15 PVI" />
-              <Meta label="Term" value="LMU · SS 26" />
-              <Meta label="Type" value="Praktikum" />
+              <Meta label="Lens" value="Style → colour" />
+              <Meta label="Source" value="Public domain" />
+              <Meta label="Signals" value="Algo · LLM · Crowd" />
               <Meta label="Status" value="In progress" />
             </div>
           </div>

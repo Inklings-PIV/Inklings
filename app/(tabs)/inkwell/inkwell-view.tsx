@@ -4,23 +4,14 @@ import { useState } from "react";
 import { type CanvasDot, CanvasShell } from "@/components/canvas/canvas-shell";
 import { MethodologyDialog } from "@/components/inkwell/methodology-dialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { type HueSource, hueFor } from "@/lib/colour/placeholder";
 
 type Layout = "classical" | "modern" | "by-hue";
-type HueSource = "algorithmic" | "llm" | "crowd" | "blended";
 
 const layoutBlurb: Record<Layout, string> = {
   classical: "shape via classical stylometry",
   modern: "shape via modern embeddings",
   "by-hue": "clustered by hue",
-};
-
-// Small visible nudge per source so toggling the source toggle visibly
-// changes dot hues until real colour data (#24-#27) lands.
-const sourceHueOffset: Record<HueSource, number> = {
-  algorithmic: 0,
-  llm: 35,
-  crowd: 70,
-  blended: 15,
 };
 
 export type Blot = {
@@ -48,7 +39,7 @@ export function InkwellView({ blots }: { blots: Blot[] }) {
         y: coord.y,
         title: b.title,
         subtitle: b.authorName,
-        color: hueFor(b.bookId, source),
+        color: hueFor(b.bookId, source).rgb,
       },
     ];
   });
@@ -123,29 +114,4 @@ export function InkwellView({ blots }: { blots: Blot[] }) {
       }
     />
   );
-}
-
-// ---------------------------------------------------------------------------
-// Placeholder colouring until real hue data lands (#24 algorithmic, #25 LLM,
-// #26 crowd, #27 blended). Hashes the bookId to a stable hue and shifts by
-// the selected source so toggling the source toggle is visibly meaningful.
-// ---------------------------------------------------------------------------
-
-function hueFor(bookId: string, source: HueSource): [number, number, number] {
-  let h = 0;
-  for (let i = 0; i < bookId.length; i++) {
-    h = (h * 31 + bookId.charCodeAt(i)) | 0;
-  }
-  const baseHue = ((h % 360) + 360) % 360;
-  const hue = (baseHue + sourceHueOffset[source]) % 360;
-  return hslToRgb(hue, 60, 55);
-}
-
-function hslToRgb(h: number, s: number, l: number): [number, number, number] {
-  const sat = s / 100;
-  const lit = l / 100;
-  const k = (n: number) => (n + h / 30) % 12;
-  const a = sat * Math.min(lit, 1 - lit);
-  const f = (n: number) => lit - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
-  return [Math.round(255 * f(0)), Math.round(255 * f(8)), Math.round(255 * f(4))];
 }

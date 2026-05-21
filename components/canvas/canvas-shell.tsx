@@ -36,7 +36,7 @@ export function CanvasShell({
 }: CanvasShellProps) {
   const hasDots = dots.length > 0;
   return (
-    <div className="flex h-[calc(100dvh-57px)] flex-col">
+    <div className="flex flex-1 flex-col">
       <div className="flex items-start justify-between gap-4 border-b border-border bg-background/60 px-6 py-3 backdrop-blur">
         {toolbar}
       </div>

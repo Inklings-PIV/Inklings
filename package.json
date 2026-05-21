@@ -27,7 +27,8 @@
     "seed:tracer": "tsx scripts/seed-tracer.ts",
     "ingest:book": "tsx scripts/ingest-book.ts",
     "recompute:layout": "tsx scripts/recompute-layout.ts",
-    "seed:corpus": "tsx scripts/seed-corpus.ts"
+    "seed:corpus": "tsx scripts/seed-corpus.ts",
+    "seed:all": "tsx scripts/seed-all.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

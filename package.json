@@ -24,7 +24,8 @@
     "db:ping": "tsx lib/db/ping.ts",
     "db:migrate:prod": "cross-env DRIZZLE_ENV=prod drizzle-kit migrate",
     "seed:tracer:prod": "cross-env DRIZZLE_ENV=prod tsx scripts/seed-tracer.ts",
-    "seed:tracer": "tsx scripts/seed-tracer.ts"
+    "seed:tracer": "tsx scripts/seed-tracer.ts",
+    "ingest:book": "tsx scripts/ingest-book.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

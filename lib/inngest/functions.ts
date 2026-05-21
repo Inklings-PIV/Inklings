@@ -1,4 +1,5 @@
 import { inngest } from "@/lib/inngest/client";
+import { ingestBook } from "@/lib/inngest/ingest-book";
 
 export const ping = inngest.createFunction(
   {
@@ -13,4 +14,4 @@ export const ping = inngest.createFunction(
   },
 );
 
-export const functions = [ping];
+export const functions = [ping, ingestBook];

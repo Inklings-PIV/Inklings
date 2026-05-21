@@ -4,6 +4,7 @@ import { getDb, schema } from "@/lib/db";
 import { fetchBookMeta } from "@/lib/ingestion/gutenberg-meta";
 import { fetchBookText } from "@/lib/ingestion/gutenberg-text";
 import { inngest } from "@/lib/inngest/client";
+import { extractClassical } from "@/lib/stylometry/classical";
 
 const PayloadSchema = z.object({
   gutenbergId: z.number().int().positive(),
@@ -87,10 +88,7 @@ export const ingestBook = inngest.createFunction(
       return { authorId: authorRow.id, bookId: bookRow.id };
     });
 
-    const classical = await step.run("extract-classical", () => {
-      // TODO(#13): replace with extractClassical(text) from lib/stylometry/classical.ts.
-      return stubClassicalFeatures(text);
-    });
+    const classical = await step.run("extract-classical", () => extractClassical(text));
 
     const embedding = await step.run("embed-text", () => {
       // TODO(#14): replace with embedText(text) from lib/stylometry/embed.ts.
@@ -140,25 +138,4 @@ export function slugify(s: string): string {
 
 export function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
-}
-
-/**
- * Cheap, deterministic placeholder until #13 replaces this with real
- * wink-nlp features. Just enough variance across books that #15's UMAP
- * produces non-degenerate coordinates.
- */
-export function stubClassicalFeatures(text: string) {
-  const sentences = text.split(/[.!?]+/).filter((s) => s.trim().length > 0);
-  const words = text.split(/\s+/).filter(Boolean);
-  const meanSentenceLength = sentences.length > 0 ? words.length / sentences.length : 0;
-  const uniqueWords = new Set(words.map((w) => w.toLowerCase()));
-  const typeTokenRatio = words.length > 0 ? uniqueWords.size / words.length : 0;
-  return {
-    stub: true,
-    wordCount: words.length,
-    sentenceCount: sentences.length,
-    meanSentenceLength,
-    typeTokenRatio,
-    note: "Replace with wink-nlp features in #13",
-  };
 }

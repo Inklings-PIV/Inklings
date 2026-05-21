@@ -15,6 +15,8 @@ export const ingestBook = inngest.createFunction(
     id: "ingest-book",
     triggers: [{ event: "corpus/book.ingest" }],
     retries: 3,
+    // Cap parallel fetches so we don't hammer Project Gutenberg.
+    concurrency: { limit: 2, key: "ingest-book" },
   },
   async ({ event, step }) => {
     const { gutenbergId } = PayloadSchema.parse(event.data);

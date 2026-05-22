@@ -1,10 +1,28 @@
 "use client";
 
+import { LinearInterpolator, type OrthographicViewState } from "deck.gl";
 import { Minus, Plus, RotateCcw } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { InkwellCanvas } from "./inkwell-canvas";
+import {
+  INITIAL_VIEW_STATE,
+  InkwellCanvas,
+  MAX_ZOOM,
+  MIN_ZOOM,
+  scalarZoom,
+} from "./inkwell-canvas";
+
+const ZOOM_STEP = 0.7;
+
+// Animated zoom for button presses so the snap doesn't feel poppy next to the
+// inertial trackpad pinch.
+const BUTTON_TRANSITION = {
+  transitionDuration: 220,
+  transitionInterpolator: new LinearInterpolator(["zoom", "target"]),
+};
+
+const clampZoom = (z: number) => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, z));
 
 export type CanvasDot = {
   id: string;
@@ -34,6 +52,30 @@ export function CanvasShell({
   onSelectDot,
 }: CanvasShellProps) {
   const hasDots = dots.length > 0;
+  const [viewState, setViewState] = useState<OrthographicViewState>(INITIAL_VIEW_STATE);
+  const zoom = scalarZoom(viewState.zoom);
+
+  // Controller updates (pan/pinch/wheel) — strip any transition leftovers and
+  // re-impose zoom bounds, so button-driven snaps later don't fight stale state.
+  const handleControllerChange = (vs: OrthographicViewState) =>
+    setViewState({
+      target: vs.target ?? [0, 0, 0],
+      zoom: clampZoom(scalarZoom(vs.zoom)),
+      minZoom: MIN_ZOOM,
+      maxZoom: MAX_ZOOM,
+    });
+
+  const nudgeZoom = (delta: number) =>
+    setViewState((vs) => ({
+      target: vs.target ?? [0, 0, 0],
+      zoom: clampZoom(scalarZoom(vs.zoom) + delta),
+      minZoom: MIN_ZOOM,
+      maxZoom: MAX_ZOOM,
+      ...BUTTON_TRANSITION,
+    }));
+
+  const resetView = () => setViewState({ ...INITIAL_VIEW_STATE, ...BUTTON_TRANSITION });
+
   return (
     <div className="flex flex-1 flex-col">
       <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border bg-background/60 px-4 py-3 backdrop-blur sm:gap-4 sm:px-6">
@@ -55,7 +97,12 @@ export function CanvasShell({
 
             {hasDots ? (
               <div className="absolute inset-0">
-                <InkwellCanvas dots={dots} onSelect={onSelectDot} />
+                <InkwellCanvas
+                  dots={dots}
+                  viewState={viewState}
+                  onViewStateChange={handleControllerChange}
+                  onSelect={onSelectDot}
+                />
               </div>
             ) : (
               <div className="relative flex h-full items-center justify-center px-4">
@@ -67,13 +114,31 @@ export function CanvasShell({
           </div>
 
           <div className="absolute bottom-6 left-6 flex flex-col gap-1 rounded-md border border-border bg-card/80 p-1 shadow-sm backdrop-blur sm:bottom-8 sm:left-8">
-            <Button size="icon-sm" variant="ghost" aria-label="Zoom in" disabled>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label="Zoom in"
+              onClick={() => nudgeZoom(ZOOM_STEP)}
+              disabled={!hasDots || zoom >= MAX_ZOOM - 0.01}
+            >
               <Plus />
             </Button>
-            <Button size="icon-sm" variant="ghost" aria-label="Zoom out" disabled>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label="Zoom out"
+              onClick={() => nudgeZoom(-ZOOM_STEP)}
+              disabled={!hasDots || zoom <= MIN_ZOOM + 0.01}
+            >
               <Minus />
             </Button>
-            <Button size="icon-sm" variant="ghost" aria-label="Reset view" disabled>
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label="Reset view"
+              onClick={resetView}
+              disabled={!hasDots}
+            >
               <RotateCcw />
             </Button>
           </div>

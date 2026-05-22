@@ -1,7 +1,12 @@
 "use client";
 
-import { DeckGL, IconLayer, OrthographicView, type OrthographicViewState } from "deck.gl";
-import { useState } from "react";
+import {
+  DeckGL,
+  IconLayer,
+  OrthographicView,
+  type OrthographicViewState,
+  TextLayer,
+} from "deck.gl";
 import { BLOT_SHAPES, shapeForId } from "@/lib/canvas/blot-shapes";
 import type { CanvasDot } from "./canvas-shell";
 
@@ -10,12 +15,42 @@ const SCALE = 200;
 
 const DEFAULT_RGB: [number, number, number] = [40, 50, 80];
 
-const INITIAL_VIEW_STATE: OrthographicViewState = {
+export const MIN_ZOOM = -3;
+export const MAX_ZOOM = 8;
+
+export const INITIAL_VIEW_STATE: OrthographicViewState = {
   target: [0, 0, 0],
   zoom: 1,
-  minZoom: -3,
-  maxZoom: 8,
+  minZoom: MIN_ZOOM,
+  maxZoom: MAX_ZOOM,
 };
+
+/** Unwraps OrthographicView's `zoom` (number | legacy 2-tuple) to a scalar. */
+export function scalarZoom(zoom: OrthographicViewState["zoom"]): number {
+  if (zoom == null) return 1;
+  return Array.isArray(zoom) ? (zoom[0] ?? 1) : zoom;
+}
+
+// Hermite curve — drives the inky cross-fades between zoom tiers without the
+// hard pop a step function would give.
+function smoothstep(edge0: number, edge1: number, x: number) {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+// Three zoom tiers (#21):
+//   Far   (zoom ≲ -0.3) — blots swell + go translucent ⇒ they bleed into a cloud
+//   Mid   (zoom ≈ 0 … 1.5) — individual blots, hover for the name
+//   Close (zoom ≳ 3) — labels fade in next to each blot
+function zoomDriven(zoom: number) {
+  const farness = 1 - smoothstep(-1.5, -0.3, zoom);
+  const closeness = smoothstep(1.5, 3.0, zoom);
+  return {
+    blotSize: 52 + farness * 28, // 52 → 80 px
+    blotOpacity: 1 - farness * 0.45, // 1 → 0.55
+    labelOpacity: closeness, // 0 → 1
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Icon atlas — one SVG per shape, rendered as a mask icon. The radial
@@ -70,21 +105,24 @@ const FALLBACK_ICON: DeckIcon = buildIcon(BLOT_SHAPES[0] ?? "M0,0 Z");
 
 type Props = {
   dots: CanvasDot[];
+  viewState: OrthographicViewState;
+  onViewStateChange: (vs: OrthographicViewState) => void;
   /** Called with a blot's id on click, or null when the background is clicked. */
   onSelect?: (id: string | null) => void;
 };
 
-export function InkwellCanvas({ dots, onSelect }: Props) {
-  const [viewState, setViewState] = useState<OrthographicViewState>(INITIAL_VIEW_STATE);
+export function InkwellCanvas({ dots, viewState, onViewStateChange, onSelect }: Props) {
+  const { blotSize, blotOpacity, labelOpacity } = zoomDriven(scalarZoom(viewState.zoom));
 
-  const layer = new IconLayer<CanvasDot>({
+  const blotLayer = new IconLayer<CanvasDot>({
     id: "blots",
     data: dots,
     pickable: true,
+    opacity: blotOpacity,
     sizeUnits: "pixels",
     getPosition: (d) => [d.x * SCALE, d.y * SCALE, 0],
     getIcon: (d) => ICONS[shapeForId(d.id)] ?? FALLBACK_ICON,
-    getSize: 52,
+    getSize: blotSize,
     sizeMinPixels: 22,
     sizeMaxPixels: 160,
     getColor: (d) => {
@@ -97,13 +135,38 @@ export function InkwellCanvas({ dots, onSelect }: Props) {
     },
   });
 
+  const labelLayer = new TextLayer<CanvasDot>({
+    id: "labels",
+    data: dots,
+    visible: labelOpacity > 0.01,
+    opacity: labelOpacity,
+    sizeUnits: "pixels",
+    fontFamily: 'Georgia, "Times New Roman", serif',
+    fontWeight: 500,
+    getPosition: (d) => [d.x * SCALE, d.y * SCALE, 0],
+    getText: (d) => `${d.title}\n${d.subtitle}`,
+    getSize: 11,
+    getColor: [40, 50, 80, 235],
+    getPixelOffset: [0, 32],
+    getTextAnchor: "middle",
+    getAlignmentBaseline: "top",
+    background: true,
+    backgroundPadding: [5, 3],
+    getBackgroundColor: [250, 248, 244, 220],
+    getBorderColor: [40, 50, 80, 30],
+    getBorderWidth: 1,
+    updateTriggers: {
+      getText: dots.map((d) => `${d.title}|${d.subtitle}`),
+    },
+  });
+
   return (
     <DeckGL
       views={new OrthographicView({ id: "ortho" })}
       viewState={viewState}
-      onViewStateChange={({ viewState: next }) => setViewState(next as OrthographicViewState)}
+      onViewStateChange={({ viewState: next }) => onViewStateChange(next as OrthographicViewState)}
       controller={true}
-      layers={[layer]}
+      layers={[blotLayer, labelLayer]}
       style={{ background: "transparent" }}
       onClick={(info) => {
         const picked = (info.object as CanvasDot | undefined)?.id ?? null;
@@ -113,7 +176,8 @@ export function InkwellCanvas({ dots, onSelect }: Props) {
         isDragging ? "grabbing" : isHovering ? "pointer" : "grab"
       }
       getTooltip={({ object }) => {
-        if (!object) return null;
+        // Once labels are mostly faded in, they replace the tooltip role.
+        if (!object || labelOpacity > 0.5) return null;
         const d = object as CanvasDot;
         // d.title/subtitle come from our DB join, not user input — safe to inline.
         return {

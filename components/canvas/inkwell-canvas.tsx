@@ -1,21 +1,14 @@
 "use client";
 
-import { DeckGL, OrthographicView, type OrthographicViewState, ScatterplotLayer } from "deck.gl";
+import { DeckGL, IconLayer, OrthographicView, type OrthographicViewState } from "deck.gl";
 import { useState } from "react";
+import { BLOT_SHAPES, shapeForId } from "@/lib/canvas/blot-shapes";
 import type { CanvasDot } from "./canvas-shell";
 
 // Tracer-era layouts live in [-1, 1]; scale to deck.gl pixel-ish units.
 const SCALE = 200;
 
-// Default colour for dots without an explicit hue.
 const DEFAULT_RGB: [number, number, number] = [40, 50, 80];
-const STROKE_RGBA: [number, number, number, number] = [248, 245, 235, 180];
-
-// Alpha layers for the ink-bleed effect — outer faint halo, mid-density
-// inner halo, sharp opaque core. Halos blend on overlap, simulating ink
-// running into itself on paper.
-const OUTER_ALPHA = 35; // ~0.14
-const INNER_ALPHA = 80; // ~0.31
 
 const INITIAL_VIEW_STATE: OrthographicViewState = {
   target: [0, 0, 0],
@@ -24,6 +17,52 @@ const INITIAL_VIEW_STATE: OrthographicViewState = {
   maxZoom: 8,
 };
 
+// ---------------------------------------------------------------------------
+// Icon atlas — pre-built SVG data URLs per shape (both a crisp "core" and a
+// blurred "bleed" variant). Returned objects are reused by reference so
+// deck.gl only loads 8 textures regardless of how many books we render.
+// ---------------------------------------------------------------------------
+
+type DeckIcon = {
+  url: string;
+  width: number;
+  height: number;
+  anchorX: number;
+  anchorY: number;
+  mask: true;
+};
+
+function buildIcon(path: string, blurStdDev: number): DeckIcon {
+  // Bleed needs room for the gaussian blur to spread; expand viewBox so the
+  // rasterised texture has space for the soft edge.
+  const pad = blurStdDev > 0 ? 20 : 0;
+  const dim = 120 + 2 * pad;
+  const svg = [
+    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='${-pad} ${-pad} ${dim} ${dim}'>`,
+    blurStdDev > 0
+      ? `<defs><filter id='b' x='-25%' y='-25%' width='150%' height='150%'><feGaussianBlur stdDeviation='${blurStdDev}'/></filter></defs>`
+      : "",
+    `<path d='${path}' fill='white'${blurStdDev > 0 ? " filter='url(#b)'" : ""}/>`,
+    `</svg>`,
+  ].join("");
+  return {
+    url: `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`,
+    width: dim,
+    height: dim,
+    anchorX: dim / 2,
+    anchorY: dim / 2,
+    mask: true, // recolourable via getColor
+  };
+}
+
+const CORE_ICONS: DeckIcon[] = BLOT_SHAPES.map((p) => buildIcon(p, 0));
+const BLEED_ICONS: DeckIcon[] = BLOT_SHAPES.map((p) => buildIcon(p, 8));
+// BLOT_SHAPES is non-empty, so these are always defined. Explicit to satisfy TS.
+const FALLBACK_CORE: DeckIcon = buildIcon(BLOT_SHAPES[0] ?? "M0,0 Z", 0);
+const FALLBACK_BLEED: DeckIcon = buildIcon(BLOT_SHAPES[0] ?? "M0,0 Z", 8);
+
+// ---------------------------------------------------------------------------
+
 type Props = {
   dots: CanvasDot[];
 };
@@ -31,61 +70,43 @@ type Props = {
 export function InkwellCanvas({ dots }: Props) {
   const [viewState, setViewState] = useState<OrthographicViewState>(INITIAL_VIEW_STATE);
 
-  const fillFor = (alpha: number) => (d: CanvasDot) => {
-    const [r, g, b] = d.color ?? DEFAULT_RGB;
-    return [r, g, b, alpha] as [number, number, number, number];
-  };
-
   const colorTrigger = dots.map((d) => d.color);
+  const idTrigger = dots.map((d) => d.id);
 
-  // Outermost halo — the bleed.
-  const outerHalo = new ScatterplotLayer<CanvasDot>({
-    id: "blot-outer-halo",
+  // Bleed: bigger, softer, blurred silhouette behind each book.
+  const bleed = new IconLayer<CanvasDot>({
+    id: "blot-bleed",
     data: dots,
     pickable: true,
-    filled: true,
-    stroked: false,
-    radiusUnits: "pixels",
-    radiusMinPixels: 16,
-    radiusMaxPixels: 56,
+    sizeUnits: "pixels",
     getPosition: (d) => [d.x * SCALE, d.y * SCALE, 0],
-    getRadius: 22,
-    getFillColor: fillFor(OUTER_ALPHA),
-    updateTriggers: { getFillColor: colorTrigger },
+    getIcon: (d) => BLEED_ICONS[shapeForId(d.id)] ?? FALLBACK_BLEED,
+    getSize: 64,
+    sizeMinPixels: 36,
+    sizeMaxPixels: 160,
+    getColor: (d) => {
+      const [r, g, b] = d.color ?? DEFAULT_RGB;
+      return [r, g, b, 105];
+    },
+    updateTriggers: { getIcon: idTrigger, getColor: colorTrigger },
   });
 
-  // Mid-density halo.
-  const innerHalo = new ScatterplotLayer<CanvasDot>({
-    id: "blot-inner-halo",
-    data: dots,
-    pickable: true,
-    filled: true,
-    stroked: false,
-    radiusUnits: "pixels",
-    radiusMinPixels: 10,
-    radiusMaxPixels: 28,
-    getPosition: (d) => [d.x * SCALE, d.y * SCALE, 0],
-    getRadius: 11,
-    getFillColor: fillFor(INNER_ALPHA),
-    updateTriggers: { getFillColor: colorTrigger },
-  });
-
-  // Opaque core — the nib drop.
-  const core = new ScatterplotLayer<CanvasDot>({
+  // Core: crisp opaque silhouette on top.
+  const core = new IconLayer<CanvasDot>({
     id: "blot-core",
     data: dots,
     pickable: true,
-    filled: true,
-    stroked: true,
-    radiusUnits: "pixels",
-    radiusMinPixels: 4,
-    radiusMaxPixels: 12,
-    lineWidthMinPixels: 0.75,
+    sizeUnits: "pixels",
     getPosition: (d) => [d.x * SCALE, d.y * SCALE, 0],
-    getRadius: 5,
-    getFillColor: (d) => d.color ?? DEFAULT_RGB,
-    getLineColor: STROKE_RGBA,
-    updateTriggers: { getFillColor: colorTrigger },
+    getIcon: (d) => CORE_ICONS[shapeForId(d.id)] ?? FALLBACK_CORE,
+    getSize: 28,
+    sizeMinPixels: 14,
+    sizeMaxPixels: 72,
+    getColor: (d) => {
+      const [r, g, b] = d.color ?? DEFAULT_RGB;
+      return [r, g, b, 255];
+    },
+    updateTriggers: { getIcon: idTrigger, getColor: colorTrigger },
   });
 
   return (
@@ -94,7 +115,7 @@ export function InkwellCanvas({ dots }: Props) {
       viewState={viewState}
       onViewStateChange={({ viewState: next }) => setViewState(next as OrthographicViewState)}
       controller={true}
-      layers={[outerHalo, innerHalo, core]}
+      layers={[bleed, core]}
       style={{ background: "transparent" }}
       getCursor={({ isHovering, isDragging }) =>
         isDragging ? "grabbing" : isHovering ? "pointer" : "grab"

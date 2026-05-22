@@ -18,9 +18,10 @@ const INITIAL_VIEW_STATE: OrthographicViewState = {
 };
 
 // ---------------------------------------------------------------------------
-// Icon atlas — pre-built SVG data URLs per shape (both a crisp "core" and a
-// blurred "bleed" variant). Returned objects are reused by reference so
-// deck.gl only loads 8 textures regardless of how many books we render.
+// Icon atlas — one SVG per shape, rendered as a mask icon. The radial
+// gradient inside the path is what gives each book its "ink dropped on paper"
+// look: opaque centre, gentle mid, fully transparent silhouette edge. A small
+// Gaussian blur softens the polygonal silhouette without turning it round.
 // ---------------------------------------------------------------------------
 
 type DeckIcon = {
@@ -32,34 +33,38 @@ type DeckIcon = {
   mask: true;
 };
 
-function buildIcon(path: string, blurStdDev: number): DeckIcon {
-  // Bleed needs room for the gaussian blur to spread; expand viewBox so the
-  // rasterised texture has space for the soft edge.
-  const pad = blurStdDev > 0 ? 20 : 0;
+function buildIcon(path: string): DeckIcon {
+  // Expand viewBox a bit so the blur tail has room.
+  const pad = 12;
   const dim = 120 + 2 * pad;
-  const svg = [
-    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='${-pad} ${-pad} ${dim} ${dim}'>`,
-    blurStdDev > 0
-      ? `<defs><filter id='b' x='-25%' y='-25%' width='150%' height='150%'><feGaussianBlur stdDeviation='${blurStdDev}'/></filter></defs>`
-      : "",
-    `<path d='${path}' fill='white'${blurStdDev > 0 ? " filter='url(#b)'" : ""}/>`,
-    `</svg>`,
-  ].join("");
+  const svg =
+    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='${-pad} ${-pad} ${dim} ${dim}'>` +
+    `<defs>` +
+    `<radialGradient id='g' cx='50%' cy='50%' r='55%'>` +
+    `<stop offset='0%' stop-color='white' stop-opacity='1'/>` +
+    `<stop offset='45%' stop-color='white' stop-opacity='1'/>` +
+    `<stop offset='75%' stop-color='white' stop-opacity='0.55'/>` +
+    `<stop offset='100%' stop-color='white' stop-opacity='0'/>` +
+    `</radialGradient>` +
+    `<filter id='b' x='-20%' y='-20%' width='140%' height='140%'>` +
+    `<feGaussianBlur stdDeviation='2.5'/>` +
+    `</filter>` +
+    `</defs>` +
+    `<path d='${path}' fill='url(#g)' filter='url(#b)'/>` +
+    `</svg>`;
   return {
     url: `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`,
     width: dim,
     height: dim,
     anchorX: dim / 2,
     anchorY: dim / 2,
-    mask: true, // recolourable via getColor
+    mask: true,
   };
 }
 
-const CORE_ICONS: DeckIcon[] = BLOT_SHAPES.map((p) => buildIcon(p, 0));
-const BLEED_ICONS: DeckIcon[] = BLOT_SHAPES.map((p) => buildIcon(p, 8));
-// BLOT_SHAPES is non-empty, so these are always defined. Explicit to satisfy TS.
-const FALLBACK_CORE: DeckIcon = buildIcon(BLOT_SHAPES[0] ?? "M0,0 Z", 0);
-const FALLBACK_BLEED: DeckIcon = buildIcon(BLOT_SHAPES[0] ?? "M0,0 Z", 8);
+const ICONS: DeckIcon[] = BLOT_SHAPES.map((p) => buildIcon(p));
+// BLOT_SHAPES is non-empty; this guarantees a non-undefined fallback for TS.
+const FALLBACK_ICON: DeckIcon = buildIcon(BLOT_SHAPES[0] ?? "M0,0 Z");
 
 // ---------------------------------------------------------------------------
 
@@ -70,43 +75,24 @@ type Props = {
 export function InkwellCanvas({ dots }: Props) {
   const [viewState, setViewState] = useState<OrthographicViewState>(INITIAL_VIEW_STATE);
 
-  const colorTrigger = dots.map((d) => d.color);
-  const idTrigger = dots.map((d) => d.id);
-
-  // Bleed: bigger, softer, blurred silhouette behind each book.
-  const bleed = new IconLayer<CanvasDot>({
-    id: "blot-bleed",
+  const layer = new IconLayer<CanvasDot>({
+    id: "blots",
     data: dots,
     pickable: true,
     sizeUnits: "pixels",
     getPosition: (d) => [d.x * SCALE, d.y * SCALE, 0],
-    getIcon: (d) => BLEED_ICONS[shapeForId(d.id)] ?? FALLBACK_BLEED,
-    getSize: 64,
-    sizeMinPixels: 36,
+    getIcon: (d) => ICONS[shapeForId(d.id)] ?? FALLBACK_ICON,
+    getSize: 52,
+    sizeMinPixels: 22,
     sizeMaxPixels: 160,
-    getColor: (d) => {
-      const [r, g, b] = d.color ?? DEFAULT_RGB;
-      return [r, g, b, 105];
-    },
-    updateTriggers: { getIcon: idTrigger, getColor: colorTrigger },
-  });
-
-  // Core: crisp opaque silhouette on top.
-  const core = new IconLayer<CanvasDot>({
-    id: "blot-core",
-    data: dots,
-    pickable: true,
-    sizeUnits: "pixels",
-    getPosition: (d) => [d.x * SCALE, d.y * SCALE, 0],
-    getIcon: (d) => CORE_ICONS[shapeForId(d.id)] ?? FALLBACK_CORE,
-    getSize: 28,
-    sizeMinPixels: 14,
-    sizeMaxPixels: 72,
     getColor: (d) => {
       const [r, g, b] = d.color ?? DEFAULT_RGB;
       return [r, g, b, 255];
     },
-    updateTriggers: { getIcon: idTrigger, getColor: colorTrigger },
+    updateTriggers: {
+      getIcon: dots.map((d) => d.id),
+      getColor: dots.map((d) => d.color),
+    },
   });
 
   return (
@@ -115,7 +101,7 @@ export function InkwellCanvas({ dots }: Props) {
       viewState={viewState}
       onViewStateChange={({ viewState: next }) => setViewState(next as OrthographicViewState)}
       controller={true}
-      layers={[bleed, core]}
+      layers={[layer]}
       style={{ background: "transparent" }}
       getCursor={({ isHovering, isDragging }) =>
         isDragging ? "grabbing" : isHovering ? "pointer" : "grab"

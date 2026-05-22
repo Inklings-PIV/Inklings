@@ -23,9 +23,16 @@ type CanvasShellProps = {
   detail: ReactNode;
   caption: string;
   dots?: CanvasDot[];
+  onSelectDot?: (id: string | null) => void;
 };
 
-export function CanvasShell({ toolbar, detail, caption, dots = [] }: CanvasShellProps) {
+export function CanvasShell({
+  toolbar,
+  detail,
+  caption,
+  dots = [],
+  onSelectDot,
+}: CanvasShellProps) {
   const hasDots = dots.length > 0;
   return (
     <div className="flex flex-1 flex-col">
@@ -48,7 +55,7 @@ export function CanvasShell({ toolbar, detail, caption, dots = [] }: CanvasShell
 
             {hasDots ? (
               <div className="absolute inset-0">
-                <InkwellCanvas dots={dots} />
+                <InkwellCanvas dots={dots} onSelect={onSelectDot} />
               </div>
             ) : (
               <div className="relative flex h-full items-center justify-center px-4">

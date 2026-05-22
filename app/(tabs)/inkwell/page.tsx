@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
+import type { ClassicalFeatures } from "@/lib/stylometry/classical";
 import { type Blot, InkwellView } from "./inkwell-view";
 
 export const dynamic = "force-dynamic";
@@ -12,13 +13,15 @@ async function fetchBlots(): Promise<Blot[]> {
         bookId: schema.books.id,
         title: schema.books.title,
         authorName: schema.authors.name,
+        classical: schema.bookFeatures.classical,
         mode: schema.bookLayout.mode,
         x: schema.bookLayout.x,
         y: schema.bookLayout.y,
       })
       .from(schema.books)
       .innerJoin(schema.authors, eq(schema.books.authorId, schema.authors.id))
-      .innerJoin(schema.bookLayout, eq(schema.bookLayout.bookId, schema.books.id));
+      .innerJoin(schema.bookLayout, eq(schema.bookLayout.bookId, schema.books.id))
+      .leftJoin(schema.bookFeatures, eq(schema.bookFeatures.bookId, schema.books.id));
 
     const map = new Map<string, Blot>();
     for (const row of rows) {
@@ -28,6 +31,7 @@ async function fetchBlots(): Promise<Blot[]> {
           bookId: row.bookId,
           title: row.title,
           authorName: row.authorName,
+          classical: (row.classical as ClassicalFeatures | null) ?? null,
           layouts: { classical: null, modern: null, "by-hue": null },
         };
         map.set(row.bookId, blot);

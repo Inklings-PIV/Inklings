@@ -2,6 +2,7 @@
 
 import { Search, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
+import { FingerprintBars, HueChip } from "@/components/blots/widgets";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -157,81 +158,5 @@ function BlotCard({ blot }: { blot: Blot }) {
         <FingerprintBars features={blot.classical} />
       </CardContent>
     </Card>
-  );
-}
-
-function HueChip({ label, color, ring = false }: { label: string; color: string; ring?: boolean }) {
-  return (
-    <div
-      className="flex items-center gap-1 rounded-full border border-border bg-background/70 px-1.5 py-0.5"
-      title={label}
-    >
-      <span
-        className="size-3 rounded-full border border-border/60"
-        style={{
-          backgroundColor: color,
-          boxShadow: ring ? "0 0 0 1px var(--ring)" : undefined,
-        }}
-      />
-      <span className="text-[10px] tracking-wider text-muted-foreground uppercase">{label}</span>
-    </div>
-  );
-}
-
-// 28 of the most common English function words — every book's bar over these
-// gives a visible per-book fingerprint shape that's stable across reads.
-const FINGERPRINT_WORDS = [
-  "the",
-  "of",
-  "and",
-  "to",
-  "in",
-  "a",
-  "he",
-  "she",
-  "it",
-  "is",
-  "was",
-  "but",
-  "his",
-  "her",
-  "for",
-  "as",
-  "with",
-  "they",
-  "be",
-  "not",
-  "this",
-  "that",
-  "from",
-  "you",
-  "by",
-  "have",
-  "had",
-  "are",
-];
-
-function FingerprintBars({ features }: { features: ClassicalFeatures | null }) {
-  // Map function-word freq (0..~0.05 typically) into 0..1 bar height. The ×20
-  // factor stretches the common range so bars are distinctive without saturating.
-  const heights = FINGERPRINT_WORDS.map((w) => {
-    const freq = features?.functionWords?.[w] ?? 0;
-    return Math.min(1, freq * 20);
-  });
-
-  return (
-    <div
-      aria-hidden="true"
-      className="flex h-6 items-end gap-px"
-      title="Stylometric fingerprint — function-word frequencies"
-    >
-      {heights.map((h, i) => (
-        <span
-          key={FINGERPRINT_WORDS[i]}
-          className="w-1 rounded-sm bg-ink-faded/60"
-          style={{ height: `${Math.max(6, h * 100)}%` }}
-        />
-      ))}
-    </div>
   );
 }

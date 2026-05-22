@@ -70,9 +70,11 @@ const FALLBACK_ICON: DeckIcon = buildIcon(BLOT_SHAPES[0] ?? "M0,0 Z");
 
 type Props = {
   dots: CanvasDot[];
+  /** Called with a blot's id on click, or null when the background is clicked. */
+  onSelect?: (id: string | null) => void;
 };
 
-export function InkwellCanvas({ dots }: Props) {
+export function InkwellCanvas({ dots, onSelect }: Props) {
   const [viewState, setViewState] = useState<OrthographicViewState>(INITIAL_VIEW_STATE);
 
   const layer = new IconLayer<CanvasDot>({
@@ -103,6 +105,10 @@ export function InkwellCanvas({ dots }: Props) {
       controller={true}
       layers={[layer]}
       style={{ background: "transparent" }}
+      onClick={(info) => {
+        const picked = (info.object as CanvasDot | undefined)?.id ?? null;
+        onSelect?.(picked);
+      }}
       getCursor={({ isHovering, isDragging }) =>
         isDragging ? "grabbing" : isHovering ? "pointer" : "grab"
       }

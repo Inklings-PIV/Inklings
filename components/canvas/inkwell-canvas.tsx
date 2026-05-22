@@ -7,9 +7,15 @@ import type { CanvasDot } from "./canvas-shell";
 // Tracer-era layouts live in [-1, 1]; scale to deck.gl pixel-ish units.
 const SCALE = 200;
 
-// Default colour when a dot has no `color` set.
+// Default colour for dots without an explicit hue.
 const DEFAULT_RGB: [number, number, number] = [40, 50, 80];
-const STROKE_RGB: [number, number, number] = [248, 245, 235];
+const STROKE_RGBA: [number, number, number, number] = [248, 245, 235, 180];
+
+// Alpha layers for the ink-bleed effect — outer faint halo, mid-density
+// inner halo, sharp opaque core. Halos blend on overlap, simulating ink
+// running into itself on paper.
+const OUTER_ALPHA = 35; // ~0.14
+const INNER_ALPHA = 80; // ~0.31
 
 const INITIAL_VIEW_STATE: OrthographicViewState = {
   target: [0, 0, 0],
@@ -25,23 +31,61 @@ type Props = {
 export function InkwellCanvas({ dots }: Props) {
   const [viewState, setViewState] = useState<OrthographicViewState>(INITIAL_VIEW_STATE);
 
-  const layer = new ScatterplotLayer<CanvasDot>({
-    id: "blots",
+  const fillFor = (alpha: number) => (d: CanvasDot) => {
+    const [r, g, b] = d.color ?? DEFAULT_RGB;
+    return [r, g, b, alpha] as [number, number, number, number];
+  };
+
+  const colorTrigger = dots.map((d) => d.color);
+
+  // Outermost halo — the bleed.
+  const outerHalo = new ScatterplotLayer<CanvasDot>({
+    id: "blot-outer-halo",
     data: dots,
     pickable: true,
-    stroked: true,
     filled: true,
+    stroked: false,
     radiusUnits: "pixels",
-    radiusMinPixels: 5,
-    radiusMaxPixels: 20,
-    lineWidthMinPixels: 1,
+    radiusMinPixels: 16,
+    radiusMaxPixels: 56,
     getPosition: (d) => [d.x * SCALE, d.y * SCALE, 0],
-    getRadius: 8,
+    getRadius: 22,
+    getFillColor: fillFor(OUTER_ALPHA),
+    updateTriggers: { getFillColor: colorTrigger },
+  });
+
+  // Mid-density halo.
+  const innerHalo = new ScatterplotLayer<CanvasDot>({
+    id: "blot-inner-halo",
+    data: dots,
+    pickable: true,
+    filled: true,
+    stroked: false,
+    radiusUnits: "pixels",
+    radiusMinPixels: 10,
+    radiusMaxPixels: 28,
+    getPosition: (d) => [d.x * SCALE, d.y * SCALE, 0],
+    getRadius: 11,
+    getFillColor: fillFor(INNER_ALPHA),
+    updateTriggers: { getFillColor: colorTrigger },
+  });
+
+  // Opaque core — the nib drop.
+  const core = new ScatterplotLayer<CanvasDot>({
+    id: "blot-core",
+    data: dots,
+    pickable: true,
+    filled: true,
+    stroked: true,
+    radiusUnits: "pixels",
+    radiusMinPixels: 4,
+    radiusMaxPixels: 12,
+    lineWidthMinPixels: 0.75,
+    getPosition: (d) => [d.x * SCALE, d.y * SCALE, 0],
+    getRadius: 5,
     getFillColor: (d) => d.color ?? DEFAULT_RGB,
-    getLineColor: STROKE_RGB,
-    updateTriggers: {
-      getFillColor: dots.map((d) => d.color),
-    },
+    getLineColor: STROKE_RGBA,
+    updateTriggers: { getFillColor: colorTrigger },
   });
 
   return (
@@ -50,8 +94,11 @@ export function InkwellCanvas({ dots }: Props) {
       viewState={viewState}
       onViewStateChange={({ viewState: next }) => setViewState(next as OrthographicViewState)}
       controller={true}
-      layers={[layer]}
+      layers={[outerHalo, innerHalo, core]}
       style={{ background: "transparent" }}
+      getCursor={({ isHovering, isDragging }) =>
+        isDragging ? "grabbing" : isHovering ? "pointer" : "grab"
+      }
       getTooltip={({ object }) => {
         if (!object) return null;
         const d = object as CanvasDot;

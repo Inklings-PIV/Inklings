@@ -30,10 +30,17 @@ export type Blot = {
   };
 };
 
-export function InkwellView({ blots }: { blots: Blot[] }) {
+export function InkwellView({
+  blots,
+  initialSelectedId = null,
+}: {
+  blots: Blot[];
+  /** Seeded from `?selected=<bookId>` so /blots/[id] can deep-link back. */
+  initialSelectedId?: string | null;
+}) {
   const [layout, setLayout] = useState<Layout>("classical");
   const [source, setSource] = useState<HueSource>("blended");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
 
   const dots: CanvasDot[] = blots.flatMap((b) => {
     const coord = b.layouts[layout];
@@ -149,6 +156,7 @@ export function InkwellView({ blots }: { blots: Blot[] }) {
             neighbours={neighbours}
             source={source}
             onClose={() => setSelectedId(null)}
+            onSelectNeighbour={setSelectedId}
           />
         ) : (
           <div className="flex h-full flex-col gap-4">

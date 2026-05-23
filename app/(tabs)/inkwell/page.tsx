@@ -65,7 +65,11 @@ async function fetchBlots(): Promise<Blot[]> {
   }
 }
 
-export default async function InkwellPage() {
-  const blots = await fetchBlots();
-  return <InkwellView blots={blots} />;
+export default async function InkwellPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ selected?: string }>;
+}) {
+  const [blots, sp] = await Promise.all([fetchBlots(), searchParams]);
+  return <InkwellView blots={blots} initialSelectedId={sp.selected ?? null} />;
 }

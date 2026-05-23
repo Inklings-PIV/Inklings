@@ -1,6 +1,7 @@
 "use client";
 
-import { X } from "lucide-react";
+import { ArrowRight, X } from "lucide-react";
+import Link from "next/link";
 import { FingerprintBars, SourceHues } from "@/components/blots/widgets";
 import { Button } from "@/components/ui/button";
 import { type HSLOverride, type HueSource, hueFor } from "@/lib/colour/placeholder";
@@ -27,6 +28,8 @@ type Props = {
   /** Drives the mode-aware "why this colour" line under the Hues block. */
   source: HueSource;
   onClose: () => void;
+  /** Click a neighbour to pivot the panel to it. */
+  onSelectNeighbour?: (bookId: string) => void;
 };
 
 const SOURCE_LABEL: Record<HueSource, string> = {
@@ -36,7 +39,7 @@ const SOURCE_LABEL: Record<HueSource, string> = {
   blended: "Blend",
 };
 
-export function BlotDetail({ blot, neighbours, source, onClose }: Props) {
+export function BlotDetail({ blot, neighbours, source, onClose, onSelectNeighbour }: Props) {
   const blendedCss = hueFor(blot.bookId, "blended").css;
   // Today only algorithmic has a real justification; others fall back below.
   const justification = source === "algorithmic" ? blot.algorithmic?.justification : null;
@@ -107,26 +110,40 @@ export function BlotDetail({ blot, neighbours, source, onClose }: Props) {
           </div>
           <ul className="mt-2 space-y-1.5 overflow-y-auto">
             {neighbours.map((n) => (
-              <li key={n.bookId} className="flex items-center justify-between gap-2 text-xs">
-                <span className="flex min-w-0 items-center gap-2">
-                  <span
-                    aria-hidden="true"
-                    className="size-2.5 shrink-0 rounded-full"
-                    style={{ backgroundColor: hueFor(n.bookId, "blended").css }}
-                  />
-                  <span className="truncate text-ink-deep">{n.title}</span>
-                  <span className="hidden truncate text-muted-foreground sm:inline">
-                    · {n.authorName}
+              <li key={n.bookId}>
+                <button
+                  type="button"
+                  onClick={() => onSelectNeighbour?.(n.bookId)}
+                  disabled={!onSelectNeighbour}
+                  className="flex w-full items-center justify-between gap-2 rounded-sm px-1 py-0.5 text-left text-xs transition-colors enabled:hover:bg-muted/60 enabled:hover:text-ink-deep disabled:cursor-default"
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span
+                      aria-hidden="true"
+                      className="size-2.5 shrink-0 rounded-full"
+                      style={{ backgroundColor: hueFor(n.bookId, "blended").css }}
+                    />
+                    <span className="truncate text-ink-deep">{n.title}</span>
+                    <span className="hidden truncate text-muted-foreground sm:inline">
+                      · {n.authorName}
+                    </span>
                   </span>
-                </span>
-                <span className="shrink-0 tabular-nums text-muted-foreground">
-                  {n.distance.toFixed(2)}
-                </span>
+                  <span className="shrink-0 tabular-nums text-muted-foreground">
+                    {n.distance.toFixed(2)}
+                  </span>
+                </button>
               </li>
             ))}
           </ul>
         </div>
       )}
+
+      <Link
+        href={`/blots/${blot.bookId}`}
+        className="mt-auto inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-ink-deep"
+      >
+        Open in Blots <ArrowRight className="size-3" />
+      </Link>
     </div>
   );
 }

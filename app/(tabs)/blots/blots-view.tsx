@@ -1,8 +1,9 @@
 "use client";
 
 import { Search, Sparkles } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useState } from "react";
-import { FingerprintBars, HueChip } from "@/components/blots/widgets";
+import { FingerprintBars, SourceHues } from "@/components/blots/widgets";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -94,7 +95,12 @@ export function BlotsView({ blots }: { blots: Blot[] }) {
         <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {visible.map((blot) => (
             <li key={blot.bookId}>
-              <BlotCard blot={blot} />
+              <Link
+                href={`/blots/${blot.bookId}`}
+                className="block h-full rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+              >
+                <BlotCard blot={blot} />
+              </Link>
             </li>
           ))}
         </ul>
@@ -126,12 +132,7 @@ function EmptyState({ hasBlots, query }: { hasBlots: boolean; query: string }) {
 }
 
 function BlotCard({ blot }: { blot: Blot }) {
-  const hues = {
-    algorithmic: hueFor(blot.bookId, "algorithmic", blot.algorithmic).css,
-    llm: hueFor(blot.bookId, "llm").css,
-    crowd: hueFor(blot.bookId, "crowd").css,
-    blended: hueFor(blot.bookId, "blended").css,
-  };
+  const blendedCss = hueFor(blot.bookId, "blended").css;
 
   return (
     <Card className="h-full bg-card/60 transition-shadow hover:shadow-md">
@@ -140,7 +141,7 @@ function BlotCard({ blot }: { blot: Blot }) {
           role="img"
           aria-label="Blended hue"
           className="size-10 rounded-full border border-border shadow-inner"
-          style={{ backgroundColor: hues.blended }}
+          style={{ backgroundColor: blendedCss }}
         />
       </CardHeader>
       <CardContent className="flex flex-col gap-3 pt-2">
@@ -149,12 +150,7 @@ function BlotCard({ blot }: { blot: Blot }) {
           <p className="text-xs text-muted-foreground">{blot.authorName}</p>
         </div>
 
-        <div className="flex flex-wrap items-center gap-1.5">
-          <HueChip label="Algo" color={hues.algorithmic} />
-          <HueChip label="LLM" color={hues.llm} />
-          <HueChip label="Crowd" color={hues.crowd} />
-          <HueChip label="Blend" color={hues.blended} ring />
-        </div>
+        <SourceHues bookId={blot.bookId} algorithmic={blot.algorithmic} />
 
         <FingerprintBars features={blot.classical} />
       </CardContent>

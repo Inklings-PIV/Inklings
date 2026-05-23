@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CLASSICAL_VECTOR_DIM,
   classicalToVector,
+  hslToHueVector,
   standardize,
   umapProjection,
 } from "@/lib/layout/umap";
@@ -59,6 +60,36 @@ describe("standardize", () => {
       expect(row[0]).toBe(0); // zero-variance column
       expect(Number.isFinite(row[1])).toBe(true);
     }
+  });
+});
+
+describe("hslToHueVector", () => {
+  it("returns 3 dimensions", () => {
+    expect(hslToHueVector(120, 50, 50)).toHaveLength(3);
+  });
+
+  it("places red at 358° next to red at 2° (no wraparound seam)", () => {
+    const a = hslToHueVector(358, 60, 50);
+    const b = hslToHueVector(2, 60, 50);
+    const dx = (a[0] ?? 0) - (b[0] ?? 0);
+    const dy = (a[1] ?? 0) - (b[1] ?? 0);
+    const dist = Math.hypot(dx, dy);
+    expect(dist).toBeLessThan(0.05);
+  });
+
+  it("places red at 0° far from cyan at 180°", () => {
+    const red = hslToHueVector(0, 60, 50);
+    const cyan = hslToHueVector(180, 60, 50);
+    const dx = (red[0] ?? 0) - (cyan[0] ?? 0);
+    expect(Math.abs(dx)).toBeGreaterThan(1);
+  });
+
+  it("damps hue influence for pale colours (low saturation)", () => {
+    const vividRed = hslToHueVector(0, 90, 50);
+    const paleRed = hslToHueVector(0, 5, 50);
+    const vividLen = Math.hypot(vividRed[0] ?? 0, vividRed[1] ?? 0);
+    const paleLen = Math.hypot(paleRed[0] ?? 0, paleRed[1] ?? 0);
+    expect(vividLen).toBeGreaterThan(paleLen * 10);
   });
 });
 

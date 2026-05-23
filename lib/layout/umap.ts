@@ -34,6 +34,19 @@ export function classicalToVector(f: ClassicalFeatures): number[] {
 export const CLASSICAL_VECTOR_DIM = 4 + 1 + 8 + FUNCTION_WORDS.length;
 
 /**
+ * HSL → 3D cylinder vector for the by-hue UMAP. Saturation-weighted
+ * cos/sin of the hue means red at 358° and red at 2° land next to each
+ * other (no wraparound seam), and pale colours have less hue influence
+ * than vivid ones. Lightness is the third axis.
+ */
+export function hslToHueVector(hue: number, saturation: number, lightness: number): number[] {
+  const h = (hue * Math.PI) / 180;
+  const s = saturation / 100;
+  const l = lightness / 100;
+  return [s * Math.cos(h), s * Math.sin(h), l];
+}
+
+/**
  * Z-score each dimension across the corpus. Required before UMAP because the
  * raw features live on wildly different scales (mean sentence length ~10s vs.
  * function-word freqs ~0.01).

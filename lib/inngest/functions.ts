@@ -1,6 +1,6 @@
 import { inngest } from "@/lib/inngest/client";
 import { ingestBook } from "@/lib/inngest/ingest-book";
-import { recomputeLayoutClassical } from "@/lib/inngest/recompute-layout";
+import { recomputeLayoutByHue, recomputeLayoutClassical } from "@/lib/inngest/recompute-layout";
 
 export const ping = inngest.createFunction(
   {
@@ -15,4 +15,4 @@ export const ping = inngest.createFunction(
   },
 );
 
-export const functions = [ping, ingestBook, recomputeLayoutClassical];
+export const functions = [ping, ingestBook, recomputeLayoutClassical, recomputeLayoutByHue];

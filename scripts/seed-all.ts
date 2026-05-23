@@ -57,19 +57,16 @@ void (async () => {
     timeoutMs: 20 * 60 * 1000,
   });
 
-  // 3. Trigger layout
+  // 3. Trigger classical layout
   log("\n→ triggering classical UMAP recompute...");
-  const layoutStartedAt = new Date();
-  await inngest.send({
-    name: "corpus/layout.recompute",
-    data: { mode: "classical" },
-  });
+  const classicalStartedAt = new Date();
+  await inngest.send({ name: "corpus/layout.recompute", data: { mode: "classical" } });
   log("  event sent");
 
-  // 4. Wait for UMAP to write fresh layout rows
-  log("\n→ waiting for layout...");
+  // 4. Wait for classical UMAP to write fresh layout rows
+  log("\n→ waiting for classical layout...");
   await waitForCount({
-    label: "laid out",
+    label: "classical",
     expected: ids.length,
     poll: () =>
       db
@@ -79,7 +76,35 @@ void (async () => {
         .where(
           and(
             eq(schema.bookLayout.mode, "classical"),
-            gt(schema.bookLayout.computedAt, layoutStartedAt),
+            gt(schema.bookLayout.computedAt, classicalStartedAt),
+            inArray(schema.books.gutenbergId, ids),
+          ),
+        )
+        .then((r) => Number(r[0]?.n ?? 0)),
+    intervalMs: 2_500,
+    timeoutMs: 5 * 60 * 1000,
+  });
+
+  // 5. Trigger by-hue layout (needs algorithmic colours, written during ingest)
+  log("\n→ triggering by-hue UMAP recompute...");
+  const byHueStartedAt = new Date();
+  await inngest.send({ name: "corpus/layout.recompute-by-hue", data: {} });
+  log("  event sent");
+
+  // 6. Wait for by-hue UMAP
+  log("\n→ waiting for by-hue layout...");
+  await waitForCount({
+    label: "by-hue",
+    expected: ids.length,
+    poll: () =>
+      db
+        .select({ n: count() })
+        .from(schema.bookLayout)
+        .innerJoin(schema.books, eq(schema.books.id, schema.bookLayout.bookId))
+        .where(
+          and(
+            eq(schema.bookLayout.mode, "by-hue"),
+            gt(schema.bookLayout.computedAt, byHueStartedAt),
             inArray(schema.books.gutenbergId, ids),
           ),
         )

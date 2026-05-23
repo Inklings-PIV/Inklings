@@ -162,3 +162,82 @@ export const recomputeLayoutByHue = inngest.createFunction(
     return { mode: "by-hue", count: points.length };
   },
 );
+
+/**
+ * Lay out books by modern-embedding similarity. OpenAI's embeddings are
+ * unit-normalised so Euclidean distance ≈ cosine similarity (||a-b||² =
+ * 2 − 2·cos(a,b)), which is what UMAP's default metric provides — no
+ * standardise() pass needed (and would actively hurt: it would re-weight
+ * the dimensions and break the cosine equivalence).
+ *
+ * Triggered:
+ *   - on demand:  `corpus/layout.recompute-modern` event
+ *   - nightly:    cron 03:30 UTC
+ */
+export const recomputeLayoutModern = inngest.createFunction(
+  {
+    id: "recompute-layout-modern",
+    triggers: [{ event: "corpus/layout.recompute-modern" }, { cron: "30 3 * * *" }],
+    concurrency: { limit: 1, key: "layout-modern" },
+    retries: 2,
+  },
+  async ({ step }) => {
+    const books = await step.run("load-embeddings", async () => {
+      const db = getDb();
+      const rows = await db
+        .select({
+          bookId: schema.bookFeatures.bookId,
+          embedding: schema.bookFeatures.embedding,
+        })
+        .from(schema.bookFeatures);
+      return rows.flatMap((r) =>
+        r.embedding && r.embedding.length > 0 ? [{ bookId: r.bookId, embedding: r.embedding }] : [],
+      );
+    });
+
+    if (books.length === 0) {
+      return { mode: "modern", count: 0, note: "no books with embeddings" };
+    }
+
+    const points = await step.run("project", () => {
+      const xy = umapProjection(
+        books.map((b) => b.embedding),
+        { seed: 42 },
+      );
+      return books.map((b, i) => ({
+        bookId: b.bookId,
+        x: xy[i]?.[0] ?? 0,
+        y: xy[i]?.[1] ?? 0,
+      }));
+    });
+
+    await step.run("upsert-layouts", async () => {
+      const db = getDb();
+      await db
+        .insert(schema.bookLayout)
+        .values(
+          points.map((p) => ({
+            bookId: p.bookId,
+            mode: "modern" as const,
+            layoutVersion: LAYOUT_VERSION,
+            x: p.x,
+            y: p.y,
+          })),
+        )
+        .onConflictDoUpdate({
+          target: [
+            schema.bookLayout.bookId,
+            schema.bookLayout.mode,
+            schema.bookLayout.layoutVersion,
+          ],
+          set: {
+            x: sql`excluded.x`,
+            y: sql`excluded.y`,
+            computedAt: new Date(),
+          },
+        });
+    });
+
+    return { mode: "modern", count: points.length };
+  },
+);

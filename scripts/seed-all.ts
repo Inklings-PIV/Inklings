@@ -113,6 +113,35 @@ void (async () => {
     timeoutMs: 5 * 60 * 1000,
   });
 
+  // 7. Trigger modern (embedding) layout — needs the embeddings written
+  //    during ingest. Fires last because the embeddings are the slowest input.
+  log("\n→ triggering modern UMAP recompute...");
+  const modernStartedAt = new Date();
+  await inngest.send({ name: "corpus/layout.recompute-modern", data: {} });
+  log("  event sent");
+
+  // 8. Wait for modern UMAP
+  log("\n→ waiting for modern layout...");
+  await waitForCount({
+    label: "modern",
+    expected: ids.length,
+    poll: () =>
+      db
+        .select({ n: count() })
+        .from(schema.bookLayout)
+        .innerJoin(schema.books, eq(schema.books.id, schema.bookLayout.bookId))
+        .where(
+          and(
+            eq(schema.bookLayout.mode, "modern"),
+            gt(schema.bookLayout.computedAt, modernStartedAt),
+            inArray(schema.books.gutenbergId, ids),
+          ),
+        )
+        .then((r) => Number(r[0]?.n ?? 0)),
+    intervalMs: 2_500,
+    timeoutMs: 5 * 60 * 1000,
+  });
+
   const elapsed = Math.round((Date.now() - startTime) / 1000);
   log(`\n[${target}]  done in ${elapsed}s — open /inkwell`);
   process.exit(0);

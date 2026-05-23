@@ -70,12 +70,15 @@ export function SourceHues({
   bookId,
   algorithmic,
   llm,
+  blended,
 }: {
   bookId: string;
   /** Real HSL row when the algorithmic deriver has run; else placeholder. */
   algorithmic?: HSLOverride | null;
   /** Real HSL row when the LLM deriver has run; else placeholder. */
   llm?: HSLOverride | null;
+  /** Real weighted blend when at least one source has been derived. */
+  blended?: HSLOverride | null;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -92,9 +95,9 @@ export function SourceHues({
       />
       <HueChip
         label="Blend"
-        color={hueFor(bookId, "blended").css}
+        color={hueFor(bookId, "blended", blended).css}
         ring
-        title={`Blend · ${PLACEHOLDER_REASON}`}
+        title={titleFor("Blend", blended)}
       />
     </div>
   );

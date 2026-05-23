@@ -39,7 +39,9 @@
     "derive:colours": "tsx scripts/derive-colours.ts",
     "derive:colours:prod": "cross-env DRIZZLE_ENV=prod tsx scripts/derive-colours.ts",
     "derive:llm-colours": "tsx scripts/derive-llm-colours.ts",
-    "derive:llm-colours:prod": "cross-env DRIZZLE_ENV=prod tsx scripts/derive-llm-colours.ts"
+    "derive:llm-colours:prod": "cross-env DRIZZLE_ENV=prod tsx scripts/derive-llm-colours.ts",
+    "derive:blended": "tsx scripts/derive-blended-colours.ts",
+    "derive:blended:prod": "cross-env DRIZZLE_ENV=prod tsx scripts/derive-blended-colours.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

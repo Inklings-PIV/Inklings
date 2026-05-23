@@ -23,6 +23,7 @@ export type Blot = {
   classical: ClassicalFeatures | null;
   algorithmic: HSLOverride | null;
   llm: HSLOverride | null;
+  blended: HSLOverride | null;
 };
 
 export function BlotsView({ blots }: { blots: Blot[] }) {
@@ -190,7 +191,7 @@ function EmptyState({ hasBlots, query }: { hasBlots: boolean; query: string }) {
 }
 
 function BlotCard({ blot }: { blot: Blot }) {
-  const blendedCss = hueFor(blot.bookId, "blended").css;
+  const blendedCss = hueFor(blot.bookId, "blended", blot.blended).css;
 
   return (
     <Card className="h-full bg-card/60 transition-shadow hover:shadow-md">
@@ -208,7 +209,12 @@ function BlotCard({ blot }: { blot: Blot }) {
           <p className="text-xs text-muted-foreground">{blot.authorName}</p>
         </div>
 
-        <SourceHues bookId={blot.bookId} algorithmic={blot.algorithmic} llm={blot.llm} />
+        <SourceHues
+          bookId={blot.bookId}
+          algorithmic={blot.algorithmic}
+          llm={blot.llm}
+          blended={blot.blended}
+        />
 
         <FingerprintBars features={blot.classical} />
       </CardContent>

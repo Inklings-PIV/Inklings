@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { deriveAlgorithmic } from "@/lib/colour/algorithmic";
+import { blendColours } from "@/lib/colour/blend";
 import { deriveLLM } from "@/lib/colour/llm";
 import { getDb, schema } from "@/lib/db";
 import { fetchBookMeta } from "@/lib/ingestion/gutenberg-meta";
@@ -165,6 +166,37 @@ export const ingestBook = inngest.createFunction(
           },
         });
     });
+
+    const blended = await step.run("derive-blended-colour", () =>
+      blendColours({ algorithmic, llm }),
+    );
+
+    if (blended) {
+      await step.run("save-blended-colour", async () => {
+        const db = getDb();
+        const row = {
+          bookId,
+          source: "blended" as const,
+          hue: blended.hue,
+          saturation: blended.saturation,
+          lightness: blended.lightness,
+          justification: blended.justification,
+        };
+        await db
+          .insert(schema.bookColours)
+          .values(row)
+          .onConflictDoUpdate({
+            target: [schema.bookColours.bookId, schema.bookColours.source],
+            set: {
+              hue: row.hue,
+              saturation: row.saturation,
+              lightness: row.lightness,
+              justification: row.justification,
+              computedAt: new Date(),
+            },
+          });
+      });
+    }
 
     await step.run("mark-ready", async () => {
       const db = getDb();

@@ -86,9 +86,10 @@ export const recomputeLayoutClassical = inngest.createFunction(
 );
 
 /**
- * Lay out books by colour similarity, not stylometry. Uses the algorithmic
- * `book_colours` row per book today; switch the source filter to `'blended'`
- * once #27 lands. The cylinder vector handles hue wraparound (358° ≈ 2°).
+ * Lay out books by colour similarity, not stylometry. Reads the blended
+ * `book_colours` row (algo + LLM weighted average from #27) so clusters
+ * reflect the *combined* feel of each book. The cylinder vector handles
+ * hue wraparound (358° ≈ 2°).
  *
  * Triggered:
  *   - on demand:  `corpus/layout.recompute-by-hue` event
@@ -112,11 +113,11 @@ export const recomputeLayoutByHue = inngest.createFunction(
           lightness: schema.bookColours.lightness,
         })
         .from(schema.bookColours)
-        .where(eq(schema.bookColours.source, "algorithmic"));
+        .where(eq(schema.bookColours.source, "blended"));
     });
 
     if (books.length === 0) {
-      return { mode: "by-hue", count: 0, note: "no algorithmic colours" };
+      return { mode: "by-hue", count: 0, note: "no blended colours" };
     }
 
     const points = await step.run("project", () => {

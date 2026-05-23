@@ -12,6 +12,7 @@ async function fetchBlots(): Promise<Blot[]> {
     const db = getDb();
     const algoColours = alias(schema.bookColours, "algo_colours");
     const llmColours = alias(schema.bookColours, "llm_colours");
+    const blendedColours = alias(schema.bookColours, "blended_colours");
     const rows = await db
       .select({
         bookId: schema.books.id,
@@ -28,6 +29,10 @@ async function fetchBlots(): Promise<Blot[]> {
         llmSaturation: llmColours.saturation,
         llmLightness: llmColours.lightness,
         llmJustification: llmColours.justification,
+        blendedHue: blendedColours.hue,
+        blendedSaturation: blendedColours.saturation,
+        blendedLightness: blendedColours.lightness,
+        blendedJustification: blendedColours.justification,
       })
       .from(schema.books)
       .innerJoin(schema.authors, eq(schema.books.authorId, schema.authors.id))
@@ -40,6 +45,10 @@ async function fetchBlots(): Promise<Blot[]> {
         llmColours,
         and(eq(llmColours.bookId, schema.books.id), eq(llmColours.source, "llm")),
       )
+      .leftJoin(
+        blendedColours,
+        and(eq(blendedColours.bookId, schema.books.id), eq(blendedColours.source, "blended")),
+      )
       .where(eq(schema.books.status, "ready"));
 
     return rows.map((r) => ({
@@ -50,6 +59,12 @@ async function fetchBlots(): Promise<Blot[]> {
       classical: (r.classical as ClassicalFeatures | null) ?? null,
       algorithmic: hslFrom(r.algoHue, r.algoSaturation, r.algoLightness, r.algoJustification),
       llm: hslFrom(r.llmHue, r.llmSaturation, r.llmLightness, r.llmJustification),
+      blended: hslFrom(
+        r.blendedHue,
+        r.blendedSaturation,
+        r.blendedLightness,
+        r.blendedJustification,
+      ),
     }));
   } catch {
     // DB not configured (preview build without DATABASE_URL); render empty.

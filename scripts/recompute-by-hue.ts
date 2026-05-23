@@ -25,10 +25,10 @@ async function main() {
       lightness: schema.bookColours.lightness,
     })
     .from(schema.bookColours)
-    .where(eq(schema.bookColours.source, "algorithmic"));
+    .where(eq(schema.bookColours.source, "blended"));
 
   if (rows.length === 0) {
-    process.stdout.write("OK  no algorithmic colours yet (run pnpm derive:colours first)\n");
+    process.stdout.write("OK  no blended colours yet (run pnpm derive:blended first)\n");
     return;
   }
 

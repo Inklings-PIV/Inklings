@@ -12,6 +12,7 @@ async function fetchBlots(): Promise<Blot[]> {
     const db = getDb();
     const algoColours = alias(schema.bookColours, "algo_colours");
     const llmColours = alias(schema.bookColours, "llm_colours");
+    const blendedColours = alias(schema.bookColours, "blended_colours");
     const rows = await db
       .select({
         bookId: schema.books.id,
@@ -29,6 +30,10 @@ async function fetchBlots(): Promise<Blot[]> {
         llmSaturation: llmColours.saturation,
         llmLightness: llmColours.lightness,
         llmJustification: llmColours.justification,
+        blendedHue: blendedColours.hue,
+        blendedSaturation: blendedColours.saturation,
+        blendedLightness: blendedColours.lightness,
+        blendedJustification: blendedColours.justification,
       })
       .from(schema.books)
       .innerJoin(schema.authors, eq(schema.books.authorId, schema.authors.id))
@@ -41,6 +46,10 @@ async function fetchBlots(): Promise<Blot[]> {
       .leftJoin(
         llmColours,
         and(eq(llmColours.bookId, schema.books.id), eq(llmColours.source, "llm")),
+      )
+      .leftJoin(
+        blendedColours,
+        and(eq(blendedColours.bookId, schema.books.id), eq(blendedColours.source, "blended")),
       );
 
     const map = new Map<string, Blot>();
@@ -59,6 +68,12 @@ async function fetchBlots(): Promise<Blot[]> {
             row.algoJustification,
           ),
           llm: hslFrom(row.llmHue, row.llmSaturation, row.llmLightness, row.llmJustification),
+          blended: hslFrom(
+            row.blendedHue,
+            row.blendedSaturation,
+            row.blendedLightness,
+            row.blendedJustification,
+          ),
           layouts: { classical: null, modern: null, "by-hue": null },
         };
         map.set(row.bookId, blot);

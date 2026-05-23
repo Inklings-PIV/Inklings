@@ -6,6 +6,7 @@ import { fetchBookMeta } from "@/lib/ingestion/gutenberg-meta";
 import { fetchBookText } from "@/lib/ingestion/gutenberg-text";
 import { inngest } from "@/lib/inngest/client";
 import { extractClassical } from "@/lib/stylometry/classical";
+import { embedText } from "@/lib/stylometry/embed";
 
 const PayloadSchema = z.object({
   gutenbergId: z.number().int().positive(),
@@ -93,10 +94,7 @@ export const ingestBook = inngest.createFunction(
 
     const classical = await step.run("extract-classical", () => extractClassical(text));
 
-    const embedding = await step.run("embed-text", () => {
-      // TODO(#14): replace with embedText(text) from lib/stylometry/embed.ts.
-      return new Array<number>(1536).fill(0);
-    });
+    const embedding = await step.run("embed-text", () => embedText(text));
 
     await step.run("save-features", async () => {
       const db = getDb();

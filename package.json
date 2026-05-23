@@ -30,6 +30,8 @@
     "recompute:layout:prod": "cross-env NODE_ENV=production tsx scripts/recompute-layout.ts",
     "recompute:by-hue": "tsx scripts/recompute-by-hue.ts",
     "recompute:by-hue:prod": "cross-env DRIZZLE_ENV=prod tsx scripts/recompute-by-hue.ts",
+    "backfill:embeddings": "tsx scripts/backfill-embeddings.ts",
+    "backfill:embeddings:prod": "cross-env DRIZZLE_ENV=prod tsx scripts/backfill-embeddings.ts",
     "seed:corpus": "tsx scripts/seed-corpus.ts",
     "seed:all": "tsx scripts/seed-all.ts",
     "derive:colours": "tsx scripts/derive-colours.ts",

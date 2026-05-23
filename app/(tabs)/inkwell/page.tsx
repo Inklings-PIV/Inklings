@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import type { ClassicalFeatures } from "@/lib/stylometry/classical";
 import { type Blot, InkwellView } from "./inkwell-view";
@@ -17,11 +17,21 @@ async function fetchBlots(): Promise<Blot[]> {
         mode: schema.bookLayout.mode,
         x: schema.bookLayout.x,
         y: schema.bookLayout.y,
+        algoHue: schema.bookColours.hue,
+        algoSaturation: schema.bookColours.saturation,
+        algoLightness: schema.bookColours.lightness,
       })
       .from(schema.books)
       .innerJoin(schema.authors, eq(schema.books.authorId, schema.authors.id))
       .innerJoin(schema.bookLayout, eq(schema.bookLayout.bookId, schema.books.id))
-      .leftJoin(schema.bookFeatures, eq(schema.bookFeatures.bookId, schema.books.id));
+      .leftJoin(schema.bookFeatures, eq(schema.bookFeatures.bookId, schema.books.id))
+      .leftJoin(
+        schema.bookColours,
+        and(
+          eq(schema.bookColours.bookId, schema.books.id),
+          eq(schema.bookColours.source, "algorithmic"),
+        ),
+      );
 
     const map = new Map<string, Blot>();
     for (const row of rows) {
@@ -32,6 +42,14 @@ async function fetchBlots(): Promise<Blot[]> {
           title: row.title,
           authorName: row.authorName,
           classical: (row.classical as ClassicalFeatures | null) ?? null,
+          algorithmic:
+            row.algoHue != null && row.algoSaturation != null && row.algoLightness != null
+              ? {
+                  hue: row.algoHue,
+                  saturation: row.algoSaturation,
+                  lightness: row.algoLightness,
+                }
+              : null,
           layouts: { classical: null, modern: null, "by-hue": null },
         };
         map.set(row.bookId, blot);

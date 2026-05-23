@@ -3,7 +3,7 @@
 import { X } from "lucide-react";
 import { FingerprintBars, SourceHues } from "@/components/blots/widgets";
 import { Button } from "@/components/ui/button";
-import { hueFor } from "@/lib/colour/placeholder";
+import { type HSLOverride, hueFor } from "@/lib/colour/placeholder";
 import type { ClassicalFeatures } from "@/lib/stylometry/classical";
 
 export type DetailBlot = {
@@ -11,6 +11,7 @@ export type DetailBlot = {
   title: string;
   authorName: string;
   classical: ClassicalFeatures | null;
+  algorithmic: HSLOverride | null;
 };
 
 export type NeighbourBlot = {
@@ -58,7 +59,7 @@ export function BlotDetail({ blot, neighbours, onClose }: Props) {
       <div>
         <div className="text-[10px] tracking-widest text-muted-foreground uppercase">Hues</div>
         <div className="mt-2">
-          <SourceHues bookId={blot.bookId} />
+          <SourceHues bookId={blot.bookId} algorithmic={blot.algorithmic} />
         </div>
       </div>
 

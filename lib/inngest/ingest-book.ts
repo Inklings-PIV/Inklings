@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
+import { deriveAlgorithmic } from "@/lib/colour/algorithmic";
 import { getDb, schema } from "@/lib/db";
 import { fetchBookMeta } from "@/lib/ingestion/gutenberg-meta";
 import { fetchBookText } from "@/lib/ingestion/gutenberg-text";
@@ -105,6 +106,35 @@ export const ingestBook = inngest.createFunction(
         .onConflictDoUpdate({
           target: schema.bookFeatures.bookId,
           set: { classical, embedding, computedAt: new Date() },
+        });
+    });
+
+    const algorithmic = await step.run("derive-algorithmic-colour", () =>
+      deriveAlgorithmic(classical),
+    );
+
+    await step.run("save-algorithmic-colour", async () => {
+      const db = getDb();
+      const row = {
+        bookId,
+        source: "algorithmic" as const,
+        hue: algorithmic.hue,
+        saturation: algorithmic.saturation,
+        lightness: algorithmic.lightness,
+        justification: algorithmic.justification,
+      };
+      await db
+        .insert(schema.bookColours)
+        .values(row)
+        .onConflictDoUpdate({
+          target: [schema.bookColours.bookId, schema.bookColours.source],
+          set: {
+            hue: row.hue,
+            saturation: row.saturation,
+            lightness: row.lightness,
+            justification: row.justification,
+            computedAt: new Date(),
+          },
         });
     });
 

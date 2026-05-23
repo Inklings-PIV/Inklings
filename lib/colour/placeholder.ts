@@ -1,6 +1,9 @@
-// Placeholder colouring until real per-source hues land in #24-#27.
-// Hashes the bookId to a stable base hue and rotates by the selected source
-// so the four chips per book and the dot colours on the canvas agree.
+// Placeholder colouring for sources whose real deriver hasn't landed yet
+// (#25 LLM, #26 crowd, #27 blended). The algorithmic deriver IS shipped — pass
+// its `book_colours` row as the `override` and `hueFor` will use real HSL.
+//
+// Without an override: hashes bookId to a stable base hue and rotates by source,
+// so the four chips per book and the dot colours on the canvas stay consistent.
 
 export type HueSource = "algorithmic" | "llm" | "crowd" | "blended";
 
@@ -20,7 +23,15 @@ export type Hue = {
   hue: number;
 };
 
-export function hueFor(bookId: string, source: HueSource): Hue {
+export type HSLOverride = {
+  hue: number;
+  saturation: number;
+  lightness: number;
+};
+
+export function hueFor(bookId: string, source: HueSource, override?: HSLOverride | null): Hue {
+  if (override) return hueFromHSL(override.hue, override.saturation, override.lightness);
+
   let h = 0;
   for (let i = 0; i < bookId.length; i++) {
     h = (h * 31 + bookId.charCodeAt(i)) | 0;
@@ -30,6 +41,19 @@ export function hueFor(bookId: string, source: HueSource): Hue {
   return {
     rgb: hslToRgb(hue, 60, 55),
     css: `oklch(0.7 0.16 ${hue.toFixed(0)})`,
+    hue,
+  };
+}
+
+/** Pure HSL→display conversion shared by every real-source deriver. */
+export function hueFromHSL(hue: number, saturation: number, lightness: number): Hue {
+  // Approximate HSL → OKLCH for the CSS string (close enough across our
+  // muted ink palette; we don't need a perceptually-perfect transform).
+  const oklchL = (lightness / 100).toFixed(2);
+  const oklchC = ((saturation / 100) * 0.22).toFixed(3);
+  return {
+    rgb: hslToRgb(hue, saturation, lightness),
+    css: `oklch(${oklchL} ${oklchC} ${hue.toFixed(0)})`,
     hue,
   };
 }

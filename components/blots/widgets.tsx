@@ -1,4 +1,4 @@
-import { hueFor } from "@/lib/colour/placeholder";
+import { type HSLOverride, hueFor } from "@/lib/colour/placeholder";
 import type { ClassicalFeatures } from "@/lib/stylometry/classical";
 
 // 28 of the most common English function words — every book's bar over these
@@ -61,10 +61,17 @@ export function HueChip({
 }
 
 /** Renders the four per-source hue chips for a book. */
-export function SourceHues({ bookId }: { bookId: string }) {
+export function SourceHues({
+  bookId,
+  algorithmic,
+}: {
+  bookId: string;
+  /** Real HSL row when the algorithmic deriver has run; else placeholder. */
+  algorithmic?: HSLOverride | null;
+}) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      <HueChip label="Algo" color={hueFor(bookId, "algorithmic").css} />
+      <HueChip label="Algo" color={hueFor(bookId, "algorithmic", algorithmic).css} />
       <HueChip label="LLM" color={hueFor(bookId, "llm").css} />
       <HueChip label="Crowd" color={hueFor(bookId, "crowd").css} />
       <HueChip label="Blend" color={hueFor(bookId, "blended").css} ring />

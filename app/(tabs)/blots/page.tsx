@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { getDb, schema } from "@/lib/db";
 import type { ClassicalFeatures } from "@/lib/stylometry/classical";
 import { type Blot, BlotsView } from "./blots-view";
@@ -16,10 +16,20 @@ async function fetchBlots(): Promise<Blot[]> {
         ingestedAt: schema.books.ingestedAt,
         createdAt: schema.books.createdAt,
         classical: schema.bookFeatures.classical,
+        algoHue: schema.bookColours.hue,
+        algoSaturation: schema.bookColours.saturation,
+        algoLightness: schema.bookColours.lightness,
       })
       .from(schema.books)
       .innerJoin(schema.authors, eq(schema.books.authorId, schema.authors.id))
       .leftJoin(schema.bookFeatures, eq(schema.bookFeatures.bookId, schema.books.id))
+      .leftJoin(
+        schema.bookColours,
+        and(
+          eq(schema.bookColours.bookId, schema.books.id),
+          eq(schema.bookColours.source, "algorithmic"),
+        ),
+      )
       .where(eq(schema.books.status, "ready"));
 
     return rows.map((r) => ({
@@ -28,6 +38,10 @@ async function fetchBlots(): Promise<Blot[]> {
       authorName: r.authorName,
       ingestedAt: r.ingestedAt ?? r.createdAt,
       classical: (r.classical as ClassicalFeatures | null) ?? null,
+      algorithmic:
+        r.algoHue != null && r.algoSaturation != null && r.algoLightness != null
+          ? { hue: r.algoHue, saturation: r.algoSaturation, lightness: r.algoLightness }
+          : null,
     }));
   } catch {
     // DB not configured (preview build without DATABASE_URL); render empty.

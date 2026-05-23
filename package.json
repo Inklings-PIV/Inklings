@@ -28,7 +28,9 @@
     "ingest:book": "tsx scripts/ingest-book.ts",
     "recompute:layout": "tsx scripts/recompute-layout.ts",
     "seed:corpus": "tsx scripts/seed-corpus.ts",
-    "seed:all": "tsx scripts/seed-all.ts"
+    "seed:all": "tsx scripts/seed-all.ts",
+    "derive:colours": "tsx scripts/derive-colours.ts",
+    "derive:colours:prod": "cross-env DRIZZLE_ENV=prod tsx scripts/derive-colours.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

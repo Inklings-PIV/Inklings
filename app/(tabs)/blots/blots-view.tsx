@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { hueFor } from "@/lib/colour/placeholder";
+import { type HSLOverride, hueFor } from "@/lib/colour/placeholder";
 import type { ClassicalFeatures } from "@/lib/stylometry/classical";
 
 type SortKey = "recent" | "alpha" | "consensus";
@@ -18,6 +18,7 @@ export type Blot = {
   authorName: string;
   ingestedAt: Date;
   classical: ClassicalFeatures | null;
+  algorithmic: HSLOverride | null;
 };
 
 export function BlotsView({ blots }: { blots: Blot[] }) {
@@ -126,7 +127,7 @@ function EmptyState({ hasBlots, query }: { hasBlots: boolean; query: string }) {
 
 function BlotCard({ blot }: { blot: Blot }) {
   const hues = {
-    algorithmic: hueFor(blot.bookId, "algorithmic").css,
+    algorithmic: hueFor(blot.bookId, "algorithmic", blot.algorithmic).css,
     llm: hueFor(blot.bookId, "llm").css,
     crowd: hueFor(blot.bookId, "crowd").css,
     blended: hueFor(blot.bookId, "blended").css,

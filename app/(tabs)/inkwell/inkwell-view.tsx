@@ -5,7 +5,7 @@ import { type CanvasDot, CanvasShell } from "@/components/canvas/canvas-shell";
 import { BlotDetail, type NeighbourBlot } from "@/components/inkwell/blot-detail";
 import { MethodologyDialog } from "@/components/inkwell/methodology-dialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { type HueSource, hueFor } from "@/lib/colour/placeholder";
+import { type HSLOverride, type HueSource, hueFor } from "@/lib/colour/placeholder";
 import type { ClassicalFeatures } from "@/lib/stylometry/classical";
 
 type Layout = "classical" | "modern" | "by-hue";
@@ -21,6 +21,8 @@ export type Blot = {
   title: string;
   authorName: string;
   classical: ClassicalFeatures | null;
+  /** Real algorithmic HSL from book_colours when present; null falls back to placeholder. */
+  algorithmic: HSLOverride | null;
   layouts: {
     classical: { x: number; y: number } | null;
     modern: { x: number; y: number } | null;
@@ -43,7 +45,8 @@ export function InkwellView({ blots }: { blots: Blot[] }) {
         y: coord.y,
         title: b.title,
         subtitle: b.authorName,
-        color: hueFor(b.bookId, source).rgb,
+        // Real HSL when this source has a derived value; otherwise placeholder.
+        color: hueFor(b.bookId, source, source === "algorithmic" ? b.algorithmic : null).rgb,
       },
     ];
   });
@@ -141,6 +144,7 @@ export function InkwellView({ blots }: { blots: Blot[] }) {
               title: selectedBlot.title,
               authorName: selectedBlot.authorName,
               classical: selectedBlot.classical,
+              algorithmic: selectedBlot.algorithmic,
             }}
             neighbours={neighbours}
             onClose={() => setSelectedId(null)}

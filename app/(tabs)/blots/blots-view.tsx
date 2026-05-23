@@ -1,8 +1,8 @@
 "use client";
 
-import { Search, Sparkles } from "lucide-react";
+import { Loader2, Search, Sparkles } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { FingerprintBars, SourceHues } from "@/components/blots/widgets";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -10,8 +10,10 @@ import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { type HSLOverride, hueFor } from "@/lib/colour/placeholder";
 import type { ClassicalFeatures } from "@/lib/stylometry/classical";
+import { searchByVibe } from "./actions";
 
 type SortKey = "recent" | "alpha" | "consensus";
+type SearchMode = "text" | "vibe";
 
 export type Blot = {
   bookId: string;
@@ -25,14 +27,47 @@ export type Blot = {
 export function BlotsView({ blots }: { blots: Blot[] }) {
   const [sort, setSort] = useState<SortKey>("recent");
   const [query, setQuery] = useState("");
+  const [mode, setMode] = useState<SearchMode>("text");
+  const [vibeOrder, setVibeOrder] = useState<string[] | null>(null);
+  const [vibePending, startVibe] = useTransition();
+
+  // Debounced vibe search — 500ms idle before we burn an OpenAI embedding call.
+  useEffect(() => {
+    if (mode !== "vibe") {
+      setVibeOrder(null);
+      return;
+    }
+    const trimmed = query.trim();
+    if (trimmed.length === 0) {
+      setVibeOrder(null);
+      return;
+    }
+    const handle = setTimeout(() => {
+      startVibe(async () => {
+        const matches = await searchByVibe(trimmed);
+        setVibeOrder(matches.map((m) => m.bookId));
+      });
+    }, 500);
+    return () => clearTimeout(handle);
+  }, [mode, query]);
 
   const visible = useMemo(() => {
+    // Vibe mode: filter + order by the server-supplied ranking.
+    if (mode === "vibe" && vibeOrder) {
+      const rank = new Map(vibeOrder.map((id, i) => [id, i]));
+      return blots
+        .filter((b) => rank.has(b.bookId))
+        .sort((a, b) => (rank.get(a.bookId) ?? 0) - (rank.get(b.bookId) ?? 0));
+    }
+
+    // Text mode: ILIKE-ish client-side filter on title/author, then sort.
     const q = query.trim().toLowerCase();
-    const filtered = q
-      ? blots.filter(
-          (b) => b.title.toLowerCase().includes(q) || b.authorName.toLowerCase().includes(q),
-        )
-      : blots.slice();
+    const filtered =
+      mode === "text" && q
+        ? blots.filter(
+            (b) => b.title.toLowerCase().includes(q) || b.authorName.toLowerCase().includes(q),
+          )
+        : blots.slice();
 
     switch (sort) {
       case "recent":
@@ -47,7 +82,7 @@ export function BlotsView({ blots }: { blots: Blot[] }) {
         break;
     }
     return filtered;
-  }, [blots, query, sort]);
+  }, [blots, query, sort, mode, vibeOrder]);
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
@@ -68,18 +103,40 @@ export function BlotsView({ blots }: { blots: Blot[] }) {
           <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
           <input
             type="search"
-            placeholder="Search by title or author…"
+            placeholder={
+              mode === "vibe"
+                ? "Describe a vibe — e.g. lonely man at sea…"
+                : "Search by title or author…"
+            }
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="h-9 w-full rounded-md border border-border bg-card pr-3 pl-9 text-sm placeholder:text-muted-foreground focus:ring-2 focus:ring-ring/40 focus:outline-none"
+            className="h-9 w-full rounded-md border border-border bg-card pr-9 pl-9 text-sm placeholder:text-muted-foreground focus:ring-2 focus:ring-ring/40 focus:outline-none"
           />
+          {vibePending && (
+            <Loader2
+              aria-label="Searching"
+              className="absolute top-1/2 right-3 size-4 -translate-y-1/2 animate-spin text-muted-foreground"
+            />
+          )}
         </div>
+        <ToggleGroup
+          type="single"
+          value={mode}
+          onValueChange={(v) => v && setMode(v as SearchMode)}
+          variant="outline"
+          size="sm"
+        >
+          <ToggleGroupItem value="text">Title/Author</ToggleGroupItem>
+          <ToggleGroupItem value="vibe">Vibe</ToggleGroupItem>
+        </ToggleGroup>
         <ToggleGroup
           type="single"
           value={sort}
           onValueChange={(v) => v && setSort(v as SortKey)}
           variant="outline"
           size="sm"
+          // Vibe mode imposes its own ordering — disable sort to avoid confusion.
+          disabled={mode === "vibe"}
         >
           <ToggleGroupItem value="recent">Recent</ToggleGroupItem>
           <ToggleGroupItem value="alpha">A–Z</ToggleGroupItem>

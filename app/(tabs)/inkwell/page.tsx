@@ -1,4 +1,6 @@
 import { and, eq } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
+import type { HSLOverride } from "@/lib/colour/placeholder";
 import { getDb, schema } from "@/lib/db";
 import type { ClassicalFeatures } from "@/lib/stylometry/classical";
 import { type Blot, InkwellView } from "./inkwell-view";
@@ -8,6 +10,8 @@ export const dynamic = "force-dynamic";
 async function fetchBlots(): Promise<Blot[]> {
   try {
     const db = getDb();
+    const algoColours = alias(schema.bookColours, "algo_colours");
+    const llmColours = alias(schema.bookColours, "llm_colours");
     const rows = await db
       .select({
         bookId: schema.books.id,
@@ -17,21 +21,26 @@ async function fetchBlots(): Promise<Blot[]> {
         mode: schema.bookLayout.mode,
         x: schema.bookLayout.x,
         y: schema.bookLayout.y,
-        algoHue: schema.bookColours.hue,
-        algoSaturation: schema.bookColours.saturation,
-        algoLightness: schema.bookColours.lightness,
-        algoJustification: schema.bookColours.justification,
+        algoHue: algoColours.hue,
+        algoSaturation: algoColours.saturation,
+        algoLightness: algoColours.lightness,
+        algoJustification: algoColours.justification,
+        llmHue: llmColours.hue,
+        llmSaturation: llmColours.saturation,
+        llmLightness: llmColours.lightness,
+        llmJustification: llmColours.justification,
       })
       .from(schema.books)
       .innerJoin(schema.authors, eq(schema.books.authorId, schema.authors.id))
       .innerJoin(schema.bookLayout, eq(schema.bookLayout.bookId, schema.books.id))
       .leftJoin(schema.bookFeatures, eq(schema.bookFeatures.bookId, schema.books.id))
       .leftJoin(
-        schema.bookColours,
-        and(
-          eq(schema.bookColours.bookId, schema.books.id),
-          eq(schema.bookColours.source, "algorithmic"),
-        ),
+        algoColours,
+        and(eq(algoColours.bookId, schema.books.id), eq(algoColours.source, "algorithmic")),
+      )
+      .leftJoin(
+        llmColours,
+        and(eq(llmColours.bookId, schema.books.id), eq(llmColours.source, "llm")),
       );
 
     const map = new Map<string, Blot>();
@@ -43,15 +52,13 @@ async function fetchBlots(): Promise<Blot[]> {
           title: row.title,
           authorName: row.authorName,
           classical: (row.classical as ClassicalFeatures | null) ?? null,
-          algorithmic:
-            row.algoHue != null && row.algoSaturation != null && row.algoLightness != null
-              ? {
-                  hue: row.algoHue,
-                  saturation: row.algoSaturation,
-                  lightness: row.algoLightness,
-                  justification: row.algoJustification,
-                }
-              : null,
+          algorithmic: hslFrom(
+            row.algoHue,
+            row.algoSaturation,
+            row.algoLightness,
+            row.algoJustification,
+          ),
+          llm: hslFrom(row.llmHue, row.llmSaturation, row.llmLightness, row.llmJustification),
           layouts: { classical: null, modern: null, "by-hue": null },
         };
         map.set(row.bookId, blot);
@@ -63,6 +70,17 @@ async function fetchBlots(): Promise<Blot[]> {
     // DB not configured (e.g., preview build without DATABASE_URL); return empty.
     return [];
   }
+}
+
+function hslFrom(
+  h: number | null,
+  s: number | null,
+  l: number | null,
+  j: string | null,
+): HSLOverride | null {
+  return h != null && s != null && l != null
+    ? { hue: h, saturation: s, lightness: l, justification: j }
+    : null;
 }
 
 export default async function InkwellPage({

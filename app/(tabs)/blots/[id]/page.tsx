@@ -1,4 +1,5 @@
 import { and, eq } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { ArrowLeft, ArrowRight } from "lucide-react";
 import type { Metadata } from "next";
 import Link from "next/link";
@@ -24,11 +25,14 @@ type BlotPageData = {
   authorDeath: number | null;
   classical: ClassicalFeatures | null;
   algorithmic: HSLOverride | null;
+  llm: HSLOverride | null;
 };
 
 async function fetchBlot(id: string): Promise<BlotPageData | null> {
   try {
     const db = getDb();
+    const algoColours = alias(schema.bookColours, "algo_colours");
+    const llmColours = alias(schema.bookColours, "llm_colours");
     const [row] = await db
       .select({
         bookId: schema.books.id,
@@ -41,20 +45,25 @@ async function fetchBlot(id: string): Promise<BlotPageData | null> {
         authorBirth: schema.authors.birthYear,
         authorDeath: schema.authors.deathYear,
         classical: schema.bookFeatures.classical,
-        algoHue: schema.bookColours.hue,
-        algoSaturation: schema.bookColours.saturation,
-        algoLightness: schema.bookColours.lightness,
-        algoJustification: schema.bookColours.justification,
+        algoHue: algoColours.hue,
+        algoSaturation: algoColours.saturation,
+        algoLightness: algoColours.lightness,
+        algoJustification: algoColours.justification,
+        llmHue: llmColours.hue,
+        llmSaturation: llmColours.saturation,
+        llmLightness: llmColours.lightness,
+        llmJustification: llmColours.justification,
       })
       .from(schema.books)
       .innerJoin(schema.authors, eq(schema.books.authorId, schema.authors.id))
       .leftJoin(schema.bookFeatures, eq(schema.bookFeatures.bookId, schema.books.id))
       .leftJoin(
-        schema.bookColours,
-        and(
-          eq(schema.bookColours.bookId, schema.books.id),
-          eq(schema.bookColours.source, "algorithmic"),
-        ),
+        algoColours,
+        and(eq(algoColours.bookId, schema.books.id), eq(algoColours.source, "algorithmic")),
+      )
+      .leftJoin(
+        llmColours,
+        and(eq(llmColours.bookId, schema.books.id), eq(llmColours.source, "llm")),
       )
       .where(eq(schema.books.id, id))
       .limit(1);
@@ -72,19 +81,28 @@ async function fetchBlot(id: string): Promise<BlotPageData | null> {
       authorBirth: row.authorBirth,
       authorDeath: row.authorDeath,
       classical: (row.classical as ClassicalFeatures | null) ?? null,
-      algorithmic:
-        row.algoHue != null && row.algoSaturation != null && row.algoLightness != null
-          ? {
-              hue: row.algoHue,
-              saturation: row.algoSaturation,
-              lightness: row.algoLightness,
-              justification: row.algoJustification,
-            }
-          : null,
+      algorithmic: hslFrom(
+        row.algoHue,
+        row.algoSaturation,
+        row.algoLightness,
+        row.algoJustification,
+      ),
+      llm: hslFrom(row.llmHue, row.llmSaturation, row.llmLightness, row.llmJustification),
     };
   } catch {
     return null;
   }
+}
+
+function hslFrom(
+  h: number | null,
+  s: number | null,
+  l: number | null,
+  j: string | null,
+): HSLOverride | null {
+  return h != null && s != null && l != null
+    ? { hue: h, saturation: s, lightness: l, justification: j }
+    : null;
 }
 
 export async function generateMetadata({
@@ -152,10 +170,10 @@ export default async function BlotPage({ params }: { params: Promise<{ id: strin
       <Separator className="my-6" />
 
       <Section title="Hues">
-        <SourceHues bookId={blot.bookId} algorithmic={blot.algorithmic} />
+        <SourceHues bookId={blot.bookId} algorithmic={blot.algorithmic} llm={blot.llm} />
         <ul className="mt-3 space-y-1 text-xs leading-snug text-muted-foreground">
           <Reasoning label="Algo" text={blot.algorithmic?.justification} />
-          <Reasoning label="LLM" text={null} />
+          <Reasoning label="LLM" text={blot.llm?.justification} />
           <Reasoning label="Crowd" text={null} />
           <Reasoning label="Blend" text={null} />
         </ul>

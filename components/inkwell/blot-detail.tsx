@@ -13,6 +13,7 @@ export type DetailBlot = {
   authorName: string;
   classical: ClassicalFeatures | null;
   algorithmic: HSLOverride | null;
+  llm: HSLOverride | null;
 };
 
 export type NeighbourBlot = {
@@ -41,8 +42,13 @@ const SOURCE_LABEL: Record<HueSource, string> = {
 
 export function BlotDetail({ blot, neighbours, source, onClose, onSelectNeighbour }: Props) {
   const blendedCss = hueFor(blot.bookId, "blended").css;
-  // Today only algorithmic has a real justification; others fall back below.
-  const justification = source === "algorithmic" ? blot.algorithmic?.justification : null;
+  // Algo + LLM have real justifications; crowd/blend stay placeholder until #26/#27.
+  const justification =
+    source === "algorithmic"
+      ? blot.algorithmic?.justification
+      : source === "llm"
+        ? blot.llm?.justification
+        : null;
 
   return (
     <div className="flex h-full flex-col gap-5">
@@ -73,7 +79,7 @@ export function BlotDetail({ blot, neighbours, source, onClose, onSelectNeighbou
       <div>
         <div className="text-[10px] tracking-widest text-muted-foreground uppercase">Hues</div>
         <div className="mt-2">
-          <SourceHues bookId={blot.bookId} algorithmic={blot.algorithmic} />
+          <SourceHues bookId={blot.bookId} algorithmic={blot.algorithmic} llm={blot.llm} />
         </div>
         <p className="mt-2 text-xs italic leading-snug text-muted-foreground">
           {justification ? (

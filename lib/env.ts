@@ -12,8 +12,9 @@ export const env = createEnv({
     // Required: ingestion writes embeddings (#14) and /blots vibe search (#29)
     // both call OpenAI.
     OPENAI_API_KEY: z.string().min(1),
-    // Optional until #25 (LLM colour deriver) / #38 (Quill rewrites) ship.
-    ANTHROPIC_API_KEY: z.string().min(1).optional(),
+    // Required: #25 LLM colour deriver and the ingest pipeline both call
+    // Claude. #38 Quill rewrites will use the same key.
+    ANTHROPIC_API_KEY: z.string().min(1),
     // Optional until #39 (iron-session scribe cookie) ships.
     SESSION_SECRET: z.string().min(32).optional(),
     // Optional in dev (uses the local Inngest dev server); required in prod

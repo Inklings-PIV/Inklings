@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { deriveAlgorithmic } from "@/lib/colour/algorithmic";
+import { deriveLLM } from "@/lib/colour/llm";
 import { getDb, schema } from "@/lib/db";
 import { fetchBookMeta } from "@/lib/ingestion/gutenberg-meta";
 import { fetchBookText } from "@/lib/ingestion/gutenberg-text";
@@ -120,6 +121,35 @@ export const ingestBook = inngest.createFunction(
         saturation: algorithmic.saturation,
         lightness: algorithmic.lightness,
         justification: algorithmic.justification,
+      };
+      await db
+        .insert(schema.bookColours)
+        .values(row)
+        .onConflictDoUpdate({
+          target: [schema.bookColours.bookId, schema.bookColours.source],
+          set: {
+            hue: row.hue,
+            saturation: row.saturation,
+            lightness: row.lightness,
+            justification: row.justification,
+            computedAt: new Date(),
+          },
+        });
+    });
+
+    const llm = await step.run("derive-llm-colour", () =>
+      deriveLLM({ title: meta.title, authorName: meta.authors[0]?.name ?? "Unknown", classical }),
+    );
+
+    await step.run("save-llm-colour", async () => {
+      const db = getDb();
+      const row = {
+        bookId,
+        source: "llm" as const,
+        hue: llm.hue,
+        saturation: llm.saturation,
+        lightness: llm.lightness,
+        justification: llm.justification,
       };
       await db
         .insert(schema.bookColours)

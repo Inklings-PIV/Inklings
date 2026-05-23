@@ -23,6 +23,8 @@ export type Blot = {
   classical: ClassicalFeatures | null;
   /** Real algorithmic HSL from book_colours when present; null falls back to placeholder. */
   algorithmic: HSLOverride | null;
+  /** Real LLM HSL from book_colours when present; null falls back to placeholder. */
+  llm: HSLOverride | null;
   layouts: {
     classical: { x: number; y: number } | null;
     modern: { x: number; y: number } | null;
@@ -53,7 +55,7 @@ export function InkwellView({
         title: b.title,
         subtitle: b.authorName,
         // Real HSL when this source has a derived value; otherwise placeholder.
-        color: hueFor(b.bookId, source, source === "algorithmic" ? b.algorithmic : null).rgb,
+        color: hueFor(b.bookId, source, overrideFor(b, source)).rgb,
       },
     ];
   });
@@ -152,6 +154,7 @@ export function InkwellView({
               authorName: selectedBlot.authorName,
               classical: selectedBlot.classical,
               algorithmic: selectedBlot.algorithmic,
+              llm: selectedBlot.llm,
             }}
             neighbours={neighbours}
             source={source}
@@ -176,4 +179,16 @@ export function InkwellView({
       }
     />
   );
+}
+
+/** Returns the real HSL row for the current source if it exists, else null. */
+function overrideFor(blot: Blot, source: HueSource): HSLOverride | null {
+  switch (source) {
+    case "algorithmic":
+      return blot.algorithmic;
+    case "llm":
+      return blot.llm;
+    default:
+      return null;
+  }
 }

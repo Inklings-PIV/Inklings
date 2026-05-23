@@ -69,26 +69,22 @@ const PLACEHOLDER_REASON = "Placeholder colour — deriver not built yet";
 export function SourceHues({
   bookId,
   algorithmic,
+  llm,
 }: {
   bookId: string;
   /** Real HSL row when the algorithmic deriver has run; else placeholder. */
   algorithmic?: HSLOverride | null;
+  /** Real HSL row when the LLM deriver has run; else placeholder. */
+  llm?: HSLOverride | null;
 }) {
-  const algoTitle = algorithmic?.justification
-    ? `Algo · ${algorithmic.justification}`
-    : `Algo · ${PLACEHOLDER_REASON}`;
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <HueChip
         label="Algo"
         color={hueFor(bookId, "algorithmic", algorithmic).css}
-        title={algoTitle}
+        title={titleFor("Algo", algorithmic)}
       />
-      <HueChip
-        label="LLM"
-        color={hueFor(bookId, "llm").css}
-        title={`LLM · ${PLACEHOLDER_REASON}`}
-      />
+      <HueChip label="LLM" color={hueFor(bookId, "llm", llm).css} title={titleFor("LLM", llm)} />
       <HueChip
         label="Crowd"
         color={hueFor(bookId, "crowd").css}
@@ -102,6 +98,12 @@ export function SourceHues({
       />
     </div>
   );
+}
+
+function titleFor(label: string, override: HSLOverride | null | undefined): string {
+  return override?.justification
+    ? `${label} · ${override.justification}`
+    : `${label} · ${PLACEHOLDER_REASON}`;
 }
 
 /** Per-book bar chart of function-word frequencies — a "fingerprint". */

@@ -22,6 +22,7 @@ export type Blot = {
   ingestedAt: Date;
   classical: ClassicalFeatures | null;
   algorithmic: HSLOverride | null;
+  llm: HSLOverride | null;
 };
 
 export function BlotsView({ blots }: { blots: Blot[] }) {
@@ -207,7 +208,7 @@ function BlotCard({ blot }: { blot: Blot }) {
           <p className="text-xs text-muted-foreground">{blot.authorName}</p>
         </div>
 
-        <SourceHues bookId={blot.bookId} algorithmic={blot.algorithmic} />
+        <SourceHues bookId={blot.bookId} algorithmic={blot.algorithmic} llm={blot.llm} />
 
         <FingerprintBars features={blot.classical} />
       </CardContent>

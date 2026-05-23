@@ -37,7 +37,9 @@
     "seed:corpus": "tsx scripts/seed-corpus.ts",
     "seed:all": "tsx scripts/seed-all.ts",
     "derive:colours": "tsx scripts/derive-colours.ts",
-    "derive:colours:prod": "cross-env DRIZZLE_ENV=prod tsx scripts/derive-colours.ts"
+    "derive:colours:prod": "cross-env DRIZZLE_ENV=prod tsx scripts/derive-colours.ts",
+    "derive:llm-colours": "tsx scripts/derive-llm-colours.ts",
+    "derive:llm-colours:prod": "cross-env DRIZZLE_ENV=prod tsx scripts/derive-llm-colours.ts"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

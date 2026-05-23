@@ -3,7 +3,7 @@
 import { X } from "lucide-react";
 import { FingerprintBars, SourceHues } from "@/components/blots/widgets";
 import { Button } from "@/components/ui/button";
-import { type HSLOverride, hueFor } from "@/lib/colour/placeholder";
+import { type HSLOverride, type HueSource, hueFor } from "@/lib/colour/placeholder";
 import type { ClassicalFeatures } from "@/lib/stylometry/classical";
 
 export type DetailBlot = {
@@ -24,11 +24,22 @@ export type NeighbourBlot = {
 type Props = {
   blot: DetailBlot;
   neighbours: NeighbourBlot[];
+  /** Drives the mode-aware "why this colour" line under the Hues block. */
+  source: HueSource;
   onClose: () => void;
 };
 
-export function BlotDetail({ blot, neighbours, onClose }: Props) {
+const SOURCE_LABEL: Record<HueSource, string> = {
+  algorithmic: "Algo",
+  llm: "LLM",
+  crowd: "Crowd",
+  blended: "Blend",
+};
+
+export function BlotDetail({ blot, neighbours, source, onClose }: Props) {
   const blendedCss = hueFor(blot.bookId, "blended").css;
+  // Today only algorithmic has a real justification; others fall back below.
+  const justification = source === "algorithmic" ? blot.algorithmic?.justification : null;
 
   return (
     <div className="flex h-full flex-col gap-5">
@@ -61,6 +72,23 @@ export function BlotDetail({ blot, neighbours, onClose }: Props) {
         <div className="mt-2">
           <SourceHues bookId={blot.bookId} algorithmic={blot.algorithmic} />
         </div>
+        <p className="mt-2 text-xs italic leading-snug text-muted-foreground">
+          {justification ? (
+            <>
+              <span className="font-semibold not-italic text-ink-deep">
+                {SOURCE_LABEL[source]}:
+              </span>{" "}
+              {justification}
+            </>
+          ) : (
+            <>
+              <span className="font-semibold not-italic text-ink-deep">
+                {SOURCE_LABEL[source]}:
+              </span>{" "}
+              not derived yet — showing a placeholder colour.
+            </>
+          )}
+        </p>
       </div>
 
       <div>

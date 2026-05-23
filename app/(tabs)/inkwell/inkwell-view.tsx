@@ -147,6 +147,7 @@ export function InkwellView({ blots }: { blots: Blot[] }) {
               algorithmic: selectedBlot.algorithmic,
             }}
             neighbours={neighbours}
+            source={source}
             onClose={() => setSelectedId(null)}
           />
         ) : (

@@ -38,15 +38,18 @@ export function HueChip({
   label,
   color,
   ring = false,
+  title,
 }: {
   label: string;
   color: string;
   ring?: boolean;
+  /** Hover tooltip; falls back to `label` when omitted. */
+  title?: string;
 }) {
   return (
     <div
       className="flex items-center gap-1 rounded-full border border-border bg-background/70 px-1.5 py-0.5"
-      title={label}
+      title={title ?? label}
     >
       <span
         className="size-3 rounded-full border border-border/60"
@@ -60,6 +63,8 @@ export function HueChip({
   );
 }
 
+const PLACEHOLDER_REASON = "Placeholder colour — deriver not built yet";
+
 /** Renders the four per-source hue chips for a book. */
 export function SourceHues({
   bookId,
@@ -69,12 +74,32 @@ export function SourceHues({
   /** Real HSL row when the algorithmic deriver has run; else placeholder. */
   algorithmic?: HSLOverride | null;
 }) {
+  const algoTitle = algorithmic?.justification
+    ? `Algo · ${algorithmic.justification}`
+    : `Algo · ${PLACEHOLDER_REASON}`;
   return (
     <div className="flex flex-wrap items-center gap-1.5">
-      <HueChip label="Algo" color={hueFor(bookId, "algorithmic", algorithmic).css} />
-      <HueChip label="LLM" color={hueFor(bookId, "llm").css} />
-      <HueChip label="Crowd" color={hueFor(bookId, "crowd").css} />
-      <HueChip label="Blend" color={hueFor(bookId, "blended").css} ring />
+      <HueChip
+        label="Algo"
+        color={hueFor(bookId, "algorithmic", algorithmic).css}
+        title={algoTitle}
+      />
+      <HueChip
+        label="LLM"
+        color={hueFor(bookId, "llm").css}
+        title={`LLM · ${PLACEHOLDER_REASON}`}
+      />
+      <HueChip
+        label="Crowd"
+        color={hueFor(bookId, "crowd").css}
+        title={`Crowd · ${PLACEHOLDER_REASON}`}
+      />
+      <HueChip
+        label="Blend"
+        color={hueFor(bookId, "blended").css}
+        ring
+        title={`Blend · ${PLACEHOLDER_REASON}`}
+      />
     </div>
   );
 }

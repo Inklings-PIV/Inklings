@@ -20,6 +20,7 @@ async function fetchBlots(): Promise<Blot[]> {
         algoHue: schema.bookColours.hue,
         algoSaturation: schema.bookColours.saturation,
         algoLightness: schema.bookColours.lightness,
+        algoJustification: schema.bookColours.justification,
       })
       .from(schema.books)
       .innerJoin(schema.authors, eq(schema.books.authorId, schema.authors.id))
@@ -48,6 +49,7 @@ async function fetchBlots(): Promise<Blot[]> {
                   hue: row.algoHue,
                   saturation: row.algoSaturation,
                   lightness: row.algoLightness,
+                  justification: row.algoJustification,
                 }
               : null,
           layouts: { classical: null, modern: null, "by-hue": null },

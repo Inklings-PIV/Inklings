@@ -27,6 +27,8 @@ export type HSLOverride = {
   hue: number;
   saturation: number;
   lightness: number;
+  /** Saved with the colour row; surfaces in chip tooltips + detail panel. */
+  justification?: string | null;
 };
 
 export function hueFor(bookId: string, source: HueSource, override?: HSLOverride | null): Hue {

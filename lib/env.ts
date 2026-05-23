@@ -1,13 +1,24 @@
 import { createEnv } from "@t3-oss/env-nextjs";
 import { z } from "zod";
 
+// Each var is required at validation time once its consumer ships; the rest
+// stay optional until they do. `SKIP_ENV_VALIDATION=true` is the escape hatch
+// for environments that don't need the consumer (CI, transient scripts).
 export const env = createEnv({
   server: {
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-    DATABASE_URL: z.string().min(1).optional(),
-    OPENAI_API_KEY: z.string().min(1).optional(),
+    // Required: every page reads from the DB.
+    DATABASE_URL: z.string().min(1),
+    // Required: ingestion writes embeddings (#14) and /blots vibe search (#29)
+    // both call OpenAI.
+    OPENAI_API_KEY: z.string().min(1),
+    // Optional until #25 (LLM colour deriver) / #38 (Quill rewrites) ship.
     ANTHROPIC_API_KEY: z.string().min(1).optional(),
+    // Optional until #39 (iron-session scribe cookie) ships.
     SESSION_SECRET: z.string().min(32).optional(),
+    // Optional in dev (uses the local Inngest dev server); required in prod
+    // for the deployed Inngest function to send/receive events. Enforced by
+    // the seed-all script's pre-flight check, not here.
     INNGEST_EVENT_KEY: z.string().optional(),
     INNGEST_SIGNING_KEY: z.string().optional(),
   },

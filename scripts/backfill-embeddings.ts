@@ -19,11 +19,6 @@ import { fetchBookText } from "../lib/ingestion/gutenberg-text";
 import { embedText } from "../lib/stylometry/embed";
 
 async function main() {
-  if (!process.env.OPENAI_API_KEY) {
-    process.stderr.write("ERR  OPENAI_API_KEY is required — add it to .env.local\n");
-    process.exit(1);
-  }
-
   // Optional positional arg: a Gutenberg ID to embed in isolation. Skips the
   // others — useful for retrying a single book after a TPM-cap failure.
   const onlyArg = process.argv[2];

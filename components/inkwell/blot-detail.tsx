@@ -11,6 +11,7 @@ export type DetailBlot = {
   bookId: string;
   title: string;
   authorName: string;
+  authorSlug: string;
   classical: ClassicalFeatures | null;
   algorithmic: HSLOverride | null;
   llm: HSLOverride | null;
@@ -70,7 +71,14 @@ export function BlotDetail({ blot, neighbours, source, onClose, onSelectNeighbou
           />
           <div className="min-w-0">
             <h2 className="font-serif text-base leading-tight text-ink-deep">{blot.title}</h2>
-            <p className="mt-0.5 text-xs text-muted-foreground">{blot.authorName}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              <Link
+                href={`/authors/${blot.authorSlug}`}
+                className="hover:text-ink-deep hover:underline"
+              >
+                {blot.authorName}
+              </Link>
+            </p>
           </div>
         </div>
         <Button

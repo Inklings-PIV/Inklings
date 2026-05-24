@@ -1,14 +1,12 @@
 "use client";
 
 import { Loader2, Search, Sparkles } from "lucide-react";
-import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { FingerprintBars, SourceHues } from "@/components/blots/widgets";
+import { BlotCard } from "@/components/blots/card";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { type HSLOverride, hueFor } from "@/lib/colour/placeholder";
+import type { HSLOverride } from "@/lib/colour/placeholder";
 import type { ClassicalFeatures } from "@/lib/stylometry/classical";
 import { searchByVibe } from "./actions";
 
@@ -19,6 +17,7 @@ export type Blot = {
   bookId: string;
   title: string;
   authorName: string;
+  authorSlug: string;
   ingestedAt: Date;
   classical: ClassicalFeatures | null;
   algorithmic: HSLOverride | null;
@@ -161,12 +160,7 @@ export function BlotsView({ blots }: { blots: Blot[] }) {
         <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {visible.map((blot) => (
             <li key={blot.bookId}>
-              <Link
-                href={`/blots/${blot.bookId}`}
-                className="block h-full rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-              >
-                <BlotCard blot={blot} />
-              </Link>
+              <BlotCard blot={blot} />
             </li>
           ))}
         </ul>
@@ -194,38 +188,5 @@ function EmptyState({ hasBlots, query }: { hasBlots: boolean; query: string }) {
       <p className="text-sm text-muted-foreground">No blots ingested yet.</p>
       <code className="mt-3 inline-block rounded bg-muted px-2 py-1 text-xs">pnpm seed:all</code>
     </div>
-  );
-}
-
-function BlotCard({ blot }: { blot: Blot }) {
-  const blendedCss = hueFor(blot.bookId, "blended", blot.blended).css;
-
-  return (
-    <Card className="h-full bg-card/60 transition-shadow hover:shadow-md">
-      <CardHeader className="pb-2">
-        <div
-          role="img"
-          aria-label="Blended hue"
-          className="size-10 rounded-full border border-border shadow-inner"
-          style={{ backgroundColor: blendedCss }}
-        />
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3 pt-2">
-        <div>
-          <h3 className="font-serif text-base leading-tight text-ink-deep">{blot.title}</h3>
-          <p className="text-xs text-muted-foreground">{blot.authorName}</p>
-        </div>
-
-        <SourceHues
-          bookId={blot.bookId}
-          algorithmic={blot.algorithmic}
-          llm={blot.llm}
-          crowd={blot.crowd}
-          blended={blot.blended}
-        />
-
-        <FingerprintBars features={blot.classical} />
-      </CardContent>
-    </Card>
   );
 }

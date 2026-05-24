@@ -21,6 +21,7 @@ type BlotPageData = {
   wordCount: number | null;
   ingestedAt: Date | null;
   authorName: string;
+  authorSlug: string;
   authorBirth: number | null;
   authorDeath: number | null;
   classical: ClassicalFeatures | null;
@@ -45,6 +46,7 @@ async function fetchBlot(id: string): Promise<BlotPageData | null> {
       wordCount: schema.books.wordCount,
       ingestedAt: schema.books.ingestedAt,
       authorName: schema.authors.name,
+      authorSlug: schema.authors.slug,
       authorBirth: schema.authors.birthYear,
       authorDeath: schema.authors.deathYear,
       classical: schema.bookFeatures.classical,
@@ -94,6 +96,7 @@ async function fetchBlot(id: string): Promise<BlotPageData | null> {
     wordCount: row.wordCount,
     ingestedAt: row.ingestedAt,
     authorName: row.authorName,
+    authorSlug: row.authorSlug,
     authorBirth: row.authorBirth,
     authorDeath: row.authorDeath,
     classical: (row.classical as ClassicalFeatures | null) ?? null,
@@ -166,7 +169,12 @@ export default async function BlotPage({ params }: { params: Promise<{ id: strin
             {blot.title}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {blot.authorName}
+            <Link
+              href={`/authors/${blot.authorSlug}`}
+              className="hover:text-ink-deep hover:underline"
+            >
+              {blot.authorName}
+            </Link>
             {lifespan ? ` ${lifespan}` : ""}
           </p>
           <p className="mt-2 text-xs text-muted-foreground">

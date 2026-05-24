@@ -18,6 +18,7 @@ async function fetchBlots(): Promise<Blot[]> {
       bookId: schema.books.id,
       title: schema.books.title,
       authorName: schema.authors.name,
+      authorSlug: schema.authors.slug,
       classical: schema.bookFeatures.classical,
       mode: schema.bookLayout.mode,
       x: schema.bookLayout.x,
@@ -65,6 +66,7 @@ async function fetchBlots(): Promise<Blot[]> {
         bookId: row.bookId,
         title: row.title,
         authorName: row.authorName,
+        authorSlug: row.authorSlug,
         classical: (row.classical as ClassicalFeatures | null) ?? null,
         algorithmic: hslFrom(
           row.algoHue,

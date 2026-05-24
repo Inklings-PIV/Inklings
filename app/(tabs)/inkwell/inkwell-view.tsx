@@ -20,6 +20,7 @@ export type Blot = {
   bookId: string;
   title: string;
   authorName: string;
+  authorSlug: string;
   classical: ClassicalFeatures | null;
   /** Real algorithmic HSL from book_colours when present; null falls back to placeholder. */
   algorithmic: HSLOverride | null;
@@ -156,6 +157,7 @@ export function InkwellView({
               bookId: selectedBlot.bookId,
               title: selectedBlot.title,
               authorName: selectedBlot.authorName,
+              authorSlug: selectedBlot.authorSlug,
               classical: selectedBlot.classical,
               algorithmic: selectedBlot.algorithmic,
               llm: selectedBlot.llm,

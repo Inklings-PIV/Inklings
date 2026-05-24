@@ -1,10 +1,8 @@
 import type { Metadata, Viewport } from "next";
 import { EB_Garamond, Fraunces } from "next/font/google";
-import { cookies } from "next/headers";
 import type { ReactNode } from "react";
 import { Providers } from "@/components/providers";
 import { SiteNav } from "@/components/site-nav";
-import { THEME_COOKIE } from "@/lib/theme/cookie";
 import "./globals.css";
 
 // Body / serif: EB Garamond — old-style, narrow, reads like a printed page.
@@ -94,27 +92,16 @@ export const viewport: Viewport = {
   colorScheme: "light dark",
 };
 
-// Inline head script that resolves the dark-mode class before paint, for
-// users whose cookie isn't set yet (the "system" default). When the cookie
-// IS set, the server has already applied the class — this script then just
-// re-asserts the same value, so it's idempotent and FOUC-free either way.
-const THEME_INIT_SCRIPT = `(function(){try{var m=document.cookie.match(/(?:^|;\\s*)${THEME_COOKIE}=([^;]*)/);var t=m?m[1]:null;var d=document.documentElement;if(t==="dark"){d.classList.add("dark");}else if(t!=="light"&&window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches){d.classList.add("dark");}}catch(e){}})();`;
-
-export default async function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
-  const jar = await cookies();
-  const themeCookie = jar.get(THEME_COOKIE)?.value;
-  // Only "dark" applies a class server-side. "light" or missing render
-  // without the class; the inline script then upgrades to dark for
-  // matching system preferences. Keeps SSR markup deterministic.
-  const htmlClass = `${ebGaramond.variable} ${fraunces.variable}${
-    themeCookie === "dark" ? " dark" : ""
-  }`;
+export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="en" className={htmlClass} suppressHydrationWarning>
-      <head>
-        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: trusted inline shim, no user data */}
-        <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
-      </head>
+    // suppressHydrationWarning is required by next-themes: the provider
+    // injects an inline head script that adds the `dark` class before
+    // hydration, which would otherwise log as a mismatch.
+    <html
+      lang="en"
+      className={`${ebGaramond.variable} ${fraunces.variable}`}
+      suppressHydrationWarning
+    >
       <body className="flex min-h-dvh flex-col bg-background text-foreground antialiased">
         <Providers>
           <SiteNav />

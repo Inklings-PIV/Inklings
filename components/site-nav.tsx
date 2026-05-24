@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
 
 export const GITHUB_URL = "https://github.com/Inklings-PIV/Inklings";
@@ -50,6 +51,7 @@ export function SiteNav() {
               </li>
             ))}
           </ul>
+          <ThemeToggle />
           <GithubLink />
           {onHome && <CtaButton href="/inkwell" label="Enter the Inkwell" />}
           <button

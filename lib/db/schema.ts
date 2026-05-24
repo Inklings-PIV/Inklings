@@ -37,6 +37,13 @@ export const contributionStatusEnum = pgEnum("contribution_status", [
 
 export const scribeRoleEnum = pgEnum("scribe_role", ["scribe", "moderator"]);
 
+export const excerptStrategyEnum = pgEnum("excerpt_strategy", [
+  "random",
+  "first-page",
+  "longest-paragraph",
+  "representative",
+]);
+
 // ---------------------------------------------------------------------------
 // Identity: scribes (anonymous-first, optional email upgrade)
 // ---------------------------------------------------------------------------
@@ -156,6 +163,23 @@ export const bookColours = pgTable(
     computedAt: timestamp("computed_at", { withTimezone: true }).notNull().default(sql`now()`),
   },
   (table) => [uniqueIndex("book_colours_book_source_idx").on(table.bookId, table.source)],
+);
+
+// Cached excerpts so the game shows the same passage to every player and
+// the LLM colour deriver can swap to grounded-by-excerpt without re-fetching
+// Gutenberg text on every call. One row per (book, strategy).
+export const bookExcerpts = pgTable(
+  "book_excerpts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    bookId: uuid("book_id")
+      .notNull()
+      .references(() => books.id, { onDelete: "cascade" }),
+    strategy: excerptStrategyEnum("strategy").notNull(),
+    excerpt: text("excerpt").notNull(),
+    computedAt: timestamp("computed_at", { withTimezone: true }).notNull().default(sql`now()`),
+  },
+  (table) => [uniqueIndex("book_excerpts_book_strategy_idx").on(table.bookId, table.strategy)],
 );
 
 export const colourVotes = pgTable(
@@ -391,6 +415,9 @@ export type NewBookLayout = typeof bookLayout.$inferInsert;
 
 export type BookColour = typeof bookColours.$inferSelect;
 export type NewBookColour = typeof bookColours.$inferInsert;
+
+export type BookExcerpt = typeof bookExcerpts.$inferSelect;
+export type NewBookExcerpt = typeof bookExcerpts.$inferInsert;
 
 export type ColourVote = typeof colourVotes.$inferSelect;
 export type NewColourVote = typeof colourVotes.$inferInsert;

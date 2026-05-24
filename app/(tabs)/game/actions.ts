@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { ensureScribe } from "@/lib/auth/scribe";
 import { hueFromHSL } from "@/lib/colour/placeholder";
 import { getDb, schema } from "@/lib/db";
@@ -8,6 +8,34 @@ import { chooseExcerpt } from "@/lib/excerpts/select";
 
 const SWATCH_COUNT = 6;
 const DISTRACTOR_COUNT = SWATCH_COUNT - 1;
+
+// ---------------------------------------------------------------------------
+// Cross-mode scoring (#35) — every round scores 0–100 so a Wheel player and
+// a Swatch player share the same scale. Streaks count any round scoring at
+// least STREAK_WIN_THRESHOLD as a "win".
+// ---------------------------------------------------------------------------
+
+const ROUND_MAX = 100;
+const STREAK_WIN_THRESHOLD = 70;
+
+/** Reads the most recent rounds for a session and returns the current run of "wins". */
+async function computeStreak(sessionId: string): Promise<number> {
+  const db = getDb();
+  const rows = await db
+    .select({ scored: schema.gameRounds.scored })
+    .from(schema.gameRounds)
+    .where(eq(schema.gameRounds.sessionId, sessionId))
+    .orderBy(desc(schema.gameRounds.createdAt));
+  let streak = 0;
+  for (const row of rows) {
+    if (row.scored != null && row.scored >= STREAK_WIN_THRESHOLD) {
+      streak++;
+    } else {
+      break;
+    }
+  }
+  return streak;
+}
 
 export type SwatchForClient = { swatchId: string; css: string };
 
@@ -23,8 +51,12 @@ export type SwatchGuessResult = {
   correctSwatchId: string;
   /** The book the smudge came from, revealed only after the guess. */
   book: { title: string; authorName: string };
+  /** This round's score, 0–100 (Swatch is binary: 100 / 0). */
+  scored: number;
   /** New cumulative session score after this round. */
   sessionScore: number;
+  /** Current consecutive run of wins (rounds scoring ≥ 70). */
+  streak: number;
 };
 
 type StoredSwatch = {
@@ -187,7 +219,7 @@ export async function submitSwatchGuess(input: {
   if (!picked) throw new Error("Swatch not part of this round");
 
   const correct = picked.swatchId === presented.correctSwatchId;
-  const scoreDelta = correct ? 1 : 0;
+  const scoreDelta = correct ? ROUND_MAX : 0;
 
   await db
     .update(schema.gameRounds)
@@ -227,11 +259,15 @@ export async function submitSwatchGuess(input: {
     .limit(1);
   if (!reveal) throw new Error("Book metadata missing");
 
+  const streak = await computeStreak(round.sessionId);
+
   return {
     correct,
     correctSwatchId: presented.correctSwatchId,
     book: reveal,
+    scored: scoreDelta,
     sessionScore: session?.score ?? 0,
+    streak,
   };
 }
 
@@ -257,12 +293,13 @@ export type WheelRoundForClient = {
 };
 
 export type WheelGuessResult = {
-  /** Distance-based score, 0–10. Whole-number for the integer session.score column. */
+  /** This round's score, 0–100 (distance-weighted: hue 70%, sat 30%). */
   scored: number;
   /** What the algorithmic deriver thinks for this book — the "target". */
   correct: { hue: number; saturation: number; lightness: number };
   book: { title: string; authorName: string };
   sessionScore: number;
+  streak: number;
 };
 
 type WheelPresented = {
@@ -374,7 +411,7 @@ export async function submitWheelGuess(input: {
   const hueDist = circularHueDistance(input.hue, presented.correctHue);
   const satDist = Math.abs(input.saturation - presented.correctSaturation);
   const normalised = Math.max(0, 1 - (hueDist / 180) * 0.7 - (satDist / 100) * 0.3);
-  const scored = Math.round(normalised * 10);
+  const scored = Math.round(normalised * ROUND_MAX);
 
   await db
     .update(schema.gameRounds)
@@ -410,6 +447,8 @@ export async function submitWheelGuess(input: {
     .limit(1);
   if (!reveal) throw new Error("Book metadata missing");
 
+  const streak = await computeStreak(round.sessionId);
+
   return {
     scored,
     correct: {
@@ -419,6 +458,7 @@ export async function submitWheelGuess(input: {
     },
     book: reveal,
     sessionScore: session?.score ?? 0,
+    streak,
   };
 }
 
@@ -453,7 +493,9 @@ export type TwinGuessResult = {
   hueDistance: number;
   bookA: { title: string; authorName: string; hue: number; saturation: number; lightness: number };
   bookB: { title: string; authorName: string; hue: number; saturation: number; lightness: number };
+  scored: number;
   sessionScore: number;
+  streak: number;
 };
 
 type TwinPresented = {
@@ -571,7 +613,7 @@ export async function submitTwinGuess(input: {
 
   const presented = round.presented as TwinPresented;
   const correct = input.guess === presented.truth;
-  const scored = correct ? 1 : 0;
+  const scored = correct ? ROUND_MAX : 0;
 
   await db
     .update(schema.gameRounds)
@@ -608,6 +650,8 @@ export async function submitTwinGuess(input: {
   const b = byId.get(presented.bookBId);
   if (!a || !b) throw new Error("Lost track of one of the twin books");
 
+  const streak = await computeStreak(round.sessionId);
+
   return {
     correct,
     truth: presented.truth,
@@ -626,6 +670,61 @@ export async function submitTwinGuess(input: {
       saturation: b.saturation,
       lightness: b.lightness,
     },
+    scored,
     sessionScore: session?.score ?? 0,
+    streak,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Leaderboard — top scribes by lifetime score across every mode/session.
+// ---------------------------------------------------------------------------
+
+export type LeaderboardRow = {
+  scribeId: string;
+  totalScore: number;
+  /** True for the row matching the current scribe — for the "(you)" highlight. */
+  isMe: boolean;
+};
+
+const LEADERBOARD_LIMIT = 8;
+
+/**
+ * Sums every session's score per scribe, returns the top N. The current
+ * scribe is always included even if outside the top — appended at the end
+ * with their actual rank.
+ */
+export async function getLeaderboard(): Promise<LeaderboardRow[]> {
+  const me = await ensureScribe();
+  const db = getDb();
+
+  const totals = await db
+    .select({
+      scribeId: schema.gameSessions.scribeId,
+      totalScore: sql<number>`SUM(${schema.gameSessions.score})`.as("totalScore"),
+    })
+    .from(schema.gameSessions)
+    .groupBy(schema.gameSessions.scribeId)
+    .orderBy(sql`SUM(${schema.gameSessions.score}) DESC`)
+    .limit(LEADERBOARD_LIMIT);
+
+  const rows: LeaderboardRow[] = totals.map((r) => ({
+    scribeId: r.scribeId,
+    totalScore: Number(r.totalScore),
+    isMe: r.scribeId === me.id,
+  }));
+
+  // If the current scribe isn't in the top N, append them so they always
+  // see where they stand.
+  if (!rows.some((r) => r.isMe)) {
+    const [mine] = await db
+      .select({
+        totalScore: sql<number>`COALESCE(SUM(${schema.gameSessions.score}), 0)`.as("totalScore"),
+      })
+      .from(schema.gameSessions)
+      .where(eq(schema.gameSessions.scribeId, me.id));
+    rows.push({ scribeId: me.id, totalScore: Number(mine?.totalScore ?? 0), isMe: true });
+  }
+
+  return rows;
 }

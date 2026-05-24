@@ -9,6 +9,8 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { hueFromHSL } from "@/lib/colour/placeholder";
 import { cn } from "@/lib/utils";
 import {
+  getLeaderboard,
+  type LeaderboardRow,
   type SwatchGuessResult,
   type SwatchRoundForClient,
   startSwatchRound,
@@ -26,20 +28,35 @@ import {
 
 type GameMode = "swatch" | "wheel" | "twin";
 
-// Threshold for "the wheel guess counts as a streak win". The 0–10 scoring
-// scale gives partial credit; 7 is roughly "you got the hue and saturation
-// in the right neighbourhood".
-const WHEEL_STREAK_THRESHOLD = 7;
+// Rounds scoring at least this much (out of 100) count as a "win" for the
+// streak counter. Matches the same threshold the server uses in computeStreak.
+const STREAK_WIN_THRESHOLD = 70;
 
 export default function GamePage() {
   const [mode, setMode] = useState<GameMode>("swatch");
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessionScore, setSessionScore] = useState(0);
   const [streak, setStreak] = useState(0);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardRow[] | null>(null);
+  const [boardLoading, startBoard] = useTransition();
 
-  const handleScored = useCallback((scoreUpdate: { sessionScore: number; correct: boolean }) => {
+  const handleScored = useCallback((scoreUpdate: { sessionScore: number; streak: number }) => {
     setSessionScore(scoreUpdate.sessionScore);
-    setStreak((s) => (scoreUpdate.correct ? s + 1 : 0));
+    setStreak(scoreUpdate.streak);
+    // Refresh the leaderboard after every scored round so the player sees
+    // their position move in real time.
+    startBoard(async () => {
+      const rows = await getLeaderboard();
+      setLeaderboard(rows);
+    });
+  }, []);
+
+  // Initial leaderboard load.
+  useEffect(() => {
+    startBoard(async () => {
+      const rows = await getLeaderboard();
+      setLeaderboard(rows);
+    });
   }, []);
 
   return (
@@ -99,7 +116,56 @@ export default function GamePage() {
       {mode === "twin" && (
         <TwinRound sessionId={sessionId} onSession={setSessionId} onScored={handleScored} />
       )}
+
+      <Separator className="my-8" />
+      <Leaderboard rows={leaderboard} loading={boardLoading && !leaderboard} />
     </div>
+  );
+}
+
+function Leaderboard({ rows, loading }: { rows: LeaderboardRow[] | null; loading: boolean }) {
+  return (
+    <section>
+      <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">Leaderboard</h2>
+      <Card className="mt-3 bg-card/40">
+        <CardContent className="p-4">
+          {loading || !rows ? (
+            <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" /> Tallying scores…
+            </div>
+          ) : rows.length === 0 ? (
+            <p className="py-2 text-center text-xs italic text-muted-foreground">
+              No scores yet — play a round to seed the leaderboard.
+            </p>
+          ) : (
+            <ol className="space-y-1">
+              {rows.map((row, i) => (
+                <li
+                  key={row.scribeId}
+                  className={cn(
+                    "flex items-center justify-between gap-3 rounded-sm px-2 py-1 text-xs tabular-nums",
+                    row.isMe && "bg-muted/60 text-ink-deep",
+                  )}
+                >
+                  <span className="flex min-w-0 items-center gap-3">
+                    <span className="w-5 text-muted-foreground">{i + 1}.</span>
+                    <span className="font-mono">
+                      Scribe {row.scribeId.slice(0, 6)}
+                      {row.isMe && (
+                        <span className="ml-2 text-[10px] uppercase tracking-wider text-ink-bleed">
+                          you
+                        </span>
+                      )}
+                    </span>
+                  </span>
+                  <strong className="shrink-0 text-ink-deep">{row.totalScore}</strong>
+                </li>
+              ))}
+            </ol>
+          )}
+        </CardContent>
+      </Card>
+    </section>
   );
 }
 
@@ -116,7 +182,7 @@ function SwatchRound({
 }: {
   sessionId: string | null;
   onSession: (id: string) => void;
-  onScored: (s: { sessionScore: number; correct: boolean }) => void;
+  onScored: (s: { sessionScore: number; streak: number }) => void;
 }) {
   const [state, setState] = useState<RoundState>({ kind: "idle" });
   const [isLoading, startLoading] = useTransition();
@@ -150,7 +216,7 @@ function SwatchRound({
     startSubmit(async () => {
       try {
         const result = await submitSwatchGuess({ roundId: round.roundId, swatchId });
-        onScored({ sessionScore: result.sessionScore, correct: result.correct });
+        onScored({ sessionScore: result.sessionScore, streak: result.streak });
         setState({ kind: "revealed", round, result, pickedId: swatchId });
       } catch (err) {
         setError((err as Error).message);
@@ -283,7 +349,7 @@ function WheelRound({
 }: {
   sessionId: string | null;
   onSession: (id: string) => void;
-  onScored: (s: { sessionScore: number; correct: boolean }) => void;
+  onScored: (s: { sessionScore: number; streak: number }) => void;
 }) {
   const [state, setState] = useState<WheelState>({ kind: "idle" });
   const [pick, setPick] = useState<WheelPick | null>(null);
@@ -339,10 +405,7 @@ function WheelRound({
           saturation: pick.saturation,
           lightness: WHEEL_LIGHTNESS,
         });
-        onScored({
-          sessionScore: result.sessionScore,
-          correct: result.scored >= WHEEL_STREAK_THRESHOLD,
-        });
+        onScored({ sessionScore: result.sessionScore, streak: result.streak });
         setState({ kind: "revealed", round, result, pick });
       } catch (err) {
         setError((err as Error).message);
@@ -374,9 +437,9 @@ function WheelRound({
           <CardTitle className="text-base">Pick on the wheel</CardTitle>
           <CardDescription>
             {isRevealed
-              ? state.result.scored >= WHEEL_STREAK_THRESHOLD
-                ? `Close — ${state.result.book.title} by ${state.result.book.authorName}. ${state.result.scored} / 10.`
-                : `That was ${state.result.book.title} by ${state.result.book.authorName}. ${state.result.scored} / 10.`
+              ? state.result.scored >= STREAK_WIN_THRESHOLD
+                ? `Close — ${state.result.book.title} by ${state.result.book.authorName}. ${state.result.scored} / 100.`
+                : `That was ${state.result.book.title} by ${state.result.book.authorName}. ${state.result.scored} / 100.`
               : "Click the wheel to drop the nib — angle picks hue, distance from the centre picks saturation."}
           </CardDescription>
         </CardHeader>
@@ -480,7 +543,7 @@ function TwinRound({
 }: {
   sessionId: string | null;
   onSession: (id: string) => void;
-  onScored: (s: { sessionScore: number; correct: boolean }) => void;
+  onScored: (s: { sessionScore: number; streak: number }) => void;
 }) {
   const [state, setState] = useState<TwinState>({ kind: "idle" });
   const [isLoading, startLoading] = useTransition();
@@ -513,7 +576,7 @@ function TwinRound({
     startSubmit(async () => {
       try {
         const result = await submitTwinGuess({ roundId: round.roundId, guess: choice });
-        onScored({ sessionScore: result.sessionScore, correct: result.correct });
+        onScored({ sessionScore: result.sessionScore, streak: result.streak });
         setState({ kind: "revealed", round, result, guess: choice });
       } catch (err) {
         setError((err as Error).message);

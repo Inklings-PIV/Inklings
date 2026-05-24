@@ -70,6 +70,7 @@ export function SourceHues({
   bookId,
   algorithmic,
   llm,
+  crowd,
   blended,
 }: {
   bookId: string;
@@ -77,6 +78,8 @@ export function SourceHues({
   algorithmic?: HSLOverride | null;
   /** Real HSL row when the LLM deriver has run; else placeholder. */
   llm?: HSLOverride | null;
+  /** Real HSL once 3+ game votes for the book have accumulated. */
+  crowd?: HSLOverride | null;
   /** Real weighted blend when at least one source has been derived. */
   blended?: HSLOverride | null;
 }) {
@@ -90,8 +93,12 @@ export function SourceHues({
       <HueChip label="LLM" color={hueFor(bookId, "llm", llm).css} title={titleFor("LLM", llm)} />
       <HueChip
         label="Crowd"
-        color={hueFor(bookId, "crowd").css}
-        title={`Crowd · ${PLACEHOLDER_REASON}`}
+        color={hueFor(bookId, "crowd", crowd).css}
+        title={
+          crowd?.justification
+            ? `Crowd · ${crowd.justification}`
+            : "Crowd · not enough guesses yet — play /game"
+        }
       />
       <HueChip
         label="Blend"

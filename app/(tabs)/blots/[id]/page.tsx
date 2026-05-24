@@ -26,6 +26,7 @@ type BlotPageData = {
   classical: ClassicalFeatures | null;
   algorithmic: HSLOverride | null;
   llm: HSLOverride | null;
+  crowd: HSLOverride | null;
   blended: HSLOverride | null;
 };
 
@@ -33,6 +34,7 @@ async function fetchBlot(id: string): Promise<BlotPageData | null> {
   const db = getDb();
   const algoColours = alias(schema.bookColours, "algo_colours");
   const llmColours = alias(schema.bookColours, "llm_colours");
+  const crowdColours = alias(schema.bookColours, "crowd_colours");
   const blendedColours = alias(schema.bookColours, "blended_colours");
   const [row] = await db
     .select({
@@ -54,6 +56,10 @@ async function fetchBlot(id: string): Promise<BlotPageData | null> {
       llmSaturation: llmColours.saturation,
       llmLightness: llmColours.lightness,
       llmJustification: llmColours.justification,
+      crowdHue: crowdColours.hue,
+      crowdSaturation: crowdColours.saturation,
+      crowdLightness: crowdColours.lightness,
+      crowdJustification: crowdColours.justification,
       blendedHue: blendedColours.hue,
       blendedSaturation: blendedColours.saturation,
       blendedLightness: blendedColours.lightness,
@@ -67,6 +73,10 @@ async function fetchBlot(id: string): Promise<BlotPageData | null> {
       and(eq(algoColours.bookId, schema.books.id), eq(algoColours.source, "algorithmic")),
     )
     .leftJoin(llmColours, and(eq(llmColours.bookId, schema.books.id), eq(llmColours.source, "llm")))
+    .leftJoin(
+      crowdColours,
+      and(eq(crowdColours.bookId, schema.books.id), eq(crowdColours.source, "crowd")),
+    )
     .leftJoin(
       blendedColours,
       and(eq(blendedColours.bookId, schema.books.id), eq(blendedColours.source, "blended")),
@@ -89,6 +99,7 @@ async function fetchBlot(id: string): Promise<BlotPageData | null> {
     classical: (row.classical as ClassicalFeatures | null) ?? null,
     algorithmic: hslFrom(row.algoHue, row.algoSaturation, row.algoLightness, row.algoJustification),
     llm: hslFrom(row.llmHue, row.llmSaturation, row.llmLightness, row.llmJustification),
+    crowd: hslFrom(row.crowdHue, row.crowdSaturation, row.crowdLightness, row.crowdJustification),
     blended: hslFrom(
       row.blendedHue,
       row.blendedSaturation,
@@ -178,12 +189,13 @@ export default async function BlotPage({ params }: { params: Promise<{ id: strin
           bookId={blot.bookId}
           algorithmic={blot.algorithmic}
           llm={blot.llm}
+          crowd={blot.crowd}
           blended={blot.blended}
         />
         <ul className="mt-3 space-y-1 text-xs leading-snug text-muted-foreground">
           <Reasoning label="Algo" text={blot.algorithmic?.justification} />
           <Reasoning label="LLM" text={blot.llm?.justification} />
-          <Reasoning label="Crowd" text={null} />
+          <Reasoning label="Crowd" text={blot.crowd?.justification} />
           <Reasoning label="Blend" text={blot.blended?.justification} />
         </ul>
       </Section>
@@ -208,7 +220,8 @@ export default async function BlotPage({ params }: { params: Promise<{ id: strin
 
       <Section title="Crowd colour votes">
         <p className="text-xs italic text-muted-foreground">
-          Not yet collected — coming with the Blotting Game (#32).
+          {blot.crowd?.justification ??
+            "Not enough guesses yet — play /game to feed the consensus."}
         </p>
       </Section>
 

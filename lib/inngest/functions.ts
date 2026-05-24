@@ -1,5 +1,6 @@
 import { inngest } from "@/lib/inngest/client";
 import { ingestBook } from "@/lib/inngest/ingest-book";
+import { recomputeCrowdColour } from "@/lib/inngest/recompute-crowd";
 import {
   recomputeLayoutByHue,
   recomputeLayoutClassical,
@@ -25,4 +26,5 @@ export const functions = [
   recomputeLayoutClassical,
   recomputeLayoutByHue,
   recomputeLayoutModern,
+  recomputeCrowdColour,
 ];

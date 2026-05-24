@@ -25,6 +25,8 @@ export type Blot = {
   algorithmic: HSLOverride | null;
   /** Real LLM HSL from book_colours when present; null falls back to placeholder. */
   llm: HSLOverride | null;
+  /** Aggregated crowd guesses from book_colours; null until ≥ 3 votes exist. */
+  crowd: HSLOverride | null;
   /** Weighted blend of the real per-source rows; null if no sources are derived. */
   blended: HSLOverride | null;
   layouts: {
@@ -157,6 +159,7 @@ export function InkwellView({
               classical: selectedBlot.classical,
               algorithmic: selectedBlot.algorithmic,
               llm: selectedBlot.llm,
+              crowd: selectedBlot.crowd,
               blended: selectedBlot.blended,
             }}
             neighbours={neighbours}
@@ -191,6 +194,8 @@ function overrideFor(blot: Blot, source: HueSource): HSLOverride | null {
       return blot.algorithmic;
     case "llm":
       return blot.llm;
+    case "crowd":
+      return blot.crowd;
     case "blended":
       return blot.blended;
     default:

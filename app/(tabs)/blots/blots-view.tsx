@@ -23,6 +23,7 @@ export type Blot = {
   classical: ClassicalFeatures | null;
   algorithmic: HSLOverride | null;
   llm: HSLOverride | null;
+  crowd: HSLOverride | null;
   blended: HSLOverride | null;
 };
 
@@ -219,6 +220,7 @@ function BlotCard({ blot }: { blot: Blot }) {
           bookId={blot.bookId}
           algorithmic={blot.algorithmic}
           llm={blot.llm}
+          crowd={blot.crowd}
           blended={blot.blended}
         />
 

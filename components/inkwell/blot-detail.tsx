@@ -14,6 +14,7 @@ export type DetailBlot = {
   classical: ClassicalFeatures | null;
   algorithmic: HSLOverride | null;
   llm: HSLOverride | null;
+  crowd: HSLOverride | null;
   blended: HSLOverride | null;
 };
 
@@ -44,15 +45,18 @@ const SOURCE_LABEL: Record<HueSource, string> = {
 export function BlotDetail({ blot, neighbours, source, onClose, onSelectNeighbour }: Props) {
   // The big swatch + the neighbour dots track the blended hue, which is now real.
   const blendedCss = hueFor(blot.bookId, "blended", blot.blended).css;
-  // Algo, LLM, and Blend have real justifications; Crowd stays placeholder until #26.
+  // All four sources have real justifications now (Crowd surfaces once 3+ game
+  // votes for this book have accumulated; below that we fall back to placeholder).
   const justification =
     source === "algorithmic"
       ? blot.algorithmic?.justification
       : source === "llm"
         ? blot.llm?.justification
-        : source === "blended"
-          ? blot.blended?.justification
-          : null;
+        : source === "crowd"
+          ? blot.crowd?.justification
+          : source === "blended"
+            ? blot.blended?.justification
+            : null;
 
   return (
     <div className="flex h-full flex-col gap-5">
@@ -87,6 +91,7 @@ export function BlotDetail({ blot, neighbours, source, onClose, onSelectNeighbou
             bookId={blot.bookId}
             algorithmic={blot.algorithmic}
             llm={blot.llm}
+            crowd={blot.crowd}
             blended={blot.blended}
           />
         </div>

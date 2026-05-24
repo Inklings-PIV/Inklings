@@ -11,6 +11,7 @@ async function fetchBlots(): Promise<Blot[]> {
   const db = getDb();
   const algoColours = alias(schema.bookColours, "algo_colours");
   const llmColours = alias(schema.bookColours, "llm_colours");
+  const crowdColours = alias(schema.bookColours, "crowd_colours");
   const blendedColours = alias(schema.bookColours, "blended_colours");
   const rows = await db
     .select({
@@ -29,6 +30,10 @@ async function fetchBlots(): Promise<Blot[]> {
       llmSaturation: llmColours.saturation,
       llmLightness: llmColours.lightness,
       llmJustification: llmColours.justification,
+      crowdHue: crowdColours.hue,
+      crowdSaturation: crowdColours.saturation,
+      crowdLightness: crowdColours.lightness,
+      crowdJustification: crowdColours.justification,
       blendedHue: blendedColours.hue,
       blendedSaturation: blendedColours.saturation,
       blendedLightness: blendedColours.lightness,
@@ -43,6 +48,10 @@ async function fetchBlots(): Promise<Blot[]> {
       and(eq(algoColours.bookId, schema.books.id), eq(algoColours.source, "algorithmic")),
     )
     .leftJoin(llmColours, and(eq(llmColours.bookId, schema.books.id), eq(llmColours.source, "llm")))
+    .leftJoin(
+      crowdColours,
+      and(eq(crowdColours.bookId, schema.books.id), eq(crowdColours.source, "crowd")),
+    )
     .leftJoin(
       blendedColours,
       and(eq(blendedColours.bookId, schema.books.id), eq(blendedColours.source, "blended")),
@@ -64,6 +73,12 @@ async function fetchBlots(): Promise<Blot[]> {
           row.algoJustification,
         ),
         llm: hslFrom(row.llmHue, row.llmSaturation, row.llmLightness, row.llmJustification),
+        crowd: hslFrom(
+          row.crowdHue,
+          row.crowdSaturation,
+          row.crowdLightness,
+          row.crowdJustification,
+        ),
         blended: hslFrom(
           row.blendedHue,
           row.blendedSaturation,

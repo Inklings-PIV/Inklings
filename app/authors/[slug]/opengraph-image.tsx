@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { and, eq } from "drizzle-orm";
 import { ImageResponse } from "next/og";
 import { BLOT_SHAPES, shapeForId } from "@/lib/canvas/blot-shapes";
+import { averageBlendedHsl } from "@/lib/colour/average";
 import { getDb, schema } from "@/lib/db";
 
 export const alt = "An author — Inklings";
@@ -229,36 +230,6 @@ export default async function Image({ params }: { params: Promise<{ slug: string
       ],
     },
   );
-}
-
-// Circular mean over blended hues; same maths as /authors/[slug] uses.
-function averageBlendedHsl(
-  rows: ReadonlyArray<{
-    hue: number | null;
-    saturation: number | null;
-    lightness: number | null;
-  }>,
-): { hue: number; saturation: number; lightness: number } | null {
-  let cosSum = 0;
-  let sinSum = 0;
-  let satSum = 0;
-  let lightSum = 0;
-  let n = 0;
-  for (const r of rows) {
-    if (r.hue == null || r.saturation == null || r.lightness == null) continue;
-    const rad = (r.hue * Math.PI) / 180;
-    cosSum += Math.cos(rad);
-    sinSum += Math.sin(rad);
-    satSum += r.saturation;
-    lightSum += r.lightness;
-    n++;
-  }
-  if (n === 0) return null;
-  return {
-    hue: Math.round(((Math.atan2(sinSum / n, cosSum / n) * 180) / Math.PI + 360) % 360),
-    saturation: Math.round(satSum / n),
-    lightness: Math.round(lightSum / n),
-  };
 }
 
 async function brandFallback({

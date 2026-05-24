@@ -1,6 +1,7 @@
 "use client";
 
-import { Loader2, Search, Sparkles } from "lucide-react";
+import { ArrowRight, Loader2, Search, Sparkles } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { BlotCard } from "@/components/blots/card";
 import { Button } from "@/components/ui/button";
@@ -95,9 +96,16 @@ export function BlotsView({ blots }: { blots: Blot[] }) {
             Every book, examined one at a time. Its shape, its four hues, its hand.
           </p>
         </div>
-        <Button size="sm" variant="outline" disabled>
-          <Sparkles /> Submit a Gutenberg ID
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button asChild size="sm" variant="outline">
+            <Link href="/authors">
+              Browse by hand <ArrowRight className="size-3.5" />
+            </Link>
+          </Button>
+          <Button size="sm" variant="outline" disabled>
+            <Sparkles /> Submit a Gutenberg ID
+          </Button>
+        </div>
       </header>
 
       <div className="mt-6 flex flex-wrap items-center gap-3">

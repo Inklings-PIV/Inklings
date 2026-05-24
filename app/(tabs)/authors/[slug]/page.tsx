@@ -7,6 +7,7 @@ import { notFound } from "next/navigation";
 import { BlotCard, type BlotCardBlot } from "@/components/blots/card";
 import { FingerprintBars } from "@/components/blots/widgets";
 import { Separator } from "@/components/ui/separator";
+import { averageBlendedHsl } from "@/lib/colour/average";
 import { type HSLOverride, hueFromHSL } from "@/lib/colour/placeholder";
 import { getDb, schema } from "@/lib/db";
 import type { ClassicalFeatures } from "@/lib/stylometry/classical";
@@ -136,7 +137,13 @@ export default async function AuthorPage({ params }: { params: Promise<{ slug: s
       ? `(${author.authorBirth ?? "?"}–${author.authorDeath ?? "?"})`
       : null;
 
-  const signatureHsl = averageBlendedHsl(author.books);
+  const signatureHsl = averageBlendedHsl(
+    author.books.map((b) => ({
+      hue: b.blended?.hue ?? null,
+      saturation: b.blended?.saturation ?? null,
+      lightness: b.blended?.lightness ?? null,
+    })),
+  );
   const signatureSwatchCss = signatureHsl
     ? hueFromHSL(signatureHsl.hue, signatureHsl.saturation, signatureHsl.lightness).css
     : "var(--muted)";
@@ -216,31 +223,6 @@ function Section({ title, children }: { title: string; children: React.ReactNode
  * across every book's blended HSL. Returns null if no book has a blended row.
  * Same trick the blender and crowd aggregator use for hue wraparound.
  */
-function averageBlendedHsl(
-  books: ReadonlyArray<{ blended: HSLOverride | null }>,
-): { hue: number; saturation: number; lightness: number } | null {
-  let cosSum = 0;
-  let sinSum = 0;
-  let satSum = 0;
-  let lightSum = 0;
-  let n = 0;
-  for (const b of books) {
-    if (!b.blended) continue;
-    const rad = (b.blended.hue * Math.PI) / 180;
-    cosSum += Math.cos(rad);
-    sinSum += Math.sin(rad);
-    satSum += b.blended.saturation;
-    lightSum += b.blended.lightness;
-    n++;
-  }
-  if (n === 0) return null;
-  return {
-    hue: Math.round(((Math.atan2(sinSum / n, cosSum / n) * 180) / Math.PI + 360) % 360),
-    saturation: Math.round(satSum / n),
-    lightness: Math.round(lightSum / n),
-  };
-}
-
 /**
  * Average the function-word frequency map across every book that has features.
  * Returns a ClassicalFeatures-shaped object so we can pass it straight to

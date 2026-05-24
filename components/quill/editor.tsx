@@ -1,7 +1,23 @@
 "use client";
 
-import { EditorContent, useEditor } from "@tiptap/react";
+import {
+  EditorContent,
+  type Editor as TiptapEditor,
+  useEditor,
+  useEditorState,
+} from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
+import {
+  Bold,
+  Heading1,
+  Heading2,
+  Italic,
+  List,
+  ListOrdered,
+  Quote,
+  Redo2,
+  Undo2,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 type EditorProps = {
@@ -56,16 +72,159 @@ export function Editor({ initialContent = "", onChange, placeholder, className }
   });
 
   return (
-    <div className={cn("relative", className)}>
-      <EditorContent editor={editor} />
-      {placeholder && editor?.isEmpty && (
-        <p
-          aria-hidden="true"
-          className="pointer-events-none absolute top-0 left-0 font-serif text-lg italic text-muted-foreground"
-        >
-          {placeholder}
-        </p>
-      )}
+    <div className={cn("flex flex-col gap-3", className)}>
+      {editor && <EditorToolbar editor={editor} />}
+      <div className="relative">
+        <EditorContent editor={editor} />
+        {placeholder && editor?.isEmpty && (
+          <p
+            aria-hidden="true"
+            className="pointer-events-none absolute top-0 left-0 font-serif text-lg italic text-muted-foreground"
+          >
+            {placeholder}
+          </p>
+        )}
+      </div>
     </div>
   );
+}
+
+/**
+ * Formatting toolbar above the editor. Uses `useEditorState` so it only
+ * re-renders when the values it selects actually change — important because
+ * every keystroke fires a TipTap transaction, and a naïve toolbar would
+ * re-render on each one. Keyboard shortcuts (Cmd+B etc.) still work via
+ * StarterKit; this just makes them discoverable.
+ */
+function EditorToolbar({ editor }: { editor: TiptapEditor }) {
+  const state = useEditorState({
+    editor,
+    selector: (ctx) => ({
+      isBold: ctx.editor?.isActive("bold") ?? false,
+      isItalic: ctx.editor?.isActive("italic") ?? false,
+      isH1: ctx.editor?.isActive("heading", { level: 1 }) ?? false,
+      isH2: ctx.editor?.isActive("heading", { level: 2 }) ?? false,
+      isBullet: ctx.editor?.isActive("bulletList") ?? false,
+      isOrdered: ctx.editor?.isActive("orderedList") ?? false,
+      isQuote: ctx.editor?.isActive("blockquote") ?? false,
+      canUndo: ctx.editor?.can().undo() ?? false,
+      canRedo: ctx.editor?.can().redo() ?? false,
+    }),
+  });
+
+  return (
+    <div
+      role="toolbar"
+      aria-label="Formatting"
+      className="flex flex-wrap items-center gap-0.5 rounded-md border border-border bg-card/60 p-1"
+    >
+      <ToolbarButton
+        label="Bold (Cmd+B)"
+        active={state.isBold}
+        onClick={() => editor.chain().focus().toggleBold().run()}
+      >
+        <Bold className="size-4" />
+      </ToolbarButton>
+      <ToolbarButton
+        label="Italic (Cmd+I)"
+        active={state.isItalic}
+        onClick={() => editor.chain().focus().toggleItalic().run()}
+      >
+        <Italic className="size-4" />
+      </ToolbarButton>
+      <ToolbarDivider />
+      <ToolbarButton
+        label="Heading 1"
+        active={state.isH1}
+        onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+      >
+        <Heading1 className="size-4" />
+      </ToolbarButton>
+      <ToolbarButton
+        label="Heading 2"
+        active={state.isH2}
+        onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
+      >
+        <Heading2 className="size-4" />
+      </ToolbarButton>
+      <ToolbarDivider />
+      <ToolbarButton
+        label="Bullet list"
+        active={state.isBullet}
+        onClick={() => editor.chain().focus().toggleBulletList().run()}
+      >
+        <List className="size-4" />
+      </ToolbarButton>
+      <ToolbarButton
+        label="Numbered list"
+        active={state.isOrdered}
+        onClick={() => editor.chain().focus().toggleOrderedList().run()}
+      >
+        <ListOrdered className="size-4" />
+      </ToolbarButton>
+      <ToolbarButton
+        label="Blockquote"
+        active={state.isQuote}
+        onClick={() => editor.chain().focus().toggleBlockquote().run()}
+      >
+        <Quote className="size-4" />
+      </ToolbarButton>
+      <ToolbarDivider />
+      <ToolbarButton
+        label="Undo (Cmd+Z)"
+        active={false}
+        disabled={!state.canUndo}
+        onClick={() => editor.chain().focus().undo().run()}
+      >
+        <Undo2 className="size-4" />
+      </ToolbarButton>
+      <ToolbarButton
+        label="Redo (Cmd+Shift+Z)"
+        active={false}
+        disabled={!state.canRedo}
+        onClick={() => editor.chain().focus().redo().run()}
+      >
+        <Redo2 className="size-4" />
+      </ToolbarButton>
+    </div>
+  );
+}
+
+function ToolbarButton({
+  label,
+  active,
+  disabled,
+  onClick,
+  children,
+}: {
+  label: string;
+  active: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-pressed={active}
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className={cn(
+        "inline-flex size-7 items-center justify-center rounded transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+        "disabled:cursor-not-allowed disabled:opacity-40",
+        active
+          ? "bg-ink-deep text-ink-paper"
+          : "text-muted-foreground hover:bg-accent hover:text-foreground",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function ToolbarDivider() {
+  return <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-border" />;
 }

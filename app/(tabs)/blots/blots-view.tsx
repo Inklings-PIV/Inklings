@@ -90,7 +90,7 @@ export function BlotsView({ blots }: { blots: Blot[] }) {
     <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="font-serif text-3xl tracking-tight text-ink-deep">The Blots</h1>
+          <h1 className="font-display text-3xl tracking-tight text-ink-deep">The Blots</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Every book, examined one at a time. Its shape, its four hues, its hand.
           </p>

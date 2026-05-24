@@ -159,7 +159,7 @@ export default async function AuthorPage({ params }: { params: Promise<{ slug: s
           style={{ backgroundColor: signatureSwatchCss }}
         />
         <div className="min-w-0 flex-1">
-          <h1 className="font-serif text-3xl tracking-tight text-ink-deep sm:text-4xl">
+          <h1 className="font-display text-3xl tracking-tight text-ink-deep sm:text-4xl">
             {author.authorName}
           </h1>
           {lifespan && <p className="mt-1 text-sm text-muted-foreground">{lifespan}</p>}

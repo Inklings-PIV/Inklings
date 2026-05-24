@@ -1,8 +1,26 @@
 import type { Metadata, Viewport } from "next";
+import { EB_Garamond, Fraunces } from "next/font/google";
 import type { ReactNode } from "react";
 import { Providers } from "@/components/providers";
 import { SiteNav } from "@/components/site-nav";
 import "./globals.css";
+
+// Body / serif: EB Garamond — old-style, narrow, reads like a printed page.
+// Display: Fraunces — modern serif with personality (variable, optical-size).
+// next/font self-hosts both at build time and inlines the CSS via variables,
+// so there's no FOUT and no third-party font request at runtime.
+const ebGaramond = EB_Garamond({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-serif-loaded",
+});
+
+const fraunces = Fraunces({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-display-loaded",
+  axes: ["opsz", "SOFT"],
+});
 
 const siteUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 
@@ -76,7 +94,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="en" className={`${ebGaramond.variable} ${fraunces.variable}`}>
       <body className="flex min-h-dvh flex-col bg-background text-foreground antialiased">
         <Providers>
           <SiteNav />

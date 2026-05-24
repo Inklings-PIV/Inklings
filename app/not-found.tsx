@@ -19,7 +19,7 @@ export default function NotFound() {
         <Blot color="oklch(0.55 0.2 290)" size={300} shape={2} />
       </div>
 
-      <h1 className="font-serif text-7xl tracking-tight text-ink-deep sm:text-8xl">404</h1>
+      <h1 className="font-display text-7xl tracking-tight text-ink-deep sm:text-8xl">404</h1>
       <p className="mt-4 font-serif text-xl italic text-ink-bleed">That blot's not on the page.</p>
       <p className="mt-3 max-w-md text-sm leading-relaxed text-muted-foreground">
         The page you were looking for doesn't exist, or it bled through to somewhere else.

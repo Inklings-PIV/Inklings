@@ -28,7 +28,7 @@ export default function GlobalError({
         </div>
       </div>
 
-      <h1 className="font-serif text-5xl tracking-tight text-ink-deep sm:text-6xl">
+      <h1 className="font-display text-5xl tracking-tight text-ink-deep sm:text-6xl">
         Something spilled.
       </h1>
       <p className="mt-4 font-serif text-xl italic text-ink-bleed">

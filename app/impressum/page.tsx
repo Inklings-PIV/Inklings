@@ -31,7 +31,7 @@ export default function ImpressumPage() {
 function ImpressumBody() {
   return (
     <article className="mx-auto max-w-2xl px-4 py-10 sm:px-6 sm:py-14">
-      <h1 className="font-serif text-3xl tracking-tight text-ink-deep sm:text-4xl">Impressum</h1>
+      <h1 className="font-display text-3xl tracking-tight text-ink-deep sm:text-4xl">Impressum</h1>
       <p className="mt-2 text-sm text-muted-foreground">Angaben gemäß § 5 TMG.</p>
 
       <Section title="Anbieter">

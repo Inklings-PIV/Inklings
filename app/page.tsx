@@ -72,7 +72,7 @@ function Hero() {
 
       <div className="mx-auto grid max-w-[1400px] items-center gap-10 px-6 py-20 md:py-28 lg:grid-cols-[1.2fr_1fr]">
         <div>
-          <h1 className="font-serif text-[14vw] leading-[1.05] tracking-tight text-ink-deep sm:text-[110px] md:text-[140px]">
+          <h1 className="font-display text-[14vw] leading-[1.05] tracking-tight text-ink-deep sm:text-[110px] md:text-[140px]">
             <span className="inline-block bg-gradient-to-br from-ink-deep via-ink-bleed to-purple-600 bg-clip-text pb-[0.2em] text-transparent">
               Inklings
             </span>
@@ -343,7 +343,7 @@ function SectionHeading({ eyebrow, children }: { eyebrow: string; children: Reac
   return (
     <div>
       <div className="text-[11px] tracking-widest text-ink-bleed uppercase">{eyebrow}</div>
-      <h2 className="mt-3 max-w-3xl font-serif text-4xl leading-[1.05] tracking-tight text-ink-deep sm:text-5xl md:text-6xl">
+      <h2 className="mt-3 max-w-3xl font-display text-4xl leading-[1.05] tracking-tight text-ink-deep sm:text-5xl md:text-6xl">
         {children}
       </h2>
     </div>
@@ -386,7 +386,7 @@ function SurfaceWrap({
                 feature
               </span>
             </div>
-            <h2 className="mt-3 flex items-baseline gap-4 font-serif text-5xl leading-tight tracking-tight text-ink-deep sm:text-6xl">
+            <h2 className="mt-3 flex items-baseline gap-4 font-display text-5xl leading-tight tracking-tight text-ink-deep sm:text-6xl">
               <span
                 aria-hidden="true"
                 className="size-3 rounded-full"

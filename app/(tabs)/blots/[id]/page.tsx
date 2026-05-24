@@ -165,7 +165,7 @@ export default async function BlotPage({ params }: { params: Promise<{ id: strin
           style={{ backgroundColor: blendedCss }}
         />
         <div className="min-w-0 flex-1">
-          <h1 className="font-serif text-2xl tracking-tight text-ink-deep sm:text-3xl">
+          <h1 className="font-display text-2xl tracking-tight text-ink-deep sm:text-3xl">
             {blot.title}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">

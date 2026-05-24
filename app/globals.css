@@ -108,7 +108,15 @@
   --radius-lg: var(--radius);
   --radius-xl: calc(var(--radius) + 4px);
 
-  --font-serif: "EB Garamond", "Iowan Old Style", "Palatino Linotype", Palatino, serif;
+  /* next/font assigns --font-serif-loaded / --font-display-loaded on <html>.
+     These cascade down so `font-serif` and `font-display` resolve to them
+     when present, with the system-serif chain as a fallback before paint
+     and for graceful degradation if loading fails. */
+  --font-serif:
+    var(--font-serif-loaded), "EB Garamond", "Iowan Old Style", "Palatino Linotype", Palatino, serif;
+  --font-display:
+    var(--font-display-loaded), "Fraunces", "Cormorant Garamond", "EB Garamond",
+    "Palatino Linotype", serif;
 }
 
 @layer base {

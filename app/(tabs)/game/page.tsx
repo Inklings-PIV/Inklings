@@ -63,7 +63,7 @@ export default function GamePage() {
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       <header className="flex flex-wrap items-start justify-between gap-3 sm:items-end sm:gap-4">
         <div className="min-w-0">
-          <h1 className="font-serif text-2xl tracking-tight text-ink-deep sm:text-3xl">
+          <h1 className="font-display text-2xl tracking-tight text-ink-deep sm:text-3xl">
             The Blotting Game
           </h1>
           <p className="mt-1 text-xs leading-snug text-muted-foreground sm:text-sm">

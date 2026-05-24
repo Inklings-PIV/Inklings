@@ -109,9 +109,9 @@ export function InkwellView({
               {layoutBlurb[layout]} · {blots.length} {blots.length === 1 ? "blot" : "blots"}
             </span>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <div className="flex items-center gap-1.5">
+              <span className="hidden text-[10px] uppercase tracking-wider text-muted-foreground sm:inline">
                 layout
               </span>
               <ToggleGroup
@@ -126,8 +126,8 @@ export function InkwellView({
                 <ToggleGroupItem value="by-hue">By Hue</ToggleGroupItem>
               </ToggleGroup>
             </div>
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            <div className="flex items-center gap-1.5">
+              <span className="hidden text-[10px] uppercase tracking-wider text-muted-foreground sm:inline">
                 source
               </span>
               <ToggleGroup
@@ -140,7 +140,7 @@ export function InkwellView({
                 <ToggleGroupItem value="algorithmic">Algo</ToggleGroupItem>
                 <ToggleGroupItem value="llm">LLM</ToggleGroupItem>
                 <ToggleGroupItem value="crowd">Crowd</ToggleGroupItem>
-                <ToggleGroupItem value="blended">Blended</ToggleGroupItem>
+                <ToggleGroupItem value="blended">Blend</ToggleGroupItem>
               </ToggleGroup>
             </div>
             <MethodologyDialog />

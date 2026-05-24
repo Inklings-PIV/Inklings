@@ -12,11 +12,13 @@ export default function QuillPage() {
   const [mode, setMode] = useState<QuillMode>("readout");
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="font-serif text-3xl tracking-tight text-ink-deep">The Quill</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
+      <header className="flex flex-wrap items-start justify-between gap-3 sm:items-end sm:gap-4">
+        <div className="min-w-0">
+          <h1 className="font-serif text-2xl tracking-tight text-ink-deep sm:text-3xl">
+            The Quill
+          </h1>
+          <p className="mt-1 text-xs leading-snug text-muted-foreground sm:text-sm">
             Write, and watch the hue of your prose surface. Target a colour to receive nudges.
           </p>
         </div>
@@ -26,6 +28,7 @@ export default function QuillPage() {
           onValueChange={(v) => v && setMode(v as QuillMode)}
           variant="outline"
           size="sm"
+          className="shrink-0"
         >
           <ToggleGroupItem value="readout">Readout</ToggleGroupItem>
           <ToggleGroupItem value="target">Target</ToggleGroupItem>

@@ -128,7 +128,10 @@ export function BlotsView({ blots }: { blots: Blot[] }) {
           variant="outline"
           size="sm"
         >
-          <ToggleGroupItem value="text">Title/Author</ToggleGroupItem>
+          <ToggleGroupItem value="text" title="Title or author">
+            <span className="hidden sm:inline">Title/Author</span>
+            <span className="sm:hidden">Text</span>
+          </ToggleGroupItem>
           <ToggleGroupItem value="vibe">Vibe</ToggleGroupItem>
         </ToggleGroup>
         <ToggleGroup
@@ -142,7 +145,10 @@ export function BlotsView({ blots }: { blots: Blot[] }) {
         >
           <ToggleGroupItem value="recent">Recent</ToggleGroupItem>
           <ToggleGroupItem value="alpha">A–Z</ToggleGroupItem>
-          <ToggleGroupItem value="consensus">Crowd-loved</ToggleGroupItem>
+          <ToggleGroupItem value="consensus" title="Crowd-loved">
+            <span className="hidden sm:inline">Crowd-loved</span>
+            <span className="sm:hidden">Loved</span>
+          </ToggleGroupItem>
         </ToggleGroup>
       </div>
 

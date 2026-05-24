@@ -22,20 +22,24 @@ export default function GamePage() {
   const [mode, setMode] = useState<GameMode>("swatch");
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8">
-      <header className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="font-serif text-3xl tracking-tight text-ink-deep">The Blotting Game</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
+      <header className="flex flex-wrap items-start justify-between gap-3 sm:items-end sm:gap-4">
+        <div className="min-w-0">
+          <h1 className="font-serif text-2xl tracking-tight text-ink-deep sm:text-3xl">
+            The Blotting Game
+          </h1>
+          <p className="mt-1 text-xs leading-snug text-muted-foreground sm:text-sm">
             Guess the hue of a smudge. Every guess feeds the consensus ink.
           </p>
         </div>
-        <div className="flex items-center gap-4 text-sm text-muted-foreground">
+        <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground sm:gap-4 sm:text-sm">
           <span className="flex items-center gap-1.5">
-            <Flame className="size-4" /> streak <strong className="text-foreground">0</strong>
+            <Flame className="size-4" /> <strong className="text-foreground">0</strong>
+            <span className="hidden sm:inline">streak</span>
           </span>
           <span className="flex items-center gap-1.5">
-            <Trophy className="size-4" /> score <strong className="text-foreground">0</strong>
+            <Trophy className="size-4" /> <strong className="text-foreground">0</strong>
+            <span className="hidden sm:inline">score</span>
           </span>
         </div>
       </header>
@@ -47,10 +51,17 @@ export default function GamePage() {
           onValueChange={(v) => v && setMode(v as GameMode)}
           variant="outline"
           size="sm"
+          className="w-full sm:w-auto"
         >
-          <ToggleGroupItem value="swatch">Smudge → Swatch</ToggleGroupItem>
-          <ToggleGroupItem value="wheel">Smudge → Wheel</ToggleGroupItem>
-          <ToggleGroupItem value="twin">Twin Smudges</ToggleGroupItem>
+          <ToggleGroupItem value="swatch" className="flex-1 sm:flex-initial">
+            Swatch
+          </ToggleGroupItem>
+          <ToggleGroupItem value="wheel" className="flex-1 sm:flex-initial">
+            Wheel
+          </ToggleGroupItem>
+          <ToggleGroupItem value="twin" className="flex-1 sm:flex-initial">
+            Twin
+          </ToggleGroupItem>
         </ToggleGroup>
       </div>
 

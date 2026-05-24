@@ -46,7 +46,8 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  // Matches every tab surface and its sub-routes; / and other top-level
-  // pages don't need a scribe cookie.
-  matcher: ["/inkwell/:path*", "/blots/:path*", "/game/:path*", "/quill/:path*"],
+  // Matches every tab surface and its sub-routes plus /admin (which needs a
+  // scribe cookie to look up moderator status). / and other top-level pages
+  // don't need a scribe cookie.
+  matcher: ["/inkwell/:path*", "/blots/:path*", "/game/:path*", "/quill/:path*", "/admin/:path*"],
 };

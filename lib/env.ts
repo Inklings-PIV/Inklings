@@ -23,6 +23,10 @@ export const env = createEnv({
     // the seed-all script's pre-flight check, not here.
     INNGEST_EVENT_KEY: z.string().optional(),
     INNGEST_SIGNING_KEY: z.string().optional(),
+    // Comma-separated scribe DB ids (uuids) who can access /admin/*.
+    // Temporary stand-in until BetterAuth (#80) brings role management.
+    // Empty (default) = no moderators, /admin/moderate locked for everyone.
+    MODERATOR_SCRIBE_IDS: z.string().optional().default(""),
   },
   client: {
     NEXT_PUBLIC_APP_URL: z.string().min(1).default("http://localhost:3000"),
@@ -35,6 +39,7 @@ export const env = createEnv({
     SESSION_SECRET: process.env.SESSION_SECRET,
     INNGEST_EVENT_KEY: process.env.INNGEST_EVENT_KEY,
     INNGEST_SIGNING_KEY: process.env.INNGEST_SIGNING_KEY,
+    MODERATOR_SCRIBE_IDS: process.env.MODERATOR_SCRIBE_IDS,
     NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL,
   },
   emptyStringAsUndefined: true,

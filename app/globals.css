@@ -194,8 +194,13 @@
   .inklings-spin-slow {
     animation: inklings-spin-slow 60s linear infinite;
   }
-  .inklings-hue-spin {
-    animation: inklings-spin-slow 4s linear infinite;
+  @keyframes inklings-wave-flow {
+    to {
+      transform: translateX(-48px);
+    }
+  }
+  .inklings-wave-flow {
+    animation: inklings-wave-flow 4s linear infinite;
   }
   .inklings-pulse {
     animation: inklings-pulse-soft 4s ease-in-out infinite;

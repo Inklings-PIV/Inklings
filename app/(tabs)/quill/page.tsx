@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { hueFromHSL } from "@/lib/colour/placeholder";
-import { cn } from "@/lib/utils";
 import { deriveTextColour, suggestRewrite, type TargetRewrite, type TextColour } from "./actions";
 
 type QuillMode = "readout" | "target";
@@ -347,15 +346,22 @@ function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-const HUE_WHEEL_BG =
-  "conic-gradient(from 0deg, hsl(0, 80%, 60%), hsl(60, 80%, 60%), hsl(120, 80%, 60%), hsl(180, 80%, 60%), hsl(240, 80%, 60%), hsl(300, 80%, 60%), hsl(360, 80%, 60%))";
-
 /**
- * The "your current hue" swatch. Two stacked layers — a slowly-rotating
- * rainbow wheel underneath, a solid-colour disc on top — and the top
- * layer's opacity is driven by whether we have a readout yet. While
- * nothing's been derived, the wheel spins; once Claude returns, the
- * solid colour fades in over it. No spinner.
+ * The "your current hue" swatch. A grey disc with a rainbow wave moving
+ * along the bottom while we wait for Claude — the wave is the loading
+ * indicator. When the readout lands, the solid colour fades in over
+ * the wave so the chosen hue takes the whole circle.
+ *
+ * Path notes — viewBox is 48×48 to match the rendered size:
+ *  - The wave path is 96 wide (two visible widths) so the translate
+ *    animation has fresh wave coming in from the right.
+ *  - Quadratic-bezier sine with 24-px period (two crests per visible
+ *    width) and 4-px amplitude around a baseline at y=30 — keeps the
+ *    grey area roughly the top 60 % of the circle.
+ *  - The gradient repeats the rainbow twice (0..50 % is one full sweep,
+ *    50..100 % the same again) so when the wave translates by exactly
+ *    -48 px, the colours at any fixed canvas x are identical to t=0
+ *    and the loop is seamless.
  */
 function HueSwatch({ swatchCss }: { swatchCss: string | undefined }) {
   const hasHue = !!swatchCss;
@@ -363,16 +369,39 @@ function HueSwatch({ swatchCss }: { swatchCss: string | undefined }) {
     <div
       aria-label="Your current hue"
       role="img"
-      className="relative size-12 shrink-0 overflow-hidden rounded-full border border-border shadow-inner"
+      className="relative size-12 shrink-0 overflow-hidden rounded-full border border-border bg-muted shadow-inner"
     >
-      <span
+      <svg
         aria-hidden="true"
-        className={cn(
-          "absolute inset-0 transition-opacity duration-700",
-          hasHue ? "opacity-30 inklings-spin-slow" : "opacity-100 inklings-hue-spin",
-        )}
-        style={{ background: HUE_WHEEL_BG }}
-      />
+        viewBox="0 0 48 48"
+        preserveAspectRatio="none"
+        className="absolute inset-0 size-full"
+      >
+        <title>Rainbow wave loading indicator</title>
+        <defs>
+          <linearGradient id="hue-wave-rainbow" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="hsl(0, 80%, 60%)" />
+            <stop offset="8.33%" stopColor="hsl(60, 80%, 60%)" />
+            <stop offset="16.67%" stopColor="hsl(120, 80%, 60%)" />
+            <stop offset="25%" stopColor="hsl(180, 80%, 60%)" />
+            <stop offset="33.33%" stopColor="hsl(240, 80%, 60%)" />
+            <stop offset="41.67%" stopColor="hsl(300, 80%, 60%)" />
+            <stop offset="50%" stopColor="hsl(360, 80%, 60%)" />
+            <stop offset="58.33%" stopColor="hsl(60, 80%, 60%)" />
+            <stop offset="66.67%" stopColor="hsl(120, 80%, 60%)" />
+            <stop offset="75%" stopColor="hsl(180, 80%, 60%)" />
+            <stop offset="83.33%" stopColor="hsl(240, 80%, 60%)" />
+            <stop offset="91.67%" stopColor="hsl(300, 80%, 60%)" />
+            <stop offset="100%" stopColor="hsl(360, 80%, 60%)" />
+          </linearGradient>
+        </defs>
+        <g className="inklings-wave-flow">
+          <path
+            fill="url(#hue-wave-rainbow)"
+            d="M0,30 Q6,26 12,30 T24,30 T36,30 T48,30 T60,30 T72,30 T84,30 T96,30 L96,48 L0,48 Z"
+          />
+        </g>
+      </svg>
       <span
         aria-hidden="true"
         className="absolute inset-0 transition-opacity duration-700"

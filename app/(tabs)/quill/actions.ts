@@ -1,7 +1,7 @@
 "use server";
 
 import { anthropic } from "@ai-sdk/anthropic";
-import { generateObject } from "ai";
+import { generateObject, generateText } from "ai";
 import { z } from "zod";
 
 export type TextColour = {
@@ -9,6 +9,10 @@ export type TextColour = {
   saturation: number;
   lightness: number;
   justification: string;
+};
+
+export type TargetRewrite = {
+  rewrite: string;
 };
 
 const ResponseSchema = z.object({
@@ -63,4 +67,46 @@ function stripHtml(s: string): string {
 
 function countWords(s: string): number {
   return s.split(/\s+/).filter(Boolean).length;
+}
+
+// ---------------------------------------------------------------------------
+// Target mode — #38. Player describes a target ("warm, melancholy",
+// "Hemingway-like", "lush, baroque") and Claude rewrites the current draft
+// to feel like it, preserving meaning, length, and structure.
+// ---------------------------------------------------------------------------
+
+const REWRITE_SYSTEM_PROMPT = `You are a careful prose editor. The writer has typed a draft and wants you to nudge it toward a target — a colour, a mood, an author's voice, anything they describe.
+
+Rewrite the draft so it FEELS like the target while preserving:
+- the writer's intent and meaning
+- roughly the same length (within ±20%)
+- the same number of paragraphs
+- proper grammar and punctuation
+- the writer's chosen tense and POV
+
+Make changes at the level of word choice, sentence rhythm, image-density, and connective tissue. Don't add new facts, characters, or events. Don't moralise. Don't preface the rewrite with explanation or commentary.
+
+Return ONLY the rewritten prose. No quotes around it, no "Here's the rewrite:" preamble, no trailing notes.`;
+
+/**
+ * Asks Claude to rewrite the user's draft toward a free-form target descriptor.
+ * Returns just the rewritten text — the client diffs it against the original
+ * and lets the user accept or reject.
+ */
+export async function suggestRewrite(input: {
+  text: string;
+  target: string;
+}): Promise<TargetRewrite | null> {
+  const text = stripHtml(input.text).trim();
+  const target = input.target.trim();
+  if (countWords(text) < MIN_WORDS) return null;
+  if (target.length === 0) return null;
+
+  const { text: rewrite } = await generateText({
+    model: anthropic("claude-sonnet-4-6"),
+    system: REWRITE_SYSTEM_PROMPT,
+    prompt: `Target: ${target}\n\nOriginal:\n${text}`,
+    maxRetries: 2,
+  });
+  return { rewrite: rewrite.trim() };
 }

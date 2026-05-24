@@ -11,10 +11,19 @@ import {
   type SwatchGuessResult,
   type SwatchRoundForClient,
   startSwatchRound,
+  startWheelRound,
   submitSwatchGuess,
+  submitWheelGuess,
+  type WheelGuessResult,
+  type WheelRoundForClient,
 } from "./actions";
 
 type GameMode = "swatch" | "wheel" | "twin";
+
+// Threshold for "the wheel guess counts as a streak win". The 0–10 scoring
+// scale gives partial credit; 7 is roughly "you got the hue and saturation
+// in the right neighbourhood".
+const WHEEL_STREAK_THRESHOLD = 7;
 
 export default function GamePage() {
   const [mode, setMode] = useState<GameMode>("swatch");
@@ -22,9 +31,9 @@ export default function GamePage() {
   const [sessionScore, setSessionScore] = useState(0);
   const [streak, setStreak] = useState(0);
 
-  const handleScored = useCallback((result: SwatchGuessResult) => {
-    setSessionScore(result.sessionScore);
-    setStreak((s) => (result.correct ? s + 1 : 0));
+  const handleScored = useCallback((scoreUpdate: { sessionScore: number; correct: boolean }) => {
+    setSessionScore(scoreUpdate.sessionScore);
+    setStreak((s) => (scoreUpdate.correct ? s + 1 : 0));
   }, []);
 
   return (
@@ -78,7 +87,9 @@ export default function GamePage() {
       {mode === "swatch" && (
         <SwatchRound sessionId={sessionId} onSession={setSessionId} onScored={handleScored} />
       )}
-      {mode === "wheel" && <WheelRound />}
+      {mode === "wheel" && (
+        <WheelRound sessionId={sessionId} onSession={setSessionId} onScored={handleScored} />
+      )}
       {mode === "twin" && <TwinRound />}
     </div>
   );
@@ -97,7 +108,7 @@ function SwatchRound({
 }: {
   sessionId: string | null;
   onSession: (id: string) => void;
-  onScored: (r: SwatchGuessResult) => void;
+  onScored: (s: { sessionScore: number; correct: boolean }) => void;
 }) {
   const [state, setState] = useState<RoundState>({ kind: "idle" });
   const [isLoading, startLoading] = useTransition();
@@ -131,7 +142,7 @@ function SwatchRound({
     startSubmit(async () => {
       try {
         const result = await submitSwatchGuess({ roundId: round.roundId, swatchId });
-        onScored(result);
+        onScored({ sessionScore: result.sessionScore, correct: result.correct });
         setState({ kind: "revealed", round, result, pickedId: swatchId });
       } catch (err) {
         setError((err as Error).message);
@@ -239,28 +250,214 @@ function SwatchRound({
   );
 }
 
-function WheelRound() {
+type WheelPick = { hue: number; saturation: number };
+
+type WheelState =
+  | { kind: "idle" }
+  | { kind: "guessing"; round: WheelRoundForClient }
+  | {
+      kind: "revealed";
+      round: WheelRoundForClient;
+      result: WheelGuessResult;
+      pick: WheelPick;
+    };
+
+// Fixed lightness for the wheel UI. The algorithmic deriver lives in the
+// 40–75 ink-paper range; 60 sits in the middle and reads as ink on paper
+// without going neon. Scoring weighs the difference lightly via #33's
+// lightness component being absent from the distance formula.
+const WHEEL_LIGHTNESS = 60;
+
+function WheelRound({
+  sessionId,
+  onSession,
+  onScored,
+}: {
+  sessionId: string | null;
+  onSession: (id: string) => void;
+  onScored: (s: { sessionScore: number; correct: boolean }) => void;
+}) {
+  const [state, setState] = useState<WheelState>({ kind: "idle" });
+  const [pick, setPick] = useState<WheelPick | null>(null);
+  const [isLoading, startLoading] = useTransition();
+  const [isSubmitting, startSubmit] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const begin = useCallback(() => {
+    setError(null);
+    setPick(null);
+    startLoading(async () => {
+      try {
+        const round = await startWheelRound({ sessionId });
+        onSession(round.sessionId);
+        setState({ kind: "guessing", round });
+      } catch (err) {
+        setError((err as Error).message);
+        setState({ kind: "idle" });
+      }
+    });
+  }, [sessionId, onSession]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only fire once on mount
+  useEffect(() => {
+    begin();
+  }, []);
+
+  const onWheelClick = (e: React.MouseEvent<HTMLButtonElement>) => {
+    if (state.kind !== "guessing") return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const x = e.clientX - rect.left - cx;
+    const y = e.clientY - rect.top - cy;
+    const r = Math.sqrt(x * x + y * y);
+    if (r > cx) return; // outside the wheel
+    const sat = Math.round(Math.min(100, (r / cx) * 100));
+    // atan2 → 0=right, π/2=down (screen coords). Add 90° so 0° lands at the
+    // top of the wheel and the angle then increments clockwise.
+    const hueDeg = ((Math.atan2(y, x) * 180) / Math.PI + 90 + 360) % 360;
+    setPick({ hue: Math.round(hueDeg), saturation: sat });
+  };
+
+  const submit = () => {
+    if (!pick || state.kind !== "guessing") return;
+    const round = state.round;
+    setError(null);
+    startSubmit(async () => {
+      try {
+        const result = await submitWheelGuess({
+          roundId: round.roundId,
+          hue: pick.hue,
+          saturation: pick.saturation,
+          lightness: WHEEL_LIGHTNESS,
+        });
+        onScored({
+          sessionScore: result.sessionScore,
+          correct: result.scored >= WHEEL_STREAK_THRESHOLD,
+        });
+        setState({ kind: "revealed", round, result, pick });
+      } catch (err) {
+        setError((err as Error).message);
+      }
+    });
+  };
+
+  if (isLoading || state.kind === "idle") {
+    return (
+      <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
+        <Loader2 className="size-5 animate-spin" />
+        <p className="text-xs italic">Pulling a smudge…</p>
+      </div>
+    );
+  }
+
+  const round = state.round;
+  const isRevealed = state.kind === "revealed";
+  const correctMarker = isRevealed
+    ? polarToOffsetPercent(state.result.correct.hue, state.result.correct.saturation)
+    : null;
+  const pickMarker = pick ? polarToOffsetPercent(pick.hue, pick.saturation) : null;
+
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
-      <Smudge />
+      <Smudge excerpt={round.excerpt} />
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Pick on the wheel</CardTitle>
-          <CardDescription>Drop the nib anywhere on the wheel.</CardDescription>
+          <CardDescription>
+            {isRevealed
+              ? state.result.scored >= WHEEL_STREAK_THRESHOLD
+                ? `Close — ${state.result.book.title} by ${state.result.book.authorName}. ${state.result.scored} / 10.`
+                : `That was ${state.result.book.title} by ${state.result.book.authorName}. ${state.result.scored} / 10.`
+              : "Click the wheel to drop the nib — angle picks hue, distance from the centre picks saturation."}
+          </CardDescription>
         </CardHeader>
-        <CardContent className="flex items-center justify-center">
-          <div
-            aria-hidden="true"
-            className="size-48 rounded-full opacity-90"
+        <CardContent className="flex flex-col items-center gap-4">
+          <button
+            type="button"
+            aria-label="Colour wheel"
+            onClick={onWheelClick}
+            disabled={isRevealed || isSubmitting}
+            className="relative size-52 cursor-crosshair rounded-full border border-border shadow-inner disabled:cursor-default"
             style={{
-              background:
-                "conic-gradient(oklch(0.7 0.18 0), oklch(0.72 0.16 60), oklch(0.7 0.16 120), oklch(0.65 0.16 180), oklch(0.55 0.18 240), oklch(0.6 0.18 300), oklch(0.7 0.18 360))",
+              background: `
+                radial-gradient(circle, hsl(0, 0%, 100%) 0%, transparent 70%),
+                conic-gradient(
+                  from 0deg,
+                  hsl(90, 80%, ${WHEEL_LIGHTNESS}%),
+                  hsl(150, 80%, ${WHEEL_LIGHTNESS}%),
+                  hsl(210, 80%, ${WHEEL_LIGHTNESS}%),
+                  hsl(270, 80%, ${WHEEL_LIGHTNESS}%),
+                  hsl(330, 80%, ${WHEEL_LIGHTNESS}%),
+                  hsl(30, 80%, ${WHEEL_LIGHTNESS}%),
+                  hsl(90, 80%, ${WHEEL_LIGHTNESS}%)
+                )
+              `,
             }}
-          />
+          >
+            {pickMarker && (
+              <span
+                aria-hidden="true"
+                className="absolute size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow"
+                style={{
+                  left: `${pickMarker.x}%`,
+                  top: `${pickMarker.y}%`,
+                  backgroundColor: `hsl(${pick?.hue ?? 0}, ${pick?.saturation ?? 0}%, ${WHEEL_LIGHTNESS}%)`,
+                }}
+              />
+            )}
+            {isRevealed && correctMarker && (
+              <span
+                aria-hidden="true"
+                className="absolute size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-emerald-500 ring-2 ring-background"
+                style={{
+                  left: `${correctMarker.x}%`,
+                  top: `${correctMarker.y}%`,
+                  backgroundColor: `hsl(${state.result.correct.hue}, ${state.result.correct.saturation}%, ${WHEEL_LIGHTNESS}%)`,
+                }}
+              />
+            )}
+          </button>
+
+          {!isRevealed && (
+            <Button onClick={submit} disabled={!pick || isSubmitting} className="w-full">
+              {isSubmitting ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Sparkles className="size-4" />
+              )}
+              {pick ? "Drop the nib" : "Click the wheel to pick"}
+            </Button>
+          )}
+
+          {isRevealed && (
+            <Button onClick={begin} disabled={isLoading} className="w-full">
+              {isLoading ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Sparkles className="size-4" />
+              )}
+              Next round
+            </Button>
+          )}
+
+          {error && <p className="text-xs italic text-destructive">{error}</p>}
         </CardContent>
       </Card>
     </div>
   );
+}
+
+/** Convert (hue°, saturation%) on the wheel to (x%, y%) for absolute positioning. */
+function polarToOffsetPercent(hueDeg: number, saturationPct: number): { x: number; y: number } {
+  // Same convention as the click handler: 0° at the top, clockwise.
+  const angleRad = ((hueDeg - 90) * Math.PI) / 180;
+  const r = saturationPct / 100; // 0..1, 1 = at the rim
+  // 50% = centre; offset by ±50% × r in each direction.
+  return {
+    x: 50 + 50 * r * Math.cos(angleRad),
+    y: 50 + 50 * r * Math.sin(angleRad),
+  };
 }
 
 function TwinRound() {

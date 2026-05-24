@@ -3,6 +3,8 @@
 import { ArrowRight, Loader2, Search, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
+import type { Hand } from "@/app/(tabs)/authors/hands-view";
+import { HandCard } from "@/components/authors/hand-card";
 import { BlotCard } from "@/components/blots/card";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -19,6 +21,8 @@ export type Blot = {
   title: string;
   authorName: string;
   authorSlug: string;
+  authorBirthYear: number | null;
+  authorDeathYear: number | null;
   ingestedAt: Date;
   classical: ClassicalFeatures | null;
   algorithmic: HSLOverride | null;
@@ -53,6 +57,56 @@ export function BlotsView({ blots }: { blots: Blot[] }) {
     }, 500);
     return () => clearTimeout(handle);
   }, [mode, query]);
+
+  // Group the matching authors when the user has typed an author-ish name
+  // in text mode. Vibe mode is a semantic search over books, so an "authors"
+  // section there would be a category error.
+  const matchingAuthors = useMemo<Hand[]>(() => {
+    if (mode !== "text") return [];
+    const q = query.trim().toLowerCase();
+    if (q.length === 0) return [];
+
+    type Grouped = {
+      authorName: string;
+      authorSlug: string;
+      birthYear: number | null;
+      deathYear: number | null;
+      blendedHues: { hue: number; saturation: number; lightness: number }[];
+      lastIngestedAt: Date | null;
+      blotCount: number;
+    };
+    const byAuthor = new Map<string, Grouped>();
+    for (const b of blots) {
+      let entry = byAuthor.get(b.authorSlug);
+      if (!entry) {
+        entry = {
+          authorName: b.authorName,
+          authorSlug: b.authorSlug,
+          birthYear: b.authorBirthYear,
+          deathYear: b.authorDeathYear,
+          blendedHues: [],
+          lastIngestedAt: null,
+          blotCount: 0,
+        };
+        byAuthor.set(b.authorSlug, entry);
+      }
+      entry.blotCount++;
+      if (b.blended) {
+        entry.blendedHues.push({
+          hue: b.blended.hue,
+          saturation: b.blended.saturation,
+          lightness: b.blended.lightness,
+        });
+      }
+      if (!entry.lastIngestedAt || b.ingestedAt > entry.lastIngestedAt) {
+        entry.lastIngestedAt = b.ingestedAt;
+      }
+    }
+
+    return Array.from(byAuthor.values())
+      .filter((a) => a.authorName.toLowerCase().includes(q))
+      .sort((a, b) => a.authorName.localeCompare(b.authorName));
+  }, [blots, query, mode]);
 
   const visible = useMemo(() => {
     // Vibe mode: filter + order by the server-supplied ranking.
@@ -161,6 +215,23 @@ export function BlotsView({ blots }: { blots: Blot[] }) {
       </div>
 
       <Separator className="my-6" />
+
+      {matchingAuthors.length > 0 && (
+        <section className="mb-6">
+          <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">Hands</h2>
+          <ul className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {matchingAuthors.map((hand) => (
+              <li key={hand.authorSlug}>
+                <HandCard hand={hand} />
+              </li>
+            ))}
+          </ul>
+          <Separator className="mt-6" />
+          <h2 className="mt-6 text-[10px] tracking-widest text-muted-foreground uppercase">
+            Blots
+          </h2>
+        </section>
+      )}
 
       {visible.length === 0 ? (
         <EmptyState hasBlots={blots.length > 0} query={query} />

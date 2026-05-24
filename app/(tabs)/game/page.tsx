@@ -451,22 +451,26 @@ function WheelRound({
         <CardContent className="flex flex-col items-center gap-4">
           <button
             type="button"
-            aria-label="Colour wheel"
+            aria-label="Colour wheel — click to set hue (angle) and saturation (distance from centre)"
             onClick={onWheelClick}
             disabled={isRevealed || isSubmitting}
-            className="relative size-52 cursor-crosshair rounded-full border border-border shadow-inner disabled:cursor-default"
+            className="relative size-52 cursor-crosshair rounded-full border border-border shadow-inner focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-default"
             style={{
+              // Conic stops match HSL hue 0..360 so position on the wheel
+              // *is* the picked hue value — top is red (0°), right is lime
+              // (90°), bottom cyan (180°), left purple (270°). The white
+              // radial gradient washes saturation out toward the centre.
               background: `
                 radial-gradient(circle, hsl(0, 0%, 100%) 0%, transparent 70%),
                 conic-gradient(
                   from 0deg,
-                  hsl(90, 80%, ${WHEEL_LIGHTNESS}%),
-                  hsl(150, 80%, ${WHEEL_LIGHTNESS}%),
-                  hsl(210, 80%, ${WHEEL_LIGHTNESS}%),
-                  hsl(270, 80%, ${WHEEL_LIGHTNESS}%),
-                  hsl(330, 80%, ${WHEEL_LIGHTNESS}%),
-                  hsl(30, 80%, ${WHEEL_LIGHTNESS}%),
-                  hsl(90, 80%, ${WHEEL_LIGHTNESS}%)
+                  hsl(0, 80%, ${WHEEL_LIGHTNESS}%),
+                  hsl(60, 80%, ${WHEEL_LIGHTNESS}%),
+                  hsl(120, 80%, ${WHEEL_LIGHTNESS}%),
+                  hsl(180, 80%, ${WHEEL_LIGHTNESS}%),
+                  hsl(240, 80%, ${WHEEL_LIGHTNESS}%),
+                  hsl(300, 80%, ${WHEEL_LIGHTNESS}%),
+                  hsl(360, 80%, ${WHEEL_LIGHTNESS}%)
                 )
               `,
             }}
@@ -495,6 +499,8 @@ function WheelRound({
             )}
           </button>
 
+          <HueSatSliders pick={pick} disabled={isRevealed || isSubmitting} onChange={setPick} />
+
           {!isRevealed && (
             <Button onClick={submit} disabled={!pick || isSubmitting} className="w-full">
               {isSubmitting ? (
@@ -502,7 +508,7 @@ function WheelRound({
               ) : (
                 <Sparkles className="size-4" />
               )}
-              {pick ? "Drop the nib" : "Click the wheel to pick"}
+              {pick ? "Drop the nib" : "Pick a hue to begin"}
             </Button>
           )}
 
@@ -520,6 +526,82 @@ function WheelRound({
           {error && <p className="text-xs italic text-destructive">{error}</p>}
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+/**
+ * Hue + saturation sliders, bidirectionally bound with the wheel above
+ * through a shared `pick` state. Native `<input type="range">` for free
+ * keyboard support — arrow keys ±1, shift+arrow ±10.
+ *
+ * Hue track is the same rainbow as the wheel (red→red over 0..360).
+ * Saturation track is greyscale → vibrant at the currently-picked hue,
+ * so the user sees the colour they'd land on as they drag.
+ */
+function HueSatSliders({
+  pick,
+  disabled,
+  onChange,
+}: {
+  pick: WheelPick | null;
+  disabled: boolean;
+  onChange: (next: WheelPick) => void;
+}) {
+  // Default mid-wheel so the sliders look meaningful before any click.
+  const hue = pick?.hue ?? 0;
+  const sat = pick?.saturation ?? 50;
+  const baseHue = pick?.hue ?? 0;
+
+  // Tailwind v4 arbitrary selectors for the WebKit + Firefox thumbs —
+  // duplicated because the two engines don't share a pseudo-element.
+  const sliderClass =
+    "h-3 w-full appearance-none rounded-full border border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50 " +
+    "[&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:bg-ink-deep [&::-webkit-slider-thumb]:shadow " +
+    "[&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-white [&::-moz-range-thumb]:bg-ink-deep [&::-moz-range-thumb]:shadow";
+
+  return (
+    <div className="flex w-full flex-col gap-3 text-xs">
+      <label className="flex flex-col gap-1.5">
+        <span className="flex items-center justify-between text-muted-foreground">
+          <span>Hue</span>
+          <span className="tabular-nums">{hue}°</span>
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={360}
+          step={1}
+          value={hue}
+          disabled={disabled}
+          aria-label="Hue, 0 to 360 degrees"
+          onChange={(e) => onChange({ hue: Number(e.target.value), saturation: sat })}
+          className={sliderClass}
+          style={{
+            background: `linear-gradient(to right, hsl(0, 80%, ${WHEEL_LIGHTNESS}%), hsl(60, 80%, ${WHEEL_LIGHTNESS}%), hsl(120, 80%, ${WHEEL_LIGHTNESS}%), hsl(180, 80%, ${WHEEL_LIGHTNESS}%), hsl(240, 80%, ${WHEEL_LIGHTNESS}%), hsl(300, 80%, ${WHEEL_LIGHTNESS}%), hsl(360, 80%, ${WHEEL_LIGHTNESS}%))`,
+          }}
+        />
+      </label>
+      <label className="flex flex-col gap-1.5">
+        <span className="flex items-center justify-between text-muted-foreground">
+          <span>Saturation</span>
+          <span className="tabular-nums">{sat}%</span>
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          step={1}
+          value={sat}
+          disabled={disabled}
+          aria-label="Saturation, 0 to 100 percent"
+          onChange={(e) => onChange({ hue, saturation: Number(e.target.value) })}
+          className={sliderClass}
+          style={{
+            background: `linear-gradient(to right, hsl(${baseHue}, 0%, ${WHEEL_LIGHTNESS}%), hsl(${baseHue}, 100%, ${WHEEL_LIGHTNESS}%))`,
+          }}
+        />
+      </label>
     </div>
   );
 }

@@ -194,6 +194,9 @@
   .inklings-spin-slow {
     animation: inklings-spin-slow 60s linear infinite;
   }
+  .inklings-hue-spin {
+    animation: inklings-spin-slow 4s linear infinite;
+  }
   .inklings-pulse {
     animation: inklings-pulse-soft 4s ease-in-out infinite;
   }

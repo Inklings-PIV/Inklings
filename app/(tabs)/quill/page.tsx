@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { hueFromHSL } from "@/lib/colour/placeholder";
+import { cn } from "@/lib/utils";
 import { deriveTextColour, suggestRewrite, type TargetRewrite, type TextColour } from "./actions";
 
 type QuillMode = "readout" | "target";
@@ -186,16 +187,8 @@ function HueReadout({
     <Card>
       <CardContent className="flex flex-col gap-3 p-5">
         <div className="flex items-center gap-3">
-          <div
-            aria-label="Your current hue"
-            role="img"
-            className="relative size-12 shrink-0 overflow-hidden rounded-full border border-border shadow-inner transition-colors duration-500"
-            style={{ backgroundColor: swatchCss ?? "var(--muted)" }}
-          >
-            {isPending && (
-              <Loader2 className="absolute inset-0 m-auto size-4 animate-spin text-ink-deep/70" />
-            )}
-          </div>
+          <HueSwatch swatchCss={swatchCss} />
+
           <div className="flex min-w-0 flex-col">
             <span className="text-xs uppercase tracking-wider text-muted-foreground">
               your current hue
@@ -352,4 +345,42 @@ function plainText(html: string): string {
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+const HUE_WHEEL_BG =
+  "conic-gradient(from 0deg, hsl(0, 80%, 60%), hsl(60, 80%, 60%), hsl(120, 80%, 60%), hsl(180, 80%, 60%), hsl(240, 80%, 60%), hsl(300, 80%, 60%), hsl(360, 80%, 60%))";
+
+/**
+ * The "your current hue" swatch. Two stacked layers — a slowly-rotating
+ * rainbow wheel underneath, a solid-colour disc on top — and the top
+ * layer's opacity is driven by whether we have a readout yet. While
+ * nothing's been derived, the wheel spins; once Claude returns, the
+ * solid colour fades in over it. No spinner.
+ */
+function HueSwatch({ swatchCss }: { swatchCss: string | undefined }) {
+  const hasHue = !!swatchCss;
+  return (
+    <div
+      aria-label="Your current hue"
+      role="img"
+      className="relative size-12 shrink-0 overflow-hidden rounded-full border border-border shadow-inner"
+    >
+      <span
+        aria-hidden="true"
+        className={cn(
+          "absolute inset-0 transition-opacity duration-700",
+          hasHue ? "opacity-30 inklings-spin-slow" : "opacity-100 inklings-hue-spin",
+        )}
+        style={{ background: HUE_WHEEL_BG }}
+      />
+      <span
+        aria-hidden="true"
+        className="absolute inset-0 transition-opacity duration-700"
+        style={{
+          backgroundColor: swatchCss,
+          opacity: hasHue ? 1 : 0,
+        }}
+      />
+    </div>
+  );
 }

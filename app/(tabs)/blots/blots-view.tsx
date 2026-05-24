@@ -1,11 +1,12 @@
 "use client";
 
-import { ArrowRight, Loader2, Search, Sparkles } from "lucide-react";
+import { ArrowRight, Loader2, Search } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import type { Hand } from "@/app/(tabs)/authors/hands-view";
 import { HandCard } from "@/components/authors/hand-card";
 import { BlotCard } from "@/components/blots/card";
+import { SubmitGutenbergDialog } from "@/components/blots/submit-dialog";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -156,9 +157,7 @@ export function BlotsView({ blots }: { blots: Blot[] }) {
               Browse by hand <ArrowRight className="size-3.5" />
             </Link>
           </Button>
-          <Button size="sm" variant="outline" disabled>
-            <Sparkles /> Submit a Gutenberg ID
-          </Button>
+          <SubmitGutenbergDialog />
         </div>
       </header>
 

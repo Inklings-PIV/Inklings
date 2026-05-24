@@ -6,14 +6,20 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { hueFromHSL } from "@/lib/colour/placeholder";
 import { cn } from "@/lib/utils";
 import {
   type SwatchGuessResult,
   type SwatchRoundForClient,
   startSwatchRound,
+  startTwinRound,
   startWheelRound,
   submitSwatchGuess,
+  submitTwinGuess,
   submitWheelGuess,
+  type TwinGuessResult,
+  type TwinJudgement,
+  type TwinRoundForClient,
   type WheelGuessResult,
   type WheelRoundForClient,
 } from "./actions";
@@ -90,7 +96,9 @@ export default function GamePage() {
       {mode === "wheel" && (
         <WheelRound sessionId={sessionId} onSession={setSessionId} onScored={handleScored} />
       )}
-      {mode === "twin" && <TwinRound />}
+      {mode === "twin" && (
+        <TwinRound sessionId={sessionId} onSession={setSessionId} onScored={handleScored} />
+      )}
     </div>
   );
 }
@@ -460,19 +468,145 @@ function polarToOffsetPercent(hueDeg: number, saturationPct: number): { x: numbe
   };
 }
 
-function TwinRound() {
+type TwinState =
+  | { kind: "idle" }
+  | { kind: "guessing"; round: TwinRoundForClient }
+  | { kind: "revealed"; round: TwinRoundForClient; result: TwinGuessResult; guess: TwinJudgement };
+
+function TwinRound({
+  sessionId,
+  onSession,
+  onScored,
+}: {
+  sessionId: string | null;
+  onSession: (id: string) => void;
+  onScored: (s: { sessionScore: number; correct: boolean }) => void;
+}) {
+  const [state, setState] = useState<TwinState>({ kind: "idle" });
+  const [isLoading, startLoading] = useTransition();
+  const [isSubmitting, startSubmit] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const begin = useCallback(() => {
+    setError(null);
+    startLoading(async () => {
+      try {
+        const round = await startTwinRound({ sessionId });
+        onSession(round.sessionId);
+        setState({ kind: "guessing", round });
+      } catch (err) {
+        setError((err as Error).message);
+        setState({ kind: "idle" });
+      }
+    });
+  }, [sessionId, onSession]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: only fire once on mount
+  useEffect(() => {
+    begin();
+  }, []);
+
+  const guess = (choice: TwinJudgement) => {
+    if (state.kind !== "guessing") return;
+    const round = state.round;
+    setError(null);
+    startSubmit(async () => {
+      try {
+        const result = await submitTwinGuess({ roundId: round.roundId, guess: choice });
+        onScored({ sessionScore: result.sessionScore, correct: result.correct });
+        setState({ kind: "revealed", round, result, guess: choice });
+      } catch (err) {
+        setError((err as Error).message);
+      }
+    });
+  };
+
+  if (isLoading || state.kind === "idle") {
+    return (
+      <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
+        <Loader2 className="size-5 animate-spin" />
+        <p className="text-xs italic">Pulling a pair…</p>
+      </div>
+    );
+  }
+
+  const round = state.round;
+  const isRevealed = state.kind === "revealed";
+
   return (
     <div className="grid gap-6">
       <div className="grid gap-6 md:grid-cols-2">
-        <Smudge variant="left" />
-        <Smudge variant="right" />
+        <Smudge excerpt={round.excerptA} variant="left" />
+        <Smudge excerpt={round.excerptB} variant="right" />
       </div>
-      <div className="flex items-center justify-center gap-3">
-        <Button variant="outline" disabled>
-          Different hues
-        </Button>
-        <Button disabled>Same hue</Button>
-      </div>
+
+      {isRevealed ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              {state.result.correct ? "Yes" : "Not quite"} —{" "}
+              {state.result.truth === "same" ? "same hue" : "different hues"}
+            </CardTitle>
+            <CardDescription>
+              {state.result.bookA.title} ({state.result.bookA.authorName}) and{" "}
+              {state.result.bookB.title} ({state.result.bookB.authorName}). Hue distance:{" "}
+              {Math.round(state.result.hueDistance)}°.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col items-center gap-3">
+            <div className="flex items-center gap-4">
+              <TwinSwatch label="A" hsl={state.result.bookA} />
+              <TwinSwatch label="B" hsl={state.result.bookB} />
+            </div>
+            <Button onClick={begin} disabled={isLoading} className="w-full sm:w-auto">
+              {isLoading ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Sparkles className="size-4" />
+              )}
+              Next pair
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <Button
+            variant="outline"
+            onClick={() => guess("different")}
+            disabled={isSubmitting}
+            className="min-w-[140px]"
+          >
+            Different hues
+          </Button>
+          <Button onClick={() => guess("same")} disabled={isSubmitting} className="min-w-[140px]">
+            Same hue
+          </Button>
+        </div>
+      )}
+
+      {error && <p className="text-center text-xs italic text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+function TwinSwatch({
+  label,
+  hsl,
+}: {
+  label: string;
+  hsl: { hue: number; saturation: number; lightness: number };
+}) {
+  return (
+    <div className="flex flex-col items-center gap-1.5">
+      <div
+        aria-label={`Book ${label} hue`}
+        role="img"
+        className="size-12 rounded-full border border-border shadow-inner"
+        style={{
+          backgroundColor: hueFromHSL(hsl.hue, hsl.saturation, hsl.lightness).css,
+        }}
+      />
+      <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</span>
     </div>
   );
 }

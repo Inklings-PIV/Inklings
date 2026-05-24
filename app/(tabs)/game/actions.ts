@@ -1,6 +1,6 @@
 "use server";
 
-import { and, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { ensureScribe } from "@/lib/auth/scribe";
 import { hueFromHSL } from "@/lib/colour/placeholder";
 import { getDb, schema } from "@/lib/db";
@@ -425,4 +425,207 @@ export async function submitWheelGuess(input: {
 function circularHueDistance(a: number, b: number): number {
   const raw = Math.abs(a - b);
   return Math.min(raw, 360 - raw);
+}
+
+// ---------------------------------------------------------------------------
+// Twin Smudges (#34) — pair comparison, "same hue?" vs "different hue?".
+// ---------------------------------------------------------------------------
+
+/**
+ * Two books count as "same hue" when their algorithmic colours' circular
+ * hue distance is within this threshold. 30° is a reasonable line in the
+ * sand for a Twin round; #72 can refine.
+ */
+const TWIN_SAME_HUE_THRESHOLD = 30;
+
+export type TwinJudgement = "same" | "different";
+
+export type TwinRoundForClient = {
+  sessionId: string;
+  roundId: string;
+  excerptA: string;
+  excerptB: string;
+};
+
+export type TwinGuessResult = {
+  correct: boolean;
+  truth: TwinJudgement;
+  hueDistance: number;
+  bookA: { title: string; authorName: string; hue: number; saturation: number; lightness: number };
+  bookB: { title: string; authorName: string; hue: number; saturation: number; lightness: number };
+  sessionScore: number;
+};
+
+type TwinPresented = {
+  bookAId: string;
+  bookBId: string;
+  truth: TwinJudgement;
+  hueDistance: number;
+};
+
+export async function startTwinRound(input: {
+  sessionId: string | null;
+}): Promise<TwinRoundForClient> {
+  const scribe = await ensureScribe();
+  const db = getDb();
+
+  let sessionId = input.sessionId;
+  if (!sessionId) {
+    const [open] = await db
+      .select({ id: schema.gameSessions.id })
+      .from(schema.gameSessions)
+      .where(
+        and(
+          eq(schema.gameSessions.scribeId, scribe.id),
+          eq(schema.gameSessions.mode, "twin"),
+          isNull(schema.gameSessions.endedAt),
+        ),
+      )
+      .orderBy(sql`${schema.gameSessions.startedAt} desc`)
+      .limit(1);
+    if (open) {
+      sessionId = open.id;
+    } else {
+      const [created] = await db
+        .insert(schema.gameSessions)
+        .values({ scribeId: scribe.id, mode: "twin" })
+        .returning({ id: schema.gameSessions.id });
+      if (!created) throw new Error("Failed to create game session");
+      sessionId = created.id;
+    }
+  }
+
+  // Two distinct random books with algorithmic colours. ORDER BY random()
+  // LIMIT 2 is fine for a 35-book corpus; cardinality grows linearly.
+  const candidates = await db
+    .select({
+      bookId: schema.books.id,
+      hue: schema.bookColours.hue,
+      saturation: schema.bookColours.saturation,
+      lightness: schema.bookColours.lightness,
+    })
+    .from(schema.bookColours)
+    .innerJoin(schema.books, eq(schema.books.id, schema.bookColours.bookId))
+    .where(eq(schema.bookColours.source, "algorithmic"))
+    .orderBy(sql`random()`)
+    .limit(2);
+  if (candidates.length < 2) {
+    throw new Error("Need at least 2 books with algorithmic colours — run pnpm derive:colours");
+  }
+  const [bookA, bookB] = candidates as [(typeof candidates)[number], (typeof candidates)[number]];
+
+  const hueDistance = circularHueDistance(bookA.hue, bookB.hue);
+  const truth: TwinJudgement = hueDistance <= TWIN_SAME_HUE_THRESHOLD ? "same" : "different";
+
+  const [excerptA, excerptB] = await Promise.all([
+    chooseExcerpt(bookA.bookId),
+    chooseExcerpt(bookB.bookId),
+  ]);
+
+  const presented: TwinPresented = {
+    bookAId: bookA.bookId,
+    bookBId: bookB.bookId,
+    truth,
+    hueDistance,
+  };
+
+  // game_rounds.bookId is NOT NULL, so we anchor to bookA; bookB lives in
+  // `presented`. #72 may evolve into a separate twin_rounds shape.
+  const [round] = await db
+    .insert(schema.gameRounds)
+    .values({
+      sessionId,
+      bookId: bookA.bookId,
+      mode: "twin",
+      presented,
+    })
+    .returning({ id: schema.gameRounds.id });
+  if (!round) throw new Error("Failed to create game round");
+
+  return { sessionId, roundId: round.id, excerptA, excerptB };
+}
+
+/**
+ * Twin rounds produce a similarity signal, not an HSL pick — so we
+ * intentionally don't write to colour_votes (which feeds the crowd
+ * aggregator with per-book HSL guesses). #72 discusses how Twin data
+ * could later inform crowd confidence.
+ */
+export async function submitTwinGuess(input: {
+  roundId: string;
+  guess: TwinJudgement;
+}): Promise<TwinGuessResult> {
+  const db = getDb();
+
+  const [round] = await db
+    .select({
+      sessionId: schema.gameRounds.sessionId,
+      presented: schema.gameRounds.presented,
+      existingGuess: schema.gameRounds.guess,
+    })
+    .from(schema.gameRounds)
+    .where(eq(schema.gameRounds.id, input.roundId))
+    .limit(1);
+  if (!round) throw new Error("Round not found");
+  if (round.existingGuess) throw new Error("Round already guessed");
+
+  const presented = round.presented as TwinPresented;
+  const correct = input.guess === presented.truth;
+  const scored = correct ? 1 : 0;
+
+  await db
+    .update(schema.gameRounds)
+    .set({ guess: { choice: input.guess }, scored })
+    .where(eq(schema.gameRounds.id, input.roundId));
+
+  const [session] = await db
+    .update(schema.gameSessions)
+    .set({ score: sql`${schema.gameSessions.score} + ${scored}` })
+    .where(eq(schema.gameSessions.id, round.sessionId))
+    .returning({ score: schema.gameSessions.score });
+
+  // Pull metadata + HSL for both books to render the reveal.
+  const pairRows = await db
+    .select({
+      bookId: schema.books.id,
+      title: schema.books.title,
+      authorName: schema.authors.name,
+      hue: schema.bookColours.hue,
+      saturation: schema.bookColours.saturation,
+      lightness: schema.bookColours.lightness,
+    })
+    .from(schema.bookColours)
+    .innerJoin(schema.books, eq(schema.books.id, schema.bookColours.bookId))
+    .innerJoin(schema.authors, eq(schema.authors.id, schema.books.authorId))
+    .where(
+      and(
+        eq(schema.bookColours.source, "algorithmic"),
+        inArray(schema.books.id, [presented.bookAId, presented.bookBId]),
+      ),
+    );
+  const byId = new Map(pairRows.map((r) => [r.bookId, r]));
+  const a = byId.get(presented.bookAId);
+  const b = byId.get(presented.bookBId);
+  if (!a || !b) throw new Error("Lost track of one of the twin books");
+
+  return {
+    correct,
+    truth: presented.truth,
+    hueDistance: presented.hueDistance,
+    bookA: {
+      title: a.title,
+      authorName: a.authorName,
+      hue: a.hue,
+      saturation: a.saturation,
+      lightness: a.lightness,
+    },
+    bookB: {
+      title: b.title,
+      authorName: b.authorName,
+      hue: b.hue,
+      saturation: b.saturation,
+      lightness: b.lightness,
+    },
+    sessionScore: session?.score ?? 0,
+  };
 }

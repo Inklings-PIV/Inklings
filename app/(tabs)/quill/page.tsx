@@ -1,11 +1,13 @@
 "use client";
 
-import { Sparkles } from "lucide-react";
-import { useState } from "react";
+import { Loader2, Sparkles } from "lucide-react";
+import { useEffect, useState, useTransition } from "react";
 import { Editor } from "@/components/quill/editor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { hueFromHSL } from "@/lib/colour/placeholder";
+import { deriveTextColour, type TextColour } from "./actions";
 
 type QuillMode = "readout" | "target";
 
@@ -14,6 +16,24 @@ export default function QuillPage() {
   // Local draft only — autosave to quill_samples lands separately once the
   // privacy default for the Quill is settled (part of #45).
   const [draft, setDraft] = useState("");
+  const [readout, setReadout] = useState<TextColour | null>(null);
+  const [isPending, startReadout] = useTransition();
+
+  // Debounced readout — 700 ms after the last keystroke we ask Claude for the
+  // current hue. Latest call wins; in-flight ones are ignored when stale.
+  useEffect(() => {
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      startReadout(async () => {
+        const result = await deriveTextColour(draft);
+        if (!cancelled) setReadout(result);
+      });
+    }, 700);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [draft]);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
@@ -54,7 +74,12 @@ export default function QuillPage() {
         </Card>
 
         <aside className="flex flex-col gap-4">
-          <HueReadout mode={mode} wordCount={countWords(draft)} />
+          <HueReadout
+            mode={mode}
+            wordCount={countWords(draft)}
+            readout={readout}
+            isPending={isPending}
+          />
           {mode === "target" && <TargetPicker />}
         </aside>
       </div>
@@ -72,23 +97,53 @@ function countWords(html: string): number {
     .filter(Boolean).length;
 }
 
-function HueReadout({ mode, wordCount }: { mode: QuillMode; wordCount: number }) {
+function HueReadout({
+  mode,
+  wordCount,
+  readout,
+  isPending,
+}: {
+  mode: QuillMode;
+  wordCount: number;
+  readout: TextColour | null;
+  isPending: boolean;
+}) {
+  const swatchCss = readout
+    ? hueFromHSL(readout.hue, readout.saturation, readout.lightness).css
+    : undefined;
+  const label = readout ? readout.justification : "—";
+
   return (
     <Card>
       <CardContent className="flex flex-col gap-3 p-5">
         <div className="flex items-center gap-3">
-          <div className="size-12 rounded-full border border-border bg-muted shadow-inner" />
+          <div
+            aria-label="Your current hue"
+            role="img"
+            className="relative size-12 shrink-0 overflow-hidden rounded-full border border-border shadow-inner transition-colors duration-500"
+            style={{ backgroundColor: swatchCss ?? "var(--muted)" }}
+          >
+            {isPending && (
+              <Loader2 className="absolute inset-0 m-auto size-4 animate-spin text-ink-deep/70" />
+            )}
+          </div>
           <div className="flex min-w-0 flex-col">
             <span className="text-xs uppercase tracking-wider text-muted-foreground">
               your current hue
             </span>
-            <span className="font-serif text-lg text-ink-deep">—</span>
+            <span className="font-serif text-base leading-tight text-ink-deep">{label}</span>
           </div>
         </div>
-        <p className="text-xs italic text-muted-foreground">
-          {mode === "readout"
-            ? "Start typing. The hue updates as the ink dries."
-            : "Aim for the target. Suggestions will appear inline."}
+        <p className="text-xs italic leading-snug text-muted-foreground">
+          {readout
+            ? mode === "readout"
+              ? "Keep writing — the hue updates as the ink dries."
+              : "Aim for the target. Suggestions will appear inline."
+            : wordCount < 8
+              ? "Write a few words and the hue will surface."
+              : isPending
+                ? "Reading the ink…"
+                : "Keep writing."}
         </p>
         {wordCount > 0 && (
           <p className="text-[11px] tabular-nums text-muted-foreground">

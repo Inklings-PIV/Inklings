@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { TabFooter } from "@/components/tab-footer";
 import { ensureScribe } from "@/lib/auth/scribe";
 
 // Force dynamic rendering for everything under `(tabs)` because we touch
@@ -11,5 +12,10 @@ export default async function TabsLayout({ children }: { children: ReactNode }) 
   // tabbed surface, so future game votes (#26/#32), session rows, and quill
   // samples have a stable FK target.
   await ensureScribe();
-  return <>{children}</>;
+  return (
+    <>
+      {children}
+      <TabFooter />
+    </>
+  );
 }

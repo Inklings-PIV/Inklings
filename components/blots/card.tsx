@@ -28,7 +28,7 @@ export function BlotCard({ blot }: { blot: BlotCardBlot }) {
       <CardHeader className="pb-2">
         <div
           role="img"
-          aria-label="Blended hue"
+          aria-label={`Blended hue of ${blot.title}`}
           className="size-10 rounded-full border border-border shadow-inner"
           style={{ backgroundColor: blendedCss }}
         />

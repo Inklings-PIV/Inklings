@@ -43,7 +43,7 @@ export function SiteNav() {
     <header className="sticky top-0 z-50 border-b border-border bg-background/70 backdrop-blur-md">
       <div className="mx-auto flex max-w-[1400px] items-center justify-between gap-4 px-4 py-3 sm:gap-6 sm:px-6">
         <Brand />
-        <nav className="flex items-center gap-1">
+        <nav aria-label="Primary" className="flex items-center gap-1">
           <ul className="hidden items-center gap-1 md:flex">
             {TABS.map((t) => (
               <li key={t.href}>

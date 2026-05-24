@@ -160,7 +160,7 @@ export default async function BlotPage({ params }: { params: Promise<{ id: strin
       <header className="mt-4 flex flex-wrap items-start gap-4">
         <div
           role="img"
-          aria-label="Blended hue"
+          aria-label={`Blended hue of ${blot.title}`}
           className="size-16 shrink-0 rounded-full border border-border shadow-inner"
           style={{ backgroundColor: blendedCss }}
         />

@@ -67,7 +67,7 @@ export function BlotDetail({ blot, neighbours, source, onClose, onSelectNeighbou
             className="size-12 shrink-0 rounded-full border border-border shadow-inner"
             style={{ backgroundColor: blendedCss }}
             role="img"
-            aria-label="Blended hue"
+            aria-label={`Blended hue of ${blot.title}`}
           />
           <div className="min-w-0">
             <h2 className="font-serif text-base leading-tight text-ink-deep">{blot.title}</h2>

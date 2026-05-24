@@ -43,22 +43,32 @@ export function HueChip({
   label: string;
   color: string;
   ring?: boolean;
-  /** Hover tooltip; falls back to `label` when omitted. */
+  /** Hover tooltip *and* the swatch's accessible name; falls back to
+   * `label` when omitted. Screen readers don't read `title` reliably, so
+   * we also project this string into the swatch's `aria-label`. */
   title?: string;
 }) {
+  const accessibleName = title ?? label;
   return (
     <div
       className="flex items-center gap-1 rounded-full border border-border bg-background/70 px-1.5 py-0.5"
-      title={title ?? label}
+      title={accessibleName}
     >
       <span
+        role="img"
+        aria-label={accessibleName}
         className="size-3 rounded-full border border-border/60"
         style={{
           backgroundColor: color,
           boxShadow: ring ? "0 0 0 1px var(--ring)" : undefined,
         }}
       />
-      <span className="text-[10px] tracking-wider text-muted-foreground uppercase">{label}</span>
+      <span
+        aria-hidden="true"
+        className="text-[10px] tracking-wider text-muted-foreground uppercase"
+      >
+        {label}
+      </span>
     </div>
   );
 }

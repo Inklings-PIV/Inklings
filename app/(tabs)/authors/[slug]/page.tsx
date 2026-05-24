@@ -161,7 +161,7 @@ export default async function AuthorPage({ params }: { params: Promise<{ slug: s
       <header className="mt-4 flex flex-wrap items-start gap-5">
         <div
           role="img"
-          aria-label="Author signature hue"
+          aria-label={`${author.authorName} signature hue`}
           className="size-20 shrink-0 rounded-full border border-border shadow-inner"
           style={{ backgroundColor: signatureSwatchCss }}
         />

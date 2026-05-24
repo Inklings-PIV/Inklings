@@ -104,8 +104,18 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
     >
       <body className="flex min-h-dvh flex-col bg-background text-foreground antialiased">
         <Providers>
+          {/* Keyboard-only skip link — invisible until focused, then jumps
+              past the nav tabs straight to the page content. */}
+          <a
+            href="#main"
+            className="sr-only focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-[100] focus:rounded-md focus:bg-ink-deep focus:px-3 focus:py-1.5 focus:text-sm focus:text-ink-paper focus:outline-none focus:ring-2 focus:ring-ring/60"
+          >
+            Skip to content
+          </a>
           <SiteNav />
-          <main className="flex flex-1 flex-col">{children}</main>
+          <main id="main" className="flex flex-1 flex-col">
+            {children}
+          </main>
         </Providers>
       </body>
     </html>

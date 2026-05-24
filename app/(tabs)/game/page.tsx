@@ -70,14 +70,19 @@ export default function GamePage() {
             Guess the hue of a smudge. Every guess feeds the consensus ink.
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground sm:gap-4 sm:text-sm">
+        <div
+          role="status"
+          aria-live="polite"
+          aria-label={`Streak ${streak}, session score ${sessionScore}`}
+          className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground sm:gap-4 sm:text-sm"
+        >
           <span className="flex items-center gap-1.5">
-            <Flame className="size-4" />{" "}
+            <Flame aria-hidden="true" className="size-4" />{" "}
             <strong className="text-foreground tabular-nums">{streak}</strong>
             <span className="hidden sm:inline">streak</span>
           </span>
           <span className="flex items-center gap-1.5">
-            <Trophy className="size-4" />{" "}
+            <Trophy aria-hidden="true" className="size-4" />{" "}
             <strong className="text-foreground tabular-nums">{sessionScore}</strong>
             <span className="hidden sm:inline">score</span>
           </span>
@@ -268,18 +273,18 @@ function SwatchRound({
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <div className="grid grid-cols-3 gap-2">
-            {round.swatches.map((s) => {
+            {round.swatches.map((s, i) => {
               const isPicked = isRevealed && state.pickedId === s.swatchId;
               const isCorrect = isRevealed && state.result.correctSwatchId === s.swatchId;
               return (
                 <button
                   key={s.swatchId}
                   type="button"
-                  aria-label={`Pick swatch ${s.swatchId}`}
+                  aria-label={`Swatch ${i + 1} of ${round.swatches.length}`}
                   onClick={() => guess(s.swatchId)}
                   disabled={isRevealed || isSubmitting}
                   className={cn(
-                    "relative aspect-square rounded-md border border-border transition-transform",
+                    "relative aspect-square rounded-md border border-border transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
                     !isRevealed && "enabled:hover:scale-[1.03]",
                     isCorrect && "ring-2 ring-emerald-500 ring-offset-2 ring-offset-background",
                     isPicked &&

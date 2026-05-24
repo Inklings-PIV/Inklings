@@ -83,7 +83,10 @@ export function CanvasShell({
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        <section className="relative flex-1">
+        <section
+          aria-label="The Inkwell — pan and zoom the canvas of blots"
+          className="relative flex-1"
+        >
           <div
             className={cn(
               "absolute inset-0 m-3 overflow-hidden rounded-lg border border-dashed border-border sm:m-6",
@@ -144,7 +147,10 @@ export function CanvasShell({
           </div>
         </section>
 
-        <aside className="hidden w-80 border-l border-border bg-card/40 p-6 lg:block">
+        <aside
+          aria-label="Selected blot details"
+          className="hidden w-80 border-l border-border bg-card/40 p-6 lg:block"
+        >
           {detail}
         </aside>
       </div>

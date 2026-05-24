@@ -80,6 +80,18 @@
       }
     }
   },
+  "overrides": [
+    {
+      "includes": ["**/opengraph-image.tsx", "**/twitter-image.tsx"],
+      "linter": {
+        "rules": {
+          "a11y": {
+            "noSvgWithoutTitle": "off"
+          }
+        }
+      }
+    }
+  ],
   "javascript": {
     "formatter": {
       "quoteStyle": "double",

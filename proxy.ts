@@ -14,7 +14,24 @@ import { type ScribeSession, scribeSessionOptions } from "@/lib/auth/scribe";
 
 const COOKIE_NAME = "inklings_scribe";
 
+// Next metadata routes (file conventions: opengraph-image, twitter-image,
+// icon, apple-icon, sitemap, robots) are hit by share-preview crawlers
+// that don't carry cookies. Looping them through the set-cookie redirect
+// would 307 forever, so they bypass the scribe check entirely.
+const METADATA_SUFFIXES = [
+  "/opengraph-image",
+  "/twitter-image",
+  "/icon",
+  "/apple-icon",
+  "/sitemap.xml",
+  "/robots.txt",
+];
+
 export async function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  if (METADATA_SUFFIXES.some((s) => pathname === s || pathname.endsWith(s))) {
+    return NextResponse.next();
+  }
   if (request.cookies.has(COOKIE_NAME)) {
     return NextResponse.next();
   }

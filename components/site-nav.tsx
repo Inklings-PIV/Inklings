@@ -1,10 +1,10 @@
 "use client";
 
 import { Menu, X } from "lucide-react";
-import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
+import { BrandWordmark } from "@/components/brand-wordmark";
 import { cn } from "@/lib/utils";
 
 export const GITHUB_URL = "https://github.com/Inklings-PIV/Inklings";
@@ -100,17 +100,12 @@ function isActive(pathname: string, href: string) {
 
 function Brand() {
   return (
-    <Link href="/" aria-label="Inklings home" className="group flex items-center gap-2.5">
-      <Image
-        src="/inkling-mascot-no-background.png"
-        alt=""
-        width={32}
-        height={32}
-        loading="eager"
-        fetchPriority="high"
-        className="-rotate-6 drop-shadow-sm transition-transform group-hover:rotate-0"
-      />
-      <span className="font-serif text-xl tracking-tight text-ink-deep">Inklings</span>
+    <Link
+      href="/"
+      aria-label="Inklings home"
+      className="group flex items-center gap-2.5 text-ink-deep"
+    >
+      <BrandWordmark height={28} className="transition-transform group-hover:-rotate-1" />
       <span className="hidden text-xs text-muted-foreground sm:inline">
         authors in shape &amp; hue
       </span>

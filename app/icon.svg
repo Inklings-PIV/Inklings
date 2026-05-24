@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">
+  <title>Inklings</title>
+  <style>
+    .blot { fill: #1a1830; }
+    .splatter { fill: #1a1830; }
+    @media (prefers-color-scheme: dark) {
+      .blot { fill: #ecead8; }
+      .splatter { fill: #ecead8; }
+    }
+  </style>
+  <circle class="splatter" cx="10" cy="22" r="2.5" opacity="0.55" />
+  <circle class="splatter" cx="108" cy="30" r="2" opacity="0.5" />
+  <circle class="splatter" cx="104" cy="96" r="3" opacity="0.55" />
+  <circle class="splatter" cx="18" cy="100" r="2.8" opacity="0.5" />
+  <circle class="splatter" cx="60" cy="4" r="1.4" opacity="0.45" />
+  <circle class="splatter" cx="96" cy="12" r="1.6" opacity="0.4" />
+  <path class="blot" d="M60,12 C75,8 92,20 88,34 C102,38 100,58 86,62 C95,78 78,92 62,86 C58,100 38,96 34,82 C18,86 8,68 20,58 C6,50 12,28 28,30 C30,18 46,12 60,12 Z" />
+</svg>

@@ -19,10 +19,12 @@ export const contentType = "image/png";
 // link doesn't surface a 500 in someone's chat preview.
 export default async function Image({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const [fraunces, garamondItalic] = await Promise.all([
+  const [fraunces, garamondItalic, mascotBuf] = await Promise.all([
     readFile(join(process.cwd(), "assets/Fraunces-Bold.ttf")),
     readFile(join(process.cwd(), "assets/EBGaramond-Italic.ttf")),
+    readFile(join(process.cwd(), "public/inkling-mascot-no-background.png")),
   ]);
+  const mascotSrc = `data:image/png;base64,${mascotBuf.toString("base64")}`;
 
   const db = getDb();
   const [row] = await db
@@ -94,10 +96,9 @@ export default async function Image({ params }: { params: Promise<{ id: string }
           width: "100%",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          <svg viewBox="0 0 120 120" width="40" height="40">
-            <path d={BLOT_SHAPES[0]} fill="#1a1830" />
-          </svg>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          {/** biome-ignore lint/performance/noImgElement: Satori only renders the raw HTML <img> */}
+          <img src={mascotSrc} alt="" style={{ width: 44, height: 44 }} />
           <span
             style={{
               fontFamily: '"Fraunces", serif',

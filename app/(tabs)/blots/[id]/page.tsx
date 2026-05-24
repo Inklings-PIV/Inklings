@@ -30,84 +30,72 @@ type BlotPageData = {
 };
 
 async function fetchBlot(id: string): Promise<BlotPageData | null> {
-  try {
-    const db = getDb();
-    const algoColours = alias(schema.bookColours, "algo_colours");
-    const llmColours = alias(schema.bookColours, "llm_colours");
-    const blendedColours = alias(schema.bookColours, "blended_colours");
-    const [row] = await db
-      .select({
-        bookId: schema.books.id,
-        title: schema.books.title,
-        gutenbergId: schema.books.gutenbergId,
-        lang: schema.books.lang,
-        wordCount: schema.books.wordCount,
-        ingestedAt: schema.books.ingestedAt,
-        authorName: schema.authors.name,
-        authorBirth: schema.authors.birthYear,
-        authorDeath: schema.authors.deathYear,
-        classical: schema.bookFeatures.classical,
-        algoHue: algoColours.hue,
-        algoSaturation: algoColours.saturation,
-        algoLightness: algoColours.lightness,
-        algoJustification: algoColours.justification,
-        llmHue: llmColours.hue,
-        llmSaturation: llmColours.saturation,
-        llmLightness: llmColours.lightness,
-        llmJustification: llmColours.justification,
-        blendedHue: blendedColours.hue,
-        blendedSaturation: blendedColours.saturation,
-        blendedLightness: blendedColours.lightness,
-        blendedJustification: blendedColours.justification,
-      })
-      .from(schema.books)
-      .innerJoin(schema.authors, eq(schema.books.authorId, schema.authors.id))
-      .leftJoin(schema.bookFeatures, eq(schema.bookFeatures.bookId, schema.books.id))
-      .leftJoin(
-        algoColours,
-        and(eq(algoColours.bookId, schema.books.id), eq(algoColours.source, "algorithmic")),
-      )
-      .leftJoin(
-        llmColours,
-        and(eq(llmColours.bookId, schema.books.id), eq(llmColours.source, "llm")),
-      )
-      .leftJoin(
-        blendedColours,
-        and(eq(blendedColours.bookId, schema.books.id), eq(blendedColours.source, "blended")),
-      )
-      .where(eq(schema.books.id, id))
-      .limit(1);
+  const db = getDb();
+  const algoColours = alias(schema.bookColours, "algo_colours");
+  const llmColours = alias(schema.bookColours, "llm_colours");
+  const blendedColours = alias(schema.bookColours, "blended_colours");
+  const [row] = await db
+    .select({
+      bookId: schema.books.id,
+      title: schema.books.title,
+      gutenbergId: schema.books.gutenbergId,
+      lang: schema.books.lang,
+      wordCount: schema.books.wordCount,
+      ingestedAt: schema.books.ingestedAt,
+      authorName: schema.authors.name,
+      authorBirth: schema.authors.birthYear,
+      authorDeath: schema.authors.deathYear,
+      classical: schema.bookFeatures.classical,
+      algoHue: algoColours.hue,
+      algoSaturation: algoColours.saturation,
+      algoLightness: algoColours.lightness,
+      algoJustification: algoColours.justification,
+      llmHue: llmColours.hue,
+      llmSaturation: llmColours.saturation,
+      llmLightness: llmColours.lightness,
+      llmJustification: llmColours.justification,
+      blendedHue: blendedColours.hue,
+      blendedSaturation: blendedColours.saturation,
+      blendedLightness: blendedColours.lightness,
+      blendedJustification: blendedColours.justification,
+    })
+    .from(schema.books)
+    .innerJoin(schema.authors, eq(schema.books.authorId, schema.authors.id))
+    .leftJoin(schema.bookFeatures, eq(schema.bookFeatures.bookId, schema.books.id))
+    .leftJoin(
+      algoColours,
+      and(eq(algoColours.bookId, schema.books.id), eq(algoColours.source, "algorithmic")),
+    )
+    .leftJoin(llmColours, and(eq(llmColours.bookId, schema.books.id), eq(llmColours.source, "llm")))
+    .leftJoin(
+      blendedColours,
+      and(eq(blendedColours.bookId, schema.books.id), eq(blendedColours.source, "blended")),
+    )
+    .where(eq(schema.books.id, id))
+    .limit(1);
 
-    if (!row) return null;
+  if (!row) return null;
 
-    return {
-      bookId: row.bookId,
-      title: row.title,
-      gutenbergId: row.gutenbergId,
-      lang: row.lang,
-      wordCount: row.wordCount,
-      ingestedAt: row.ingestedAt,
-      authorName: row.authorName,
-      authorBirth: row.authorBirth,
-      authorDeath: row.authorDeath,
-      classical: (row.classical as ClassicalFeatures | null) ?? null,
-      algorithmic: hslFrom(
-        row.algoHue,
-        row.algoSaturation,
-        row.algoLightness,
-        row.algoJustification,
-      ),
-      llm: hslFrom(row.llmHue, row.llmSaturation, row.llmLightness, row.llmJustification),
-      blended: hslFrom(
-        row.blendedHue,
-        row.blendedSaturation,
-        row.blendedLightness,
-        row.blendedJustification,
-      ),
-    };
-  } catch {
-    return null;
-  }
+  return {
+    bookId: row.bookId,
+    title: row.title,
+    gutenbergId: row.gutenbergId,
+    lang: row.lang,
+    wordCount: row.wordCount,
+    ingestedAt: row.ingestedAt,
+    authorName: row.authorName,
+    authorBirth: row.authorBirth,
+    authorDeath: row.authorDeath,
+    classical: (row.classical as ClassicalFeatures | null) ?? null,
+    algorithmic: hslFrom(row.algoHue, row.algoSaturation, row.algoLightness, row.algoJustification),
+    llm: hslFrom(row.llmHue, row.llmSaturation, row.llmLightness, row.llmJustification),
+    blended: hslFrom(
+      row.blendedHue,
+      row.blendedSaturation,
+      row.blendedLightness,
+      row.blendedJustification,
+    ),
+  };
 }
 
 function hslFrom(

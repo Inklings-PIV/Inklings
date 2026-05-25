@@ -1,6 +1,8 @@
 // Usage:
-//   pnpm seed:all              dev: needs Next + Inngest dev servers running
-//   pnpm seed:all --prod       prod: needs INNGEST_EVENT_KEY + DATABASE_URL_PROD in .env
+//   pnpm seed:all                          dev: needs Next + Inngest dev servers
+//   pnpm seed:all --top=1000               pull top-N curated English lit from PG
+//   pnpm seed:all --prod                   prod: needs INNGEST_EVENT_KEY + DATABASE_URL_PROD
+//   pnpm seed:all --top=1000 --prod        both
 
 // IMPORTANT: --prod must take effect BEFORE _load-env or @/lib/* are imported,
 // because they read process.env at module-load. Hence dynamic imports below.
@@ -10,13 +12,19 @@ if (isProd) {
   Object.assign(process.env, { NODE_ENV: "production", DRIZZLE_ENV: "prod" });
 }
 
+const topArg = process.argv.find((a) => a.startsWith("--top="))?.split("=")[1];
+const topN = topArg ? Math.max(1, Number.parseInt(topArg, 10)) : 0;
+
 void (async () => {
   await import("./_load-env");
 
   const { and, count, eq, gt, inArray } = await import("drizzle-orm");
   const { getDb, schema } = await import("../lib/db");
   const { SEED_BOOKS } = await import("../lib/ingestion/seed-list");
+  const { fetchTopEnglishBooks } = await import("../lib/ingestion/gutenberg-catalog");
   const { inngest } = await import("../lib/inngest/client");
+
+  type SeedBook = { gutenbergId: number; title: string; author: string };
 
   const target = isProd ? "PROD" : "DEV";
   const startTime = Date.now();
@@ -28,22 +36,58 @@ void (async () => {
     fail("--prod requires DATABASE_URL_PROD in your .env");
   }
 
-  const ids = SEED_BOOKS.map((b) => b.gutenbergId);
-  log(`[${target}]  seeding ${ids.length} books end-to-end\n`);
+  // Sourcing: --top=N → PG catalog (curated English literature, sorted by
+  // gutenbergId asc); absent the flag we use the hand-picked SEED_BOOKS.
+  let candidates: SeedBook[];
+  if (topN > 0) {
+    log(`[${target}]  pulling top ${topN} curated books from PG catalog...`);
+    const top = await fetchTopEnglishBooks(topN);
+    candidates = top.map((e) => ({
+      gutenbergId: e.gutenbergId,
+      title: e.title,
+      author: e.authors,
+    }));
+    log(`  got ${candidates.length} candidates`);
+  } else {
+    candidates = [...SEED_BOOKS];
+  }
+
+  // Skip-already-ingested — without this every rerun re-fires the
+  // pipeline for books we've already processed and double-bills.
+  const ids = candidates.map((c) => c.gutenbergId);
+  const dbForSkip = getDb();
+  const existing = await dbForSkip
+    .select({ gutenbergId: schema.books.gutenbergId, status: schema.books.status })
+    .from(schema.books)
+    .where(inArray(schema.books.gutenbergId, ids));
+  const skipSet = new Set(existing.filter((r) => r.status !== "failed").map((r) => r.gutenbergId));
+  const fresh = candidates.filter((c) => !skipSet.has(c.gutenbergId));
+
+  log(
+    `[${target}]  ${candidates.length} candidates · ${skipSet.size} already done · ${fresh.length} to ingest\n`,
+  );
 
   // 1. Send seed events
-  log("→ enqueuing ingest events...");
-  await inngest.send(
-    SEED_BOOKS.map((b) => ({
-      name: "corpus/book.ingest" as const,
-      data: { gutenbergId: b.gutenbergId },
-    })),
-  );
-  log(`  sent ${ids.length} events\n`);
+  if (fresh.length > 0) {
+    log("→ enqueuing ingest events...");
+    await inngest.send(
+      fresh.map((b) => ({
+        name: "corpus/book.ingest" as const,
+        data: { gutenbergId: b.gutenbergId },
+      })),
+    );
+    log(`  sent ${fresh.length} events\n`);
+  } else {
+    log("→ no fresh books to enqueue (corpus already covers the candidates)\n");
+  }
 
-  // 2. Wait for ingestion
+  // 2. Wait for ingestion. Timeout scales with fresh count — Inngest
+  // concurrency is 2 and each book takes ~30 s, so we budget ~45 s/book
+  // with a 20-minute floor for tiny runs.
   log("→ waiting for ingestion (polls every 5s)...");
   const db = getDb();
+  const ingestTimeoutMs = Math.max(20 * 60 * 1000, fresh.length * 45_000);
+  log(`  timeout budget: ${Math.round(ingestTimeoutMs / 60_000)} min`);
   await waitForCount({
     label: "ready",
     expected: ids.length,
@@ -54,7 +98,7 @@ void (async () => {
         .where(and(eq(schema.books.status, "ready"), inArray(schema.books.gutenbergId, ids)))
         .then((r) => Number(r[0]?.n ?? 0)),
     intervalMs: 5_000,
-    timeoutMs: 20 * 60 * 1000,
+    timeoutMs: ingestTimeoutMs,
   });
 
   // 3. Trigger classical layout

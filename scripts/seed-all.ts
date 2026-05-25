@@ -23,6 +23,7 @@ void (async () => {
   const { SEED_BOOKS } = await import("../lib/ingestion/seed-list");
   const { fetchTopEnglishBooks } = await import("../lib/ingestion/gutenberg-catalog");
   const { inngest } = await import("../lib/inngest/client");
+  const { chooseExcerpt } = await import("../lib/excerpts/select");
 
   type SeedBook = { gutenbergId: number; title: string; author: string };
 
@@ -185,6 +186,63 @@ void (async () => {
     intervalMs: 2_500,
     timeoutMs: 5 * 60 * 1000,
   });
+
+  // 9. Pre-warm excerpts for every candidate book that doesn't have one
+  //    cached yet. Excerpts feed the game's Smudge, the Quill's seeds, and
+  //    excerpt-grounded LLM colour (#66) — they're computed lazily on
+  //    first hit otherwise, leading to a 5–10 s stall in the game UI. The
+  //    default "longest-paragraph" strategy only refetches the Gutenberg
+  //    text (free), no API spend.
+  log("\n→ pre-warming excerpts (longest-paragraph strategy)…");
+  const booksForExcerpt = await db
+    .select({ id: schema.books.id, gutenbergId: schema.books.gutenbergId })
+    .from(schema.books)
+    .where(inArray(schema.books.gutenbergId, ids));
+  const existingExcerpts = await db
+    .select({ bookId: schema.bookExcerpts.bookId })
+    .from(schema.bookExcerpts)
+    .where(
+      and(
+        eq(schema.bookExcerpts.strategy, "longest-paragraph"),
+        inArray(
+          schema.bookExcerpts.bookId,
+          booksForExcerpt.map((b) => b.id),
+        ),
+      ),
+    );
+  const haveExcerpt = new Set(existingExcerpts.map((r) => r.bookId));
+  const needExcerpt = booksForExcerpt.filter((b) => !haveExcerpt.has(b.id));
+  log(
+    `  ${booksForExcerpt.length} books · ${haveExcerpt.size} already cached · ${needExcerpt.length} to warm`,
+  );
+
+  if (needExcerpt.length > 0) {
+    let done = 0;
+    let failed = 0;
+    const concurrency = 4;
+    let cursor = 0;
+    await Promise.all(
+      Array.from({ length: concurrency }, async () => {
+        while (cursor < needExcerpt.length) {
+          const i = cursor++;
+          const book = needExcerpt[i];
+          if (!book) continue;
+          try {
+            await chooseExcerpt(book.id);
+            done++;
+          } catch {
+            failed++;
+          }
+          if ((done + failed) % 25 === 0 || done + failed === needExcerpt.length) {
+            log(
+              `  ${String(done + failed).padStart(4)}/${needExcerpt.length} warmed  (${failed} failed)`,
+            );
+          }
+        }
+      }),
+    );
+    log(`  excerpts: ${done} cached, ${failed} failed`);
+  }
 
   const elapsed = Math.round((Date.now() - startTime) / 1000);
   log(`\n[${target}]  done in ${elapsed}s — open /inkwell`);

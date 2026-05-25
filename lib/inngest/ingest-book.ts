@@ -31,11 +31,14 @@ export const ingestBook = inngest.createFunction(
       return result;
     });
 
-    const text = await step.run("fetch-text", async () => {
-      const result = await fetchBookText(gutenbergId);
-      if (!result) throw new Error(`No text body for Gutenberg #${gutenbergId}`);
-      return result;
-    });
+    // Inline fetch — the full plain-text body exceeds Inngest's per-step
+    // output cap (~4 MB in dev/cloud) for collected-works ebooks like
+    // Shakespeare #100. Wrapping this in step.run persists the text into
+    // run state and hard-fails with "step output size is greater than
+    // the limit". Re-fetched on every retry, but Gutenberg is free + cheap
+    // at this volume — small cost for the rare retry case. (#87)
+    const text = await fetchBookText(gutenbergId);
+    if (!text) throw new Error(`No text body for Gutenberg #${gutenbergId}`);
 
     const wordCount = countWords(text);
 

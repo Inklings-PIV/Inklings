@@ -50,6 +50,9 @@ next-env.d.ts
 # drizzle
 /drizzle/migrations/meta
 
+# pg_catalog cache (refetched weekly by lib/ingestion/gutenberg-catalog.ts)
+/.cache
+
 # editor
 .vscode/*
 !.vscode/settings.json

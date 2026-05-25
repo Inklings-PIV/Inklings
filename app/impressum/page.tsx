@@ -7,13 +7,10 @@ export const metadata: Metadata = {
   robots: { index: true, follow: false },
 };
 
-// Legal Impressum per §5 TMG / Germany. Note: §5 TMG strictly requires a
-// "ladungsfähige Anschrift" (street + house number). The current address
-// only carries PLZ + Ort because the operator hasn't published a street
-// address yet — fine for closed beta / unindexed deploy, NOT fine for a
-// public launch. Resolve before flipping the site to a public audience
-// (either fill the street + number, or switch to the LMU c/o address with
-// institutional permission, or use a Postfach).
+// Legal Impressum per §5 TMG / Germany. The address is deliberately
+// PLZ + Ort only — the operator has chosen not to publish a full
+// street address. §5 TMG strictly requires street + number; that's
+// an accepted trade-off here.
 const PROJECT_LEAD_NAME = "Noel Huibers";
 const PROJECT_LEAD_ADDRESS_LINES = ["81737 München", "Deutschland"];
 const PROJECT_LEAD_EMAIL = "inklings@huibers.io";

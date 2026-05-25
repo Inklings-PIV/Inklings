@@ -41,6 +41,27 @@ void (async () => {
     fail("--prod requires DATABASE_URL_PROD in your .env");
   }
 
+  // Pre-flight: in dev mode, sending events succeeds the moment the
+  // Inngest dev server is up — but if the Next app isn't running, no
+  // function is registered and events sit in the queue forever. We
+  // probe /api/inngest to fail fast with a useful message instead of
+  // timing out after an hour with no progress.
+  if (!isProd) {
+    const inngestApi = "http://localhost:3000/api/inngest";
+    try {
+      const res = await fetch(inngestApi, { method: "GET" });
+      if (!res.ok) {
+        fail(
+          `Next dev server replied ${res.status} at ${inngestApi}. Start it with \`pnpm dev\` in another terminal — the Inngest dev server discovers registered functions through this route.`,
+        );
+      }
+    } catch {
+      fail(
+        `Couldn't reach Next dev server at ${inngestApi}. Start it with \`pnpm dev\` in another terminal. (Inngest dev server alone isn't enough — it polls /api/inngest to discover functions.)`,
+      );
+    }
+  }
+
   // Sourcing: --top=N → PG catalog (curated English literature, sorted by
   // gutenbergId asc); absent the flag we use the hand-picked SEED_BOOKS.
   let candidates: SeedBook[];
@@ -274,15 +295,36 @@ async function waitForCount(opts: {
 }): Promise<void> {
   const startedAt = Date.now();
   let lastShown = -1;
+  let lastHeartbeat = startedAt;
+  // Heartbeat every 30 s even when the count hasn't moved — turns
+  // an opaque hang into a visible "still N/M" line so the operator
+  // can decide to stop early.
+  const HEARTBEAT_MS = 30_000;
+  // Hint at the most common cause of a stuck queue after a couple
+  // of quiet minutes — Next dev not running, so no Inngest worker.
+  const STUCK_HINT_MS = 2 * 60_000;
+  let hintShown = false;
   while (true) {
     const current = await opts.poll();
+    const now = Date.now();
+    const sec = Math.round((now - startedAt) / 1000);
     if (current !== lastShown) {
-      const sec = Math.round((Date.now() - startedAt) / 1000);
-      log(`  ${String(current).padStart(2)}/${opts.expected} ${opts.label}  (${sec}s)`);
+      log(`  ${String(current).padStart(4)}/${opts.expected} ${opts.label}  (${sec}s)`);
       lastShown = current;
+      lastHeartbeat = now;
+      hintShown = false;
+    } else if (now - lastHeartbeat > HEARTBEAT_MS) {
+      log(`  ${String(current).padStart(4)}/${opts.expected} ${opts.label}  (${sec}s, still)`);
+      lastHeartbeat = now;
     }
     if (current >= opts.expected) return;
-    if (Date.now() - startedAt > opts.timeoutMs) {
+    if (current < opts.expected && now - startedAt > STUCK_HINT_MS && !hintShown) {
+      log(
+        `  ⚠ no progress in ${Math.round((now - startedAt) / 1000)}s. Check the Inngest dashboard at http://localhost:8288 — if no runs are appearing, Next dev isn't serving /api/inngest or your event names don't match.`,
+      );
+      hintShown = true;
+    }
+    if (now - startedAt > opts.timeoutMs) {
       throw new Error(
         `timed out at ${current}/${opts.expected} ${opts.label} after ${Math.round(
           opts.timeoutMs / 1000,

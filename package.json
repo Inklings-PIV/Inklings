@@ -36,6 +36,7 @@
     "backfill:embeddings:prod": "cross-env DRIZZLE_ENV=prod tsx scripts/backfill-embeddings.ts",
     "seed:corpus": "tsx scripts/seed-corpus.ts",
     "seed:all": "tsx scripts/seed-all.ts",
+    "seed:direct": "tsx scripts/seed-direct.ts",
     "derive:colours": "tsx scripts/derive-colours.ts",
     "derive:colours:prod": "cross-env DRIZZLE_ENV=prod tsx scripts/derive-colours.ts",
     "derive:llm-colours": "tsx scripts/derive-llm-colours.ts",

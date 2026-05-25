@@ -10,6 +10,9 @@
 
 // IMPORTANT: --prod must take effect BEFORE _load-env or @/lib/* are imported,
 // because they read process.env at module-load. Hence dynamic imports below.
+
+export {};
+
 const isProd = process.argv.includes("--prod");
 if (isProd) {
   // @types/node marks NODE_ENV readonly; Object.assign sidesteps the check.

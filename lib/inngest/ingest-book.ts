@@ -217,7 +217,7 @@ export function* authorSlugCandidates(meta: GutenbergAuthor): Generator<string> 
   yield `${base}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
-async function upsertAuthor(meta: GutenbergAuthor): Promise<string> {
+export async function upsertAuthor(meta: GutenbergAuthor): Promise<string> {
   const db = getDb();
 
   // If we already know this author by their Gutenberg agent id, update in
@@ -262,7 +262,7 @@ async function upsertAuthor(meta: GutenbergAuthor): Promise<string> {
   throw new Error(`Could not disambiguate slug for author ${meta.name}`);
 }
 
-type UpsertBookInput = {
+export type UpsertBookInput = {
   gutenbergId: number;
   authorId: string;
   title: string;
@@ -270,7 +270,7 @@ type UpsertBookInput = {
   wordCount: number;
 };
 
-async function upsertBook(input: UpsertBookInput): Promise<string> {
+export async function upsertBook(input: UpsertBookInput): Promise<string> {
   const db = getDb();
   const { gutenbergId, authorId, title, lang, wordCount } = input;
 

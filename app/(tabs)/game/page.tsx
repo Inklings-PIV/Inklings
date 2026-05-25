@@ -63,9 +63,45 @@ export default function GamePage() {
     });
   }, []);
 
+  const modeToggle = (
+    <ToggleGroup
+      type="single"
+      value={mode}
+      onValueChange={(v) => v && setMode(v as GameMode)}
+      variant="outline"
+      size="sm"
+    >
+      <ToggleGroupItem value="swatch">Swatch</ToggleGroupItem>
+      <ToggleGroupItem value="wheel">Wheel</ToggleGroupItem>
+      <ToggleGroupItem value="twin">Twin</ToggleGroupItem>
+    </ToggleGroup>
+  );
+
+  const scoreChips = (
+    <div
+      role="status"
+      aria-live="polite"
+      aria-label={`Streak ${streak}, session score ${sessionScore}`}
+      className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground sm:gap-4 sm:text-sm"
+    >
+      <span className="flex items-center gap-1.5">
+        <Flame aria-hidden="true" className="size-4" />{" "}
+        <strong className="text-foreground tabular-nums">{streak}</strong>
+        <span className="hidden sm:inline">streak</span>
+      </span>
+      <span className="flex items-center gap-1.5">
+        <Trophy aria-hidden="true" className="size-4" />{" "}
+        <strong className="text-foreground tabular-nums">{sessionScore}</strong>
+        <span className="hidden sm:inline">score</span>
+      </span>
+    </div>
+  );
+
   return (
-    <div className="mx-auto max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
-      <header className="flex flex-wrap items-start justify-between gap-3 sm:items-end sm:gap-4">
+    <div className="mx-auto max-w-5xl px-4 py-4 sm:px-6 sm:py-8">
+      {/* Desktop header: title + tagline + score chips. Mobile drops both
+          the title and the tagline to reclaim ~70px above the fold. */}
+      <header className="hidden flex-wrap items-end justify-between gap-4 sm:flex">
         <div className="min-w-0">
           <h1 className="font-display text-2xl tracking-tight text-ink-deep sm:text-3xl">
             The Blotting Game
@@ -74,47 +110,19 @@ export default function GamePage() {
             Guess the hue of a smudge. Every guess feeds the consensus ink.
           </p>
         </div>
-        <div
-          role="status"
-          aria-live="polite"
-          aria-label={`Streak ${streak}, session score ${sessionScore}`}
-          className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground sm:gap-4 sm:text-sm"
-        >
-          <span className="flex items-center gap-1.5">
-            <Flame aria-hidden="true" className="size-4" />{" "}
-            <strong className="text-foreground tabular-nums">{streak}</strong>
-            <span className="hidden sm:inline">streak</span>
-          </span>
-          <span className="flex items-center gap-1.5">
-            <Trophy aria-hidden="true" className="size-4" />{" "}
-            <strong className="text-foreground tabular-nums">{sessionScore}</strong>
-            <span className="hidden sm:inline">score</span>
-          </span>
-        </div>
+        {scoreChips}
       </header>
 
-      <div className="mt-6">
-        <ToggleGroup
-          type="single"
-          value={mode}
-          onValueChange={(v) => v && setMode(v as GameMode)}
-          variant="outline"
-          size="sm"
-          className="w-full sm:w-auto"
-        >
-          <ToggleGroupItem value="swatch" className="flex-1 sm:flex-initial">
-            Swatch
-          </ToggleGroupItem>
-          <ToggleGroupItem value="wheel" className="flex-1 sm:flex-initial">
-            Wheel
-          </ToggleGroupItem>
-          <ToggleGroupItem value="twin" className="flex-1 sm:flex-initial">
-            Twin
-          </ToggleGroupItem>
-        </ToggleGroup>
+      {/* Desktop tabs row */}
+      <div className="mt-6 hidden sm:block">{modeToggle}</div>
+
+      {/* Mobile: tabs + score chips share one row. */}
+      <div className="flex flex-wrap items-center justify-between gap-3 sm:hidden">
+        {modeToggle}
+        {scoreChips}
       </div>
 
-      <Separator className="my-6" />
+      <Separator className="my-4 sm:my-6" />
 
       {mode === "swatch" && (
         <SwatchRound sessionId={sessionId} onSession={setSessionId} onScored={handleScored} />
@@ -126,7 +134,7 @@ export default function GamePage() {
         <TwinRound sessionId={sessionId} onSession={setSessionId} onScored={handleScored} />
       )}
 
-      <Separator className="my-8" />
+      <Separator className="my-6 sm:my-8" />
       <Leaderboard rows={leaderboard} />
     </div>
   );
@@ -256,7 +264,7 @@ function SwatchRound({
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-3 gap-3 sm:gap-2">
             {!round
               ? Array.from({ length: 6 }).map((_, i) => (
                   <div
@@ -457,7 +465,7 @@ function WheelRound({
             aria-label="Colour wheel — click to set hue (angle) and saturation (distance from centre)"
             onClick={onWheelClick}
             disabled={!round || isRevealed || isSubmitting}
-            className="relative size-52 cursor-crosshair rounded-full border border-border shadow-inner focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-default"
+            className="relative size-60 cursor-crosshair rounded-full border border-border shadow-inner focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-default sm:size-52"
             style={{
               // Conic stops match HSL hue 0..360 so position on the wheel
               // *is* the picked hue value — top is red (0°), right is lime
@@ -482,7 +490,7 @@ function WheelRound({
               <span
                 ref={wheelMarkerRef}
                 aria-hidden="true"
-                className="absolute size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow"
+                className="absolute size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow sm:size-3"
                 style={{
                   left: `${pickMarker.x}%`,
                   top: `${pickMarker.y}%`,
@@ -493,7 +501,7 @@ function WheelRound({
             {state.kind === "revealed" && correctMarker && (
               <span
                 aria-hidden="true"
-                className="absolute size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-emerald-500 ring-2 ring-background"
+                className="absolute size-5 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-emerald-500 ring-2 ring-background sm:size-4"
                 style={{
                   left: `${correctMarker.x}%`,
                   top: `${correctMarker.y}%`,
@@ -573,10 +581,12 @@ function HueSatSliders({
 
   // Tailwind v4 arbitrary selectors for the WebKit + Firefox thumbs —
   // duplicated because the two engines don't share a pseudo-element.
+  // Larger thumb on mobile (size-5 = 20px) for easier dragging with a
+  // fingertip; tightens to size-4 (16px) at sm+ where a mouse is precise.
   const sliderClass =
     "h-3 w-full appearance-none rounded-full border border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 disabled:cursor-not-allowed disabled:opacity-50 " +
-    "[&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:bg-ink-deep [&::-webkit-slider-thumb]:shadow " +
-    "[&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-white [&::-moz-range-thumb]:bg-ink-deep [&::-moz-range-thumb]:shadow";
+    "[&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:size-5 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:bg-ink-deep [&::-webkit-slider-thumb]:shadow sm:[&::-webkit-slider-thumb]:size-4 " +
+    "[&::-moz-range-thumb]:size-5 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-white [&::-moz-range-thumb]:bg-ink-deep [&::-moz-range-thumb]:shadow sm:[&::-moz-range-thumb]:size-4";
 
   return (
     <div className="flex w-full flex-col gap-3 text-xs">
@@ -738,19 +748,19 @@ function TwinRound({
           </CardContent>
         </Card>
       ) : round ? (
-        <div className="flex flex-wrap items-center justify-center gap-3">
+        <div className="flex items-stretch justify-center gap-3 sm:flex-wrap">
           <Button
             variant="outline"
             onClick={(e) => guess("different", e.currentTarget)}
             disabled={isSubmitting}
-            className="min-w-[140px]"
+            className="flex-1 sm:flex-initial sm:min-w-[140px]"
           >
             Different hues
           </Button>
           <Button
             onClick={(e) => guess("same", e.currentTarget)}
             disabled={isSubmitting}
-            className="min-w-[140px]"
+            className="flex-1 sm:flex-initial sm:min-w-[140px]"
           >
             Same hue
           </Button>

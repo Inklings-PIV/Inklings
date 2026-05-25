@@ -236,83 +236,73 @@ function SwatchRound({
     });
   };
 
-  // While the first round is loading (state=idle, isLoading=true) we still
-  // show this button screen — the spinner sits inside the button rather
-  // than as a centred page-blocker. Subsequent "Next round" loads keep the
-  // previous revealed state on screen until the new excerpt bleeds in.
-  if (state.kind === "idle") {
-    return (
-      <div className="flex flex-col items-center gap-4 py-10">
-        {error && <p className="text-sm italic text-destructive">{error}</p>}
-        <Button onClick={begin} disabled={isLoading}>
-          {isLoading ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <Sparkles className="size-4" />
-          )}
-          Start a round
-        </Button>
-      </div>
-    );
-  }
-
-  const round = state.round;
+  const round = state.kind === "idle" ? null : state.round;
   const isRevealed = state.kind === "revealed";
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
-      <Smudge excerpt={round.excerpt} ref={smudgeRef} roundKey={round.roundId} />
+      <Smudge excerpt={round?.excerpt} ref={smudgeRef} roundKey={round?.roundId ?? "loading"} />
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Pick a swatch</CardTitle>
           <CardDescription>
-            {isRevealed
-              ? state.result.correct
-                ? `Yes — ${state.result.book.title} by ${state.result.book.authorName}.`
-                : `That was ${state.result.book.title} by ${state.result.book.authorName}.`
-              : "Which hue belongs to this smudge?"}
+            {!round
+              ? (error ?? "Pulling a smudge…")
+              : state.kind === "revealed"
+                ? state.result.correct
+                  ? `Yes — ${state.result.book.title} by ${state.result.book.authorName}.`
+                  : `That was ${state.result.book.title} by ${state.result.book.authorName}.`
+                : "Which hue belongs to this smudge?"}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
           <div className="grid grid-cols-3 gap-2">
-            {round.swatches.map((s, i) => {
-              const isPicked = isRevealed && state.pickedId === s.swatchId;
-              const isCorrect = isRevealed && state.result.correctSwatchId === s.swatchId;
-              return (
-                <button
-                  key={s.swatchId}
-                  type="button"
-                  aria-label={`Swatch ${i + 1} of ${round.swatches.length}`}
-                  onClick={(e) => guess(s.swatchId, e.currentTarget, s.css)}
-                  disabled={isRevealed || isSubmitting}
-                  className={cn(
-                    "relative aspect-square rounded-md border border-border transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                    !isRevealed && "enabled:hover:scale-[1.03]",
-                    isCorrect && "ring-2 ring-emerald-500 ring-offset-2 ring-offset-background",
-                    isPicked &&
-                      !isCorrect &&
-                      "ring-2 ring-destructive ring-offset-2 ring-offset-background",
-                  )}
-                  style={{ backgroundColor: s.css }}
-                >
-                  {isCorrect && (
-                    <Check
-                      aria-hidden="true"
-                      className="absolute inset-0 m-auto size-6 text-white drop-shadow"
-                    />
-                  )}
-                  {isPicked && !isCorrect && (
-                    <X
-                      aria-hidden="true"
-                      className="absolute inset-0 m-auto size-6 text-white drop-shadow"
-                    />
-                  )}
-                  {isSubmitting && state.kind === "guessing" && (
-                    <Loader2 className="absolute inset-0 m-auto size-4 animate-spin text-white/80" />
-                  )}
-                </button>
-              );
-            })}
+            {!round
+              ? Array.from({ length: 6 }).map((_, i) => (
+                  <div
+                    // biome-ignore lint/suspicious/noArrayIndexKey: stable skeleton placeholders
+                    key={i}
+                    className="aspect-square animate-pulse rounded-md border border-dashed border-border/60 bg-muted/40"
+                  />
+                ))
+              : round.swatches.map((s, i) => {
+                  const isPicked = isRevealed && state.pickedId === s.swatchId;
+                  const isCorrect = isRevealed && state.result.correctSwatchId === s.swatchId;
+                  return (
+                    <button
+                      key={s.swatchId}
+                      type="button"
+                      aria-label={`Swatch ${i + 1} of ${round.swatches.length}`}
+                      onClick={(e) => guess(s.swatchId, e.currentTarget, s.css)}
+                      disabled={isRevealed || isSubmitting}
+                      className={cn(
+                        "relative aspect-square rounded-md border border-border transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
+                        !isRevealed && "enabled:hover:scale-[1.03]",
+                        isCorrect && "ring-2 ring-emerald-500 ring-offset-2 ring-offset-background",
+                        isPicked &&
+                          !isCorrect &&
+                          "ring-2 ring-destructive ring-offset-2 ring-offset-background",
+                      )}
+                      style={{ backgroundColor: s.css }}
+                    >
+                      {isCorrect && (
+                        <Check
+                          aria-hidden="true"
+                          className="absolute inset-0 m-auto size-6 text-white drop-shadow"
+                        />
+                      )}
+                      {isPicked && !isCorrect && (
+                        <X
+                          aria-hidden="true"
+                          className="absolute inset-0 m-auto size-6 text-white drop-shadow"
+                        />
+                      )}
+                      {isSubmitting && state.kind === "guessing" && (
+                        <Loader2 className="absolute inset-0 m-auto size-4 animate-spin text-white/80" />
+                      )}
+                    </button>
+                  );
+                })}
           </div>
           {isRevealed && (
             <Button onClick={begin} disabled={isLoading}>
@@ -324,7 +314,17 @@ function SwatchRound({
               Next round
             </Button>
           )}
-          {error && <p className="text-xs italic text-destructive">{error}</p>}
+          {!round && error && (
+            <Button onClick={begin} disabled={isLoading} size="sm" variant="outline">
+              {isLoading ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Sparkles className="size-4" />
+              )}
+              Try again
+            </Button>
+          )}
+          {error && round && <p className="text-xs italic text-destructive">{error}</p>}
         </CardContent>
       </Card>
     </div>
@@ -427,45 +427,28 @@ function WheelRound({
     });
   };
 
-  // Initial mount loading is brief and the Sparkles button's internal
-  // spinner is the affordance. Next-round loading falls through to the
-  // revealed layout below, so the previous smudge stays visible until the
-  // new excerpt bleeds in.
-  if (state.kind === "idle") {
-    return (
-      <div className="flex flex-col items-center gap-4 py-10">
-        {error && <p className="text-sm italic text-destructive">{error}</p>}
-        <Button onClick={begin} disabled={isLoading}>
-          {isLoading ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <Sparkles className="size-4" />
-          )}
-          Start a round
-        </Button>
-      </div>
-    );
-  }
-
-  const round = state.round;
+  const round = state.kind === "idle" ? null : state.round;
   const isRevealed = state.kind === "revealed";
-  const correctMarker = isRevealed
-    ? polarToOffsetPercent(state.result.correct.hue, state.result.correct.saturation)
-    : null;
+  const correctMarker =
+    state.kind === "revealed"
+      ? polarToOffsetPercent(state.result.correct.hue, state.result.correct.saturation)
+      : null;
   const pickMarker = pick ? polarToOffsetPercent(pick.hue, pick.saturation) : null;
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
-      <Smudge excerpt={round.excerpt} ref={smudgeRef} roundKey={round.roundId} />
+      <Smudge excerpt={round?.excerpt} ref={smudgeRef} roundKey={round?.roundId ?? "loading"} />
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Pick on the wheel</CardTitle>
           <CardDescription>
-            {isRevealed
-              ? state.result.scored >= STREAK_WIN_THRESHOLD
-                ? `Close — ${state.result.book.title} by ${state.result.book.authorName}. ${state.result.scored} / 100.`
-                : `That was ${state.result.book.title} by ${state.result.book.authorName}. ${state.result.scored} / 100.`
-              : "Click the wheel to drop the nib — angle picks hue, distance from the centre picks saturation."}
+            {!round
+              ? (error ?? "Pulling a smudge…")
+              : state.kind === "revealed"
+                ? state.result.scored >= STREAK_WIN_THRESHOLD
+                  ? `Close — ${state.result.book.title} by ${state.result.book.authorName}. ${state.result.scored} / 100.`
+                  : `That was ${state.result.book.title} by ${state.result.book.authorName}. ${state.result.scored} / 100.`
+                : "Click the wheel to drop the nib — angle picks hue, distance from the centre picks saturation."}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col items-center gap-4">
@@ -473,7 +456,7 @@ function WheelRound({
             type="button"
             aria-label="Colour wheel — click to set hue (angle) and saturation (distance from centre)"
             onClick={onWheelClick}
-            disabled={isRevealed || isSubmitting}
+            disabled={!round || isRevealed || isSubmitting}
             className="relative size-52 cursor-crosshair rounded-full border border-border shadow-inner focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-default"
             style={{
               // Conic stops match HSL hue 0..360 so position on the wheel
@@ -507,7 +490,7 @@ function WheelRound({
                 }}
               />
             )}
-            {isRevealed && correctMarker && (
+            {state.kind === "revealed" && correctMarker && (
               <span
                 aria-hidden="true"
                 className="absolute size-4 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-emerald-500 ring-2 ring-background"
@@ -520,9 +503,13 @@ function WheelRound({
             )}
           </button>
 
-          <HueSatSliders pick={pick} disabled={isRevealed || isSubmitting} onChange={setPick} />
+          <HueSatSliders
+            pick={pick}
+            disabled={!round || isRevealed || isSubmitting}
+            onChange={setPick}
+          />
 
-          {!isRevealed && (
+          {round && !isRevealed && (
             <Button onClick={submit} disabled={!pick || isSubmitting} className="w-full">
               {isSubmitting ? (
                 <Loader2 className="size-4 animate-spin" />
@@ -533,7 +520,7 @@ function WheelRound({
             </Button>
           )}
 
-          {isRevealed && (
+          {round && isRevealed && (
             <Button onClick={begin} disabled={isLoading} className="w-full">
               {isLoading ? (
                 <Loader2 className="size-4 animate-spin" />
@@ -544,7 +531,17 @@ function WheelRound({
             </Button>
           )}
 
-          {error && <p className="text-xs italic text-destructive">{error}</p>}
+          {!round && error && (
+            <Button onClick={begin} disabled={isLoading} size="sm" variant="outline">
+              {isLoading ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Sparkles className="size-4" />
+              )}
+              Try again
+            </Button>
+          )}
+          {error && round && <p className="text-xs italic text-destructive">{error}</p>}
         </CardContent>
       </Card>
     </div>
@@ -694,36 +691,25 @@ function TwinRound({
     });
   };
 
-  // First-round loading shows the Sparkles button with internal spinner;
-  // subsequent rounds keep the previous pair on screen until the new
-  // excerpts bleed in.
-  if (state.kind === "idle") {
-    return (
-      <div className="flex flex-col items-center gap-4 py-10">
-        {error && <p className="text-sm italic text-destructive">{error}</p>}
-        <Button onClick={begin} disabled={isLoading}>
-          {isLoading ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <Sparkles className="size-4" />
-          )}
-          Start a round
-        </Button>
-      </div>
-    );
-  }
-
-  const round = state.round;
+  const round = state.kind === "idle" ? null : state.round;
   const isRevealed = state.kind === "revealed";
 
   return (
     <div className="grid gap-6">
       <div className="grid gap-6 md:grid-cols-2">
-        <Smudge excerpt={round.excerptA} variant="left" roundKey={`${round.roundId}-a`} />
-        <Smudge excerpt={round.excerptB} variant="right" roundKey={`${round.roundId}-b`} />
+        <Smudge
+          excerpt={round?.excerptA}
+          variant="left"
+          roundKey={round ? `${round.roundId}-a` : "loading-a"}
+        />
+        <Smudge
+          excerpt={round?.excerptB}
+          variant="right"
+          roundKey={round ? `${round.roundId}-b` : "loading-b"}
+        />
       </div>
 
-      {isRevealed ? (
+      {state.kind === "revealed" ? (
         <Card>
           <CardHeader>
             <CardTitle className="text-base">
@@ -751,7 +737,7 @@ function TwinRound({
             </Button>
           </CardContent>
         </Card>
-      ) : (
+      ) : round ? (
         <div className="flex flex-wrap items-center justify-center gap-3">
           <Button
             variant="outline"
@@ -769,9 +755,23 @@ function TwinRound({
             Same hue
           </Button>
         </div>
-      )}
+      ) : error ? (
+        <div className="flex flex-col items-center gap-2">
+          <p className="text-center text-xs italic text-destructive">{error}</p>
+          <Button onClick={begin} disabled={isLoading} size="sm" variant="outline">
+            {isLoading ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : (
+              <Sparkles className="size-4" />
+            )}
+            Try again
+          </Button>
+        </div>
+      ) : null}
 
-      {error && <p className="text-center text-xs italic text-destructive">{error}</p>}
+      {error && round && !isRevealed && (
+        <p className="text-center text-xs italic text-destructive">{error}</p>
+      )}
     </div>
   );
 }
@@ -806,22 +806,18 @@ function Smudge({
 }: {
   excerpt?: string;
   variant?: "single" | "left" | "right";
-  // When set, the excerpt is wrapped in <BleedingText> keyed by this string,
-  // so a new round triggers the word-by-word bleed-in. When unset (no round
-  // loaded yet), the fallback text renders plain — no animation on the
-  // pre-load placeholder.
-  roundKey?: string;
+  // Re-key on every new round so the bleed-in plays per round. While the
+  // first round is loading, callers pass a stable key (e.g. "loading") so
+  // the placeholder bleeds in once without thrashing.
+  roundKey: string;
   // Forwarded to a wrapper div so callers can measure the smudge's screen
   // position (drip target).
   ref?: React.Ref<HTMLDivElement>;
 }) {
-  // Wheel + Twin modes are still placeholder — fall back to seed copy so they
-  // render until #33/#34 ship.
-  const text =
-    excerpt ??
-    (variant === "right"
-      ? "There were doors all round the hall, but they were all locked; and when Alice had been all the way down one side and up the other, trying every door, she walked sadly down the middle, wondering how she was ever to get out again."
-      : "It was a bright cold day in April, and the clocks were striking thirteen. Winston Smith, his chin nuzzled into his breast in an effort to escape the vile wind, slipped quickly through the glass doors of Victory Mansions.");
+  // No excerpt = round still loading. Render an italic placeholder that
+  // bleeds in via the same BleedingText path — the bleed IS the loading
+  // affordance.
+  const text = excerpt ?? "Pulling a smudge…";
   return (
     <div ref={ref}>
       <Card className="bg-card/60">
@@ -831,8 +827,13 @@ function Smudge({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <p className="font-serif text-lg leading-relaxed text-ink-deep whitespace-pre-wrap">
-            {roundKey ? <BleedingText key={roundKey} text={text} /> : text}
+          <p
+            className={cn(
+              "font-serif text-lg leading-relaxed text-ink-deep whitespace-pre-wrap",
+              !excerpt && "italic text-muted-foreground",
+            )}
+          >
+            <BleedingText key={roundKey} text={text} />
           </p>
         </CardContent>
       </Card>

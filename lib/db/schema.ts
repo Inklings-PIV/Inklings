@@ -1,5 +1,6 @@
 import { relations, sql } from "drizzle-orm";
 import {
+  type AnyPgColumn,
   index,
   integer,
   jsonb,
@@ -92,15 +93,25 @@ export const books = pgTable(
     lang: text("lang").notNull().default("en"),
     wordCount: integer("word_count"),
     status: bookStatusEnum("status").notNull().default("pending"),
+    // Points at the first ingested row that shares this gutenbergId when
+    // we're adding a translation. Null on the original (or when there's
+    // only one language for the work). See #56.
+    translationOf: uuid("translation_of").references((): AnyPgColumn => books.id, {
+      onDelete: "set null",
+    }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
     ingestedAt: timestamp("ingested_at", { withTimezone: true }),
   },
   (table) => [
     index("books_author_id_idx").on(table.authorId),
-    uniqueIndex("books_gutenberg_id_idx").on(table.gutenbergId),
+    // Was uniqueIndex on (gutenbergId) alone — that collapsed translations
+    // of the same work onto one row. Widened to (gutenbergId, lang) so a
+    // Spanish + English Don Quixote can coexist.
+    uniqueIndex("books_gutenberg_id_lang_idx").on(table.gutenbergId, table.lang),
     uniqueIndex("books_author_slug_idx").on(table.authorId, table.slug),
     index("books_status_idx").on(table.status),
+    index("books_translation_of_idx").on(table.translationOf),
   ],
 );
 

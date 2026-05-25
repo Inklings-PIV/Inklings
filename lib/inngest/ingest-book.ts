@@ -1,10 +1,10 @@
-import { eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { deriveAlgorithmic } from "@/lib/colour/algorithmic";
 import { blendColours } from "@/lib/colour/blend";
 import { deriveLLM } from "@/lib/colour/llm";
 import { getDb, schema } from "@/lib/db";
-import { fetchBookMeta } from "@/lib/ingestion/gutenberg-meta";
+import { fetchBookMeta, type GutenbergAuthor } from "@/lib/ingestion/gutenberg-meta";
 import { fetchBookText } from "@/lib/ingestion/gutenberg-text";
 import { inngest } from "@/lib/inngest/client";
 import { extractClassical } from "@/lib/stylometry/classical";
@@ -40,58 +40,18 @@ export const ingestBook = inngest.createFunction(
     const wordCount = countWords(text);
 
     const { authorId, bookId } = await step.run("upsert-corpus", async () => {
-      const db = getDb();
       const author = meta.authors[0];
       if (!author) throw new Error(`No author on Gutenberg #${gutenbergId}`);
 
-      const [authorRow] = await db
-        .insert(schema.authors)
-        .values({
-          name: author.name,
-          slug: slugify(author.name),
-          gutenbergId: author.gutenbergId,
-          birthYear: author.birthYear,
-          deathYear: author.deathYear,
-        })
-        .onConflictDoUpdate({
-          target: schema.authors.slug,
-          set: {
-            name: author.name,
-            birthYear: author.birthYear,
-            deathYear: author.deathYear,
-            updatedAt: new Date(),
-          },
-        })
-        .returning({ id: schema.authors.id });
-      if (!authorRow) throw new Error("Failed to upsert author");
-
-      const [bookRow] = await db
-        .insert(schema.books)
-        .values({
-          authorId: authorRow.id,
-          title: meta.title,
-          slug: slugify(meta.title),
-          gutenbergId,
-          lang: meta.language ?? "en",
-          wordCount,
-          status: "ingesting",
-        })
-        .onConflictDoUpdate({
-          target: schema.books.gutenbergId,
-          set: {
-            authorId: authorRow.id,
-            title: meta.title,
-            slug: slugify(meta.title),
-            lang: meta.language ?? "en",
-            wordCount,
-            status: "ingesting",
-            updatedAt: new Date(),
-          },
-        })
-        .returning({ id: schema.books.id });
-      if (!bookRow) throw new Error("Failed to upsert book");
-
-      return { authorId: authorRow.id, bookId: bookRow.id };
+      const authorId = await upsertAuthor(author);
+      const bookId = await upsertBook({
+        gutenbergId,
+        authorId,
+        title: meta.title,
+        lang: meta.language ?? "en",
+        wordCount,
+      });
+      return { authorId, bookId };
     });
 
     const classical = await step.run("extract-classical", () => extractClassical(text));
@@ -230,4 +190,158 @@ export function slugify(s: string): string {
 
 export function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length;
+}
+
+// ---------------------------------------------------------------------------
+// Disambiguation (#56). Two authors with the same name collide on
+// authors.slug; two translations of the same work collide on
+// (books.gutenberg_id, lang). Both helpers degrade gracefully through
+// suffix variants before giving up.
+// ---------------------------------------------------------------------------
+
+/**
+ * Generates slug candidates for an author, increasingly specific. The
+ * caller tries them in order; the first one that doesn't collide wins.
+ */
+export function* authorSlugCandidates(meta: GutenbergAuthor): Generator<string> {
+  const base = slugify(meta.name);
+  yield base;
+  if (meta.birthYear) yield `${base}-${meta.birthYear}`;
+  if (meta.birthYear && meta.deathYear) yield `${base}-${meta.birthYear}-${meta.deathYear}`;
+  // Last-resort suffix — vanishingly unlikely we get here, but it keeps
+  // ingestion from failing on a 3-way collision of identically-named
+  // authors with overlapping lifespans.
+  yield `${base}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+async function upsertAuthor(meta: GutenbergAuthor): Promise<string> {
+  const db = getDb();
+
+  // If we already know this author by their Gutenberg agent id, update in
+  // place — keeps the existing (possibly disambiguated) slug intact.
+  if (meta.gutenbergId != null) {
+    const [existing] = await db
+      .select({ id: schema.authors.id })
+      .from(schema.authors)
+      .where(eq(schema.authors.gutenbergId, meta.gutenbergId))
+      .limit(1);
+    if (existing) {
+      await db
+        .update(schema.authors)
+        .set({
+          name: meta.name,
+          birthYear: meta.birthYear,
+          deathYear: meta.deathYear,
+          updatedAt: new Date(),
+        })
+        .where(eq(schema.authors.id, existing.id));
+      return existing.id;
+    }
+  }
+
+  // New author — walk the candidate slugs until one isn't taken. Insert
+  // is the source of truth; ON CONFLICT DO NOTHING returns no row when
+  // the slug is already in use, and we try the next candidate.
+  for (const slug of authorSlugCandidates(meta)) {
+    const [row] = await db
+      .insert(schema.authors)
+      .values({
+        name: meta.name,
+        slug,
+        gutenbergId: meta.gutenbergId,
+        birthYear: meta.birthYear,
+        deathYear: meta.deathYear,
+      })
+      .onConflictDoNothing({ target: schema.authors.slug })
+      .returning({ id: schema.authors.id });
+    if (row) return row.id;
+  }
+  throw new Error(`Could not disambiguate slug for author ${meta.name}`);
+}
+
+type UpsertBookInput = {
+  gutenbergId: number;
+  authorId: string;
+  title: string;
+  lang: string;
+  wordCount: number;
+};
+
+async function upsertBook(input: UpsertBookInput): Promise<string> {
+  const db = getDb();
+  const { gutenbergId, authorId, title, lang, wordCount } = input;
+
+  // Same gutenberg_id + lang ⇒ a re-ingest of an existing row. Update.
+  const [sameLang] = await db
+    .select({ id: schema.books.id })
+    .from(schema.books)
+    .where(and(eq(schema.books.gutenbergId, gutenbergId), eq(schema.books.lang, lang)))
+    .limit(1);
+  if (sameLang) {
+    await db
+      .update(schema.books)
+      .set({
+        authorId,
+        title,
+        wordCount,
+        status: "ingesting",
+        updatedAt: new Date(),
+      })
+      .where(eq(schema.books.id, sameLang.id));
+    return sameLang.id;
+  }
+
+  // Same gutenberg_id, different lang ⇒ a translation. Link to the first
+  // row ingested for this gutenberg_id; the UI can later use this chain
+  // to surface "translations of the same work" (out of scope for #56).
+  let translationOf: string | null = null;
+  const [original] = await db
+    .select({ id: schema.books.id })
+    .from(schema.books)
+    .where(eq(schema.books.gutenbergId, gutenbergId))
+    .orderBy(asc(schema.books.createdAt))
+    .limit(1);
+  if (original) translationOf = original.id;
+
+  const slug = await pickAvailableBookSlug(authorId, slugify(title), lang);
+  const [row] = await db
+    .insert(schema.books)
+    .values({
+      authorId,
+      title,
+      slug,
+      gutenbergId,
+      lang,
+      wordCount,
+      status: "ingesting",
+      translationOf,
+    })
+    .returning({ id: schema.books.id });
+  if (!row) throw new Error(`Failed to insert book for Gutenberg #${gutenbergId}`);
+  return row.id;
+}
+
+async function pickAvailableBookSlug(
+  authorId: string,
+  base: string,
+  lang: string,
+): Promise<string> {
+  const db = getDb();
+  // Same author can have two books with the same slugified title only
+  // when they're translations of the same work — append the lang code,
+  // then a random suffix if even that's taken.
+  const candidates = [
+    base,
+    `${base}-${lang}`,
+    `${base}-${lang}-${Math.random().toString(36).slice(2, 4)}`,
+  ];
+  for (const slug of candidates) {
+    const [taken] = await db
+      .select({ id: schema.books.id })
+      .from(schema.books)
+      .where(and(eq(schema.books.authorId, authorId), eq(schema.books.slug, slug)))
+      .limit(1);
+    if (!taken) return slug;
+  }
+  throw new Error(`Could not pick a unique book slug for ${base} (author ${authorId})`);
 }

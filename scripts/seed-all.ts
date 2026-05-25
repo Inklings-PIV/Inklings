@@ -109,20 +109,27 @@ void (async () => {
 
   // 2. Wait for ingestion. Timeout scales with fresh count — Inngest
   // concurrency is 2 and each book takes ~30 s, so we budget ~45 s/book
-  // with a 20-minute floor for tiny runs.
+  // with a 20-minute floor for tiny runs. Polls for terminal states
+  // (ready + failed) — a stuck or oversized book that flips to "failed"
+  // ends the wait instead of leaving us at 99/100 forever; we list the
+  // failed gutenberg_ids before moving on so the operator knows what to
+  // chase. Layout recompute still runs over the books that DID succeed.
   log("→ waiting for ingestion (polls every 5s)...");
   const db = getDb();
   const ingestTimeoutMs = Math.max(20 * 60 * 1000, fresh.length * 45_000);
   log(`  timeout budget: ${Math.round(ingestTimeoutMs / 60_000)} min`);
-  await waitForCount({
+  await waitForTerminal({
     label: "ready",
     expected: ids.length,
     poll: () =>
       db
-        .select({ n: count() })
+        .select({ status: schema.books.status, gutenbergId: schema.books.gutenbergId })
         .from(schema.books)
-        .where(and(eq(schema.books.status, "ready"), inArray(schema.books.gutenbergId, ids)))
-        .then((r) => Number(r[0]?.n ?? 0)),
+        .where(inArray(schema.books.gutenbergId, ids))
+        .then((rows) => ({
+          ready: rows.filter((r) => r.status === "ready").length,
+          failed: rows.filter((r) => r.status === "failed").map((r) => r.gutenbergId ?? 0),
+        })),
     intervalMs: 5_000,
     timeoutMs: ingestTimeoutMs,
   });
@@ -284,6 +291,76 @@ function log(line: string): void {
 function fail(message: string): never {
   process.stderr.write(`ERR  ${message}\n`);
   process.exit(1);
+}
+
+/**
+ * Like waitForCount but tracks ready + failed separately. Exits as soon
+ * as ready + failed = expected (terminal state reached), then surfaces
+ * the failed gutenberg_ids so the operator knows what to debug.
+ *
+ * Books can land in `failed` for real reasons — an oversized step
+ * output (Inngest's per-step state cap), a 404 from Project Gutenberg,
+ * unhandled exception in the pipeline — and waiting forever on
+ * "99/100 ready" obscures that. Counting failed as terminal turns a
+ * stuck wait into a finished one with a clear diagnostic.
+ */
+async function waitForTerminal(opts: {
+  label: string;
+  expected: number;
+  poll: () => Promise<{ ready: number; failed: number[] }>;
+  intervalMs: number;
+  timeoutMs: number;
+}): Promise<void> {
+  const startedAt = Date.now();
+  let lastShown = -1;
+  let lastHeartbeat = startedAt;
+  let lastProgressAt = startedAt;
+  const HEARTBEAT_MS = 30_000;
+  const STUCK_HINT_MS = 2 * 60_000;
+  let hintShown = false;
+  while (true) {
+    const { ready, failed } = await opts.poll();
+    const terminal = ready + failed.length;
+    const now = Date.now();
+    const sec = Math.round((now - startedAt) / 1000);
+    if (terminal !== lastShown) {
+      const failedSuffix = failed.length > 0 ? `, ${failed.length} failed` : "";
+      log(
+        `  ${String(ready).padStart(4)}/${opts.expected} ${opts.label}${failedSuffix}  (${sec}s)`,
+      );
+      lastShown = terminal;
+      lastHeartbeat = now;
+      lastProgressAt = now;
+      hintShown = false;
+    } else if (now - lastHeartbeat > HEARTBEAT_MS) {
+      const failedSuffix = failed.length > 0 ? `, ${failed.length} failed` : "";
+      log(
+        `  ${String(ready).padStart(4)}/${opts.expected} ${opts.label}${failedSuffix}  (${sec}s, still)`,
+      );
+      lastHeartbeat = now;
+    }
+    if (terminal >= opts.expected) {
+      if (failed.length > 0) {
+        log(`  ⚠ ${failed.length} ingest failed: ${failed.sort((a, b) => a - b).join(", ")}`);
+        log("    Inngest dashboard at http://localhost:8288 → Runs has the error per book.");
+      }
+      return;
+    }
+    if (terminal < opts.expected && now - lastProgressAt > STUCK_HINT_MS && !hintShown) {
+      log(
+        `  ⚠ no progress in ${Math.round((now - lastProgressAt) / 1000)}s. Check the Inngest dashboard at http://localhost:8288 — if no runs are appearing, the worker probably stalled.`,
+      );
+      hintShown = true;
+    }
+    if (now - startedAt > opts.timeoutMs) {
+      throw new Error(
+        `timed out at ${ready}/${opts.expected} ${opts.label} (${failed.length} failed) after ${Math.round(
+          opts.timeoutMs / 1000,
+        )}s`,
+      );
+    }
+    await new Promise((r) => setTimeout(r, opts.intervalMs));
+  }
 }
 
 async function waitForCount(opts: {

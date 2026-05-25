@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 // Operator contact lives in /impressum; this file factually describes data flow
 // based on what the codebase actually does today. If you wire a new third-party
 // processor (Sentry, PostHog, Resend, Stripe, …), add it here in the same shape.
-const CONTACT_EMAIL = "{{ FILL IN: contact email — same as /impressum }}";
+const CONTACT_EMAIL = "inklings@huibers.io";
 
 const PROCESSORS: Array<{
   name: string;

@@ -7,17 +7,16 @@ export const metadata: Metadata = {
   robots: { index: true, follow: false },
 };
 
-// Legal Impressum per §5 TMG / Germany. The personal data placeholders
-// (PROJECT_LEAD_*) MUST be filled in before this site goes to a public
-// audience. Until then the page renders the structure plus the team
-// affiliation, but a missing operator address is a compliance hole.
-const PROJECT_LEAD_NAME = "{{ FILL IN: full legal name }}";
-const PROJECT_LEAD_ADDRESS_LINES = [
-  "{{ FILL IN: Straße + Hausnummer }}",
-  "{{ FILL IN: PLZ Ort }}",
-  "Deutschland",
-];
-const PROJECT_LEAD_EMAIL = "{{ FILL IN: contact email }}";
+// Legal Impressum per §5 TMG / Germany. Note: §5 TMG strictly requires a
+// "ladungsfähige Anschrift" (street + house number). The current address
+// only carries PLZ + Ort because the operator hasn't published a street
+// address yet — fine for closed beta / unindexed deploy, NOT fine for a
+// public launch. Resolve before flipping the site to a public audience
+// (either fill the street + number, or switch to the LMU c/o address with
+// institutional permission, or use a Postfach).
+const PROJECT_LEAD_NAME = "Noel Huibers";
+const PROJECT_LEAD_ADDRESS_LINES = ["81737 München", "Deutschland"];
+const PROJECT_LEAD_EMAIL = "inklings@huibers.io";
 
 export default function ImpressumPage() {
   return (

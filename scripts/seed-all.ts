@@ -22,7 +22,7 @@ const topN = topArg ? Math.max(1, Number.parseInt(topArg, 10)) : 0;
 void (async () => {
   await import("./_load-env");
 
-  const { and, count, eq, gt, inArray } = await import("drizzle-orm");
+  const { and, count, eq, gt, inArray, isNotNull } = await import("drizzle-orm");
   const { getDb, schema } = await import("../lib/db");
   const { SEED_BOOKS } = await import("../lib/ingestion/seed-list");
   const { fetchTopEnglishBooks } = await import("../lib/ingestion/gutenberg-catalog");
@@ -134,6 +134,38 @@ void (async () => {
     timeoutMs: ingestTimeoutMs,
   });
 
+  // Pre-query helper: each layout type only operates on books that have
+  // its specific input (classical features / blended colour / embedding).
+  // Expecting `ids.length` would timeout whenever even one book lacks the
+  // input — e.g. older ingests that predate the blended-colour step, or
+  // failed colour derivers. Query the actual qualifying count instead.
+  const expectedClassical = await db
+    .select({ n: count() })
+    .from(schema.books)
+    .innerJoin(schema.bookFeatures, eq(schema.bookFeatures.bookId, schema.books.id))
+    .where(and(inArray(schema.books.gutenbergId, ids), isNotNull(schema.bookFeatures.classical)))
+    .then((r) => Number(r[0]?.n ?? 0));
+  const expectedByHue = await db
+    .select({ n: count() })
+    .from(schema.books)
+    .innerJoin(schema.bookColours, eq(schema.bookColours.bookId, schema.books.id))
+    .where(and(inArray(schema.books.gutenbergId, ids), eq(schema.bookColours.source, "blended")))
+    .then((r) => Number(r[0]?.n ?? 0));
+  const expectedModern = await db
+    .select({ n: count() })
+    .from(schema.books)
+    .innerJoin(schema.bookFeatures, eq(schema.bookFeatures.bookId, schema.books.id))
+    .where(and(inArray(schema.books.gutenbergId, ids), isNotNull(schema.bookFeatures.embedding)))
+    .then((r) => Number(r[0]?.n ?? 0));
+  log(
+    `\n  qualifying counts — classical: ${expectedClassical}, by-hue: ${expectedByHue}, modern: ${expectedModern}`,
+  );
+  if (expectedByHue < ids.length) {
+    log(
+      `  ⚠ ${ids.length - expectedByHue} candidate books are missing a blended colour. They'll appear on the Inkwell canvas but not in by-hue layout.`,
+    );
+  }
+
   // 3. Trigger classical layout
   log("\n→ triggering classical UMAP recompute...");
   const classicalStartedAt = new Date();
@@ -144,7 +176,7 @@ void (async () => {
   log("\n→ waiting for classical layout...");
   await waitForCount({
     label: "classical",
-    expected: ids.length,
+    expected: expectedClassical,
     poll: () =>
       db
         .select({ n: count() })
@@ -172,7 +204,7 @@ void (async () => {
   log("\n→ waiting for by-hue layout...");
   await waitForCount({
     label: "by-hue",
-    expected: ids.length,
+    expected: expectedByHue,
     poll: () =>
       db
         .select({ n: count() })
@@ -201,7 +233,7 @@ void (async () => {
   log("\n→ waiting for modern layout...");
   await waitForCount({
     label: "modern",
-    expected: ids.length,
+    expected: expectedModern,
     poll: () =>
       db
         .select({ n: count() })

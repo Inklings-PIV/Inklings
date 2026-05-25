@@ -1,23 +1,45 @@
 "use client";
 
-import { Check, Loader2, Sparkles, X } from "lucide-react";
+import { Check, Cloud, CloudOff, Loader2, Sparkles, X } from "lucide-react";
 import { useEffect, useState, useTransition } from "react";
 import { Editor } from "@/components/quill/editor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { hueFromHSL } from "@/lib/colour/placeholder";
-import { deriveTextColour, suggestRewrite, type TargetRewrite, type TextColour } from "./actions";
+import {
+  deleteCloudDraft,
+  deriveTextColour,
+  loadCloudDraft,
+  saveCloudDraft,
+  suggestRewrite,
+  type TargetRewrite,
+  type TextColour,
+} from "./actions";
+
+const LOCAL_DRAFT_KEY = "inklings-quill-draft";
+const CLOUD_PREF_KEY = "inklings-quill-cloud-save";
+const CLOUD_SAVE_DEBOUNCE_MS = 2000;
 
 type QuillMode = "readout" | "target";
 
 export default function QuillPage() {
   const [mode, setMode] = useState<QuillMode>("readout");
-  // Local draft only — autosave to quill_samples lands separately once the
-  // privacy default for the Quill is settled (part of #45).
+  // Local-first per the #45 privacy decision — the draft lives in
+  // localStorage by default and only round-trips to the server when the
+  // writer opts in via the SaveSettings toggle below.
   const [draft, setDraft] = useState("");
   const [readout, setReadout] = useState<TextColour | null>(null);
   const [isPending, startReadout] = useTransition();
+
+  // Cloud-save opt-in (#71). Both pieces of state are mirrored to
+  // localStorage so the preference + the draft survive refreshes.
+  const [cloudSave, setCloudSave] = useState(false);
+  const [cloudSavedAt, setCloudSavedAt] = useState<Date | null>(null);
+  // Block the autosave effects until the localStorage hydration pass
+  // runs — otherwise the first render would wipe a saved draft with
+  // the empty default and immediately delete the cloud row.
+  const [hydrated, setHydrated] = useState(false);
 
   // Target mode state.
   const [target, setTarget] = useState("");
@@ -26,8 +48,74 @@ export default function QuillPage() {
   const [isRewriting, startRewrite] = useTransition();
   // Bumping this remounts the Editor with new initialContent — TipTap
   // doesn't expose a reactive `value` prop and remount is the least
-  // invasive way to replace the buffer when the user accepts a rewrite.
+  // invasive way to replace the buffer when the user accepts a rewrite
+  // or we restore a draft from storage.
   const [editorKey, setEditorKey] = useState(0);
+
+  // Hydrate from localStorage on mount. If cloud-save was on, also pull
+  // the server-side draft and prefer it when present (cross-device case).
+  useEffect(() => {
+    try {
+      const localDraft = window.localStorage.getItem(LOCAL_DRAFT_KEY) ?? "";
+      const cloudPref = window.localStorage.getItem(CLOUD_PREF_KEY) === "true";
+      setDraft(localDraft);
+      setCloudSave(cloudPref);
+      if (localDraft) setEditorKey((k) => k + 1);
+      setHydrated(true);
+      if (cloudPref) {
+        loadCloudDraft().then((cloud) => {
+          if (cloud?.text && cloud.text !== localDraft) {
+            setDraft(cloud.text);
+            setCloudSavedAt(cloud.updatedAt);
+            setEditorKey((k) => k + 1);
+          }
+        });
+      }
+    } catch {
+      setHydrated(true);
+    }
+  }, []);
+
+  // Mirror every draft change to localStorage — implicit, no UI signal
+  // needed since this is the privacy default.
+  useEffect(() => {
+    if (!hydrated) return;
+    try {
+      window.localStorage.setItem(LOCAL_DRAFT_KEY, draft);
+    } catch {
+      // Storage can throw in private mode / quota-full; we tolerate it.
+    }
+  }, [draft, hydrated]);
+
+  // Debounced cloud autosave when the toggle is on. The 2 s wait keeps a
+  // burst of typing from firing dozens of writes.
+  useEffect(() => {
+    if (!hydrated || !cloudSave) return;
+    let cancelled = false;
+    const handle = setTimeout(() => {
+      saveCloudDraft(draft).then((result) => {
+        if (!cancelled) setCloudSavedAt(result.updatedAt);
+      });
+    }, CLOUD_SAVE_DEBOUNCE_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [draft, cloudSave, hydrated]);
+
+  const toggleCloudSave = async (next: boolean) => {
+    setCloudSave(next);
+    try {
+      window.localStorage.setItem(CLOUD_PREF_KEY, String(next));
+    } catch {
+      // Storage can throw in private mode / quota-full; we tolerate it.
+    }
+    if (!next) {
+      // Privacy: when the toggle goes off, the cloud row goes too.
+      await deleteCloudDraft();
+      setCloudSavedAt(null);
+    }
+  };
 
   // Debounced readout — 700 ms after the last keystroke we ask Claude for the
   // current hue. Latest call wins; in-flight ones are ignored when stale.
@@ -128,6 +216,11 @@ export default function QuillPage() {
             wordCount={countWords(draft)}
             readout={readout}
             isPending={isPending}
+          />
+          <SaveSettings
+            cloudSave={cloudSave}
+            cloudSavedAt={cloudSavedAt}
+            onToggle={toggleCloudSave}
           />
           {mode === "target" && (
             <TargetPicker
@@ -344,6 +437,75 @@ function plainText(html: string): string {
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * The cloud-save toggle + status line. Off by default (privacy decision
+ * from #45) — local persistence is implicit and unsignalled. When the
+ * writer opts in, a status line ticks "saved · Xs ago" so it feels alive.
+ */
+function SaveSettings({
+  cloudSave,
+  cloudSavedAt,
+  onToggle,
+}: {
+  cloudSave: boolean;
+  cloudSavedAt: Date | null;
+  onToggle: (next: boolean) => void;
+}) {
+  // Re-render every 10 s while a cloud save exists so "Xs ago" stays
+  // honest without bursting renders during typing bursts.
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    if (!cloudSavedAt) return;
+    const id = window.setInterval(() => setTick((t) => t + 1), 10_000);
+    return () => window.clearInterval(id);
+  }, [cloudSavedAt]);
+
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-2.5 p-5">
+        <div className="flex items-start gap-3">
+          {cloudSave ? (
+            <Cloud aria-hidden="true" className="size-5 shrink-0 text-ink-bleed" />
+          ) : (
+            <CloudOff aria-hidden="true" className="size-5 shrink-0 text-muted-foreground" />
+          )}
+          <label className="flex min-w-0 flex-1 cursor-pointer items-start justify-between gap-3">
+            <span className="flex min-w-0 flex-col">
+              <span className="text-sm font-medium text-ink-deep">Save to my scribe</span>
+              <span className="text-xs leading-snug text-muted-foreground">
+                {cloudSave
+                  ? "Drafts sync across devices on this scribe."
+                  : "Drafts stay on this device only."}
+              </span>
+            </span>
+            <input
+              type="checkbox"
+              checked={cloudSave}
+              onChange={(e) => onToggle(e.target.checked)}
+              className="mt-1 size-4 cursor-pointer accent-ink-bleed"
+              aria-label="Save drafts to my scribe (sync across devices)"
+            />
+          </label>
+        </div>
+        {cloudSave && (
+          <p className="text-[11px] tabular-nums text-muted-foreground">
+            {cloudSavedAt ? `saved · ${relativeTime(cloudSavedAt)}` : "waiting for first save…"}
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function relativeTime(d: Date): string {
+  const seconds = Math.max(0, Math.round((Date.now() - d.getTime()) / 1000));
+  if (seconds < 5) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 /**

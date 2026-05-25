@@ -2,7 +2,10 @@
 
 import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject, generateText } from "ai";
+import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
+import { ensureScribe } from "@/lib/auth/scribe";
+import { getDb, schema } from "@/lib/db";
 
 export type TextColour = {
   hue: number;
@@ -109,4 +112,74 @@ export async function suggestRewrite(input: {
     maxRetries: 2,
   });
   return { rewrite: rewrite.trim() };
+}
+
+// ---------------------------------------------------------------------------
+// Cloud-saved drafts (#71). Privacy default from #45: local-only with an
+// explicit opt-in to cloud save — these endpoints only fire when the user
+// has flipped the toggle in the Quill sidebar.
+// ---------------------------------------------------------------------------
+
+export type CloudDraft = { text: string; updatedAt: Date } | null;
+
+/**
+ * Upserts the scribe's current draft. We keep at most one row per scribe so
+ * revisits land back on the same row instead of accumulating snapshots —
+ * `quill_samples` has no unique constraint on `scribeId`, so application
+ * code enforces the invariant (find-and-update, else insert). Empty text
+ * is treated as "delete the saved draft" — see deleteCloudDraft.
+ */
+export async function saveCloudDraft(text: string): Promise<{ updatedAt: Date }> {
+  if (text.trim().length === 0) {
+    await deleteCloudDraft();
+    return { updatedAt: new Date() };
+  }
+
+  const scribe = await ensureScribe();
+  const db = getDb();
+
+  const [existing] = await db
+    .select({ id: schema.quillSamples.id })
+    .from(schema.quillSamples)
+    .where(eq(schema.quillSamples.scribeId, scribe.id))
+    .limit(1);
+
+  const now = new Date();
+  if (existing) {
+    await db
+      .update(schema.quillSamples)
+      .set({ text, updatedAt: now })
+      .where(eq(schema.quillSamples.id, existing.id));
+  } else {
+    await db.insert(schema.quillSamples).values({ scribeId: scribe.id, text });
+  }
+  return { updatedAt: now };
+}
+
+/**
+ * Loads the scribe's most recent cloud-saved draft, if any. Called on /quill
+ * mount when the cloud-save toggle is on, so the writer comes back to where
+ * they left off across devices.
+ */
+export async function loadCloudDraft(): Promise<CloudDraft> {
+  const scribe = await ensureScribe();
+  const db = getDb();
+  const [row] = await db
+    .select({ text: schema.quillSamples.text, updatedAt: schema.quillSamples.updatedAt })
+    .from(schema.quillSamples)
+    .where(eq(schema.quillSamples.scribeId, scribe.id))
+    .orderBy(desc(schema.quillSamples.updatedAt))
+    .limit(1);
+  return row ? { text: row.text, updatedAt: row.updatedAt } : null;
+}
+
+/**
+ * Deletes the scribe's cloud-saved draft. Fired when the writer turns the
+ * cloud-save toggle off — privacy-first: if it's off, the text is gone
+ * from the server.
+ */
+export async function deleteCloudDraft(): Promise<void> {
+  const scribe = await ensureScribe();
+  const db = getDb();
+  await db.delete(schema.quillSamples).where(eq(schema.quillSamples.scribeId, scribe.id));
 }

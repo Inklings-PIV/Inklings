@@ -1,7 +1,11 @@
 "use client";
 
 import { Check, Flame, Loader2, Sparkles, Trophy, X } from "lucide-react";
-import { useCallback, useEffect, useState, useTransition } from "react";
+import { useCallback, useEffect, useRef, useState, useTransition } from "react";
+import { BleedingText } from "@/components/game/animations/bleeding-text";
+import { usePulseTrigger } from "@/components/game/animations/border-pulse";
+import { useDripTrigger } from "@/components/game/animations/drip-overlay";
+import { StaggeredRows } from "@/components/game/animations/staggered-rows";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -38,7 +42,7 @@ export default function GamePage() {
   const [sessionScore, setSessionScore] = useState(0);
   const [streak, setStreak] = useState(0);
   const [leaderboard, setLeaderboard] = useState<LeaderboardRow[] | null>(null);
-  const [boardLoading, startBoard] = useTransition();
+  const [, startBoard] = useTransition();
 
   const handleScored = useCallback((scoreUpdate: { sessionScore: number; streak: number }) => {
     setSessionScore(scoreUpdate.sessionScore);
@@ -123,35 +127,34 @@ export default function GamePage() {
       )}
 
       <Separator className="my-8" />
-      <Leaderboard rows={leaderboard} loading={boardLoading && !leaderboard} />
+      <Leaderboard rows={leaderboard} />
     </div>
   );
 }
 
-function Leaderboard({ rows, loading }: { rows: LeaderboardRow[] | null; loading: boolean }) {
+function Leaderboard({ rows }: { rows: LeaderboardRow[] | null }) {
   return (
     <section>
       <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">Leaderboard</h2>
       <Card className="mt-3 bg-card/40">
         <CardContent className="p-4">
-          {loading || !rows ? (
-            <div className="flex items-center justify-center gap-2 py-4 text-xs text-muted-foreground">
-              <Loader2 className="size-4 animate-spin" /> Tallying scores…
-            </div>
-          ) : rows.length === 0 ? (
+          {!rows || rows.length === 0 ? (
             <p className="py-2 text-center text-xs italic text-muted-foreground">
               No scores yet — play a round to seed the leaderboard.
             </p>
           ) : (
-            <ol className="space-y-1">
-              {rows.map((row, i) => (
-                <li
-                  key={row.scribeId}
-                  className={cn(
-                    "flex items-center justify-between gap-3 rounded-sm px-2 py-1 text-xs tabular-nums",
-                    row.isMe && "bg-muted/60 text-ink-deep",
-                  )}
-                >
+            <StaggeredRows
+              className="space-y-1"
+              items={rows}
+              keyFn={(row) => row.scribeId}
+              itemClassName={(row) =>
+                cn(
+                  "flex items-center justify-between gap-3 rounded-sm px-2 py-1 text-xs tabular-nums",
+                  row.isMe && "bg-muted/60 text-ink-deep",
+                )
+              }
+              renderItem={(row, i) => (
+                <>
                   <span className="flex min-w-0 items-center gap-3">
                     <span className="w-5 text-muted-foreground">{i + 1}.</span>
                     <span className="font-mono">
@@ -164,9 +167,9 @@ function Leaderboard({ rows, loading }: { rows: LeaderboardRow[] | null; loading
                     </span>
                   </span>
                   <strong className="shrink-0 text-ink-deep">{row.totalScore}</strong>
-                </li>
-              ))}
-            </ol>
+                </>
+              )}
+            />
           )}
         </CardContent>
       </Card>
@@ -176,7 +179,6 @@ function Leaderboard({ rows, loading }: { rows: LeaderboardRow[] | null; loading
 
 type RoundState =
   | { kind: "idle" }
-  | { kind: "loading" }
   | { kind: "guessing"; round: SwatchRoundForClient }
   | { kind: "revealed"; round: SwatchRoundForClient; result: SwatchGuessResult; pickedId: string };
 
@@ -193,6 +195,8 @@ function SwatchRound({
   const [isLoading, startLoading] = useTransition();
   const [isSubmitting, startSubmit] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const smudgeRef = useRef<HTMLDivElement>(null);
+  const triggerDrip = useDripTrigger();
 
   const begin = useCallback(() => {
     setError(null);
@@ -214,10 +218,13 @@ function SwatchRound({
     begin();
   }, []);
 
-  const guess = (swatchId: string) => {
+  const guess = (swatchId: string, sourceEl: HTMLElement | null, colour: string) => {
     if (state.kind !== "guessing") return;
     const round = state.round;
     setError(null);
+    if (sourceEl && smudgeRef.current) {
+      triggerDrip(sourceEl, smudgeRef.current, colour);
+    }
     startSubmit(async () => {
       try {
         const result = await submitSwatchGuess({ roundId: round.roundId, swatchId });
@@ -229,7 +236,11 @@ function SwatchRound({
     });
   };
 
-  if (state.kind === "idle" || (state.kind === "loading" && !isLoading)) {
+  // While the first round is loading (state=idle, isLoading=true) we still
+  // show this button screen — the spinner sits inside the button rather
+  // than as a centred page-blocker. Subsequent "Next round" loads keep the
+  // previous revealed state on screen until the new excerpt bleeds in.
+  if (state.kind === "idle") {
     return (
       <div className="flex flex-col items-center gap-4 py-10">
         {error && <p className="text-sm italic text-destructive">{error}</p>}
@@ -245,21 +256,12 @@ function SwatchRound({
     );
   }
 
-  if (isLoading || !("round" in state)) {
-    return (
-      <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
-        <Loader2 className="size-5 animate-spin" />
-        <p className="text-xs italic">Pulling a smudge…</p>
-      </div>
-    );
-  }
-
   const round = state.round;
   const isRevealed = state.kind === "revealed";
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
-      <Smudge excerpt={round.excerpt} />
+      <Smudge excerpt={round.excerpt} ref={smudgeRef} roundKey={round.roundId} />
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Pick a swatch</CardTitle>
@@ -281,7 +283,7 @@ function SwatchRound({
                   key={s.swatchId}
                   type="button"
                   aria-label={`Swatch ${i + 1} of ${round.swatches.length}`}
-                  onClick={() => guess(s.swatchId)}
+                  onClick={(e) => guess(s.swatchId, e.currentTarget, s.css)}
                   disabled={isRevealed || isSubmitting}
                   className={cn(
                     "relative aspect-square rounded-md border border-border transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
@@ -361,6 +363,9 @@ function WheelRound({
   const [isLoading, startLoading] = useTransition();
   const [isSubmitting, startSubmit] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const smudgeRef = useRef<HTMLDivElement>(null);
+  const wheelMarkerRef = useRef<HTMLSpanElement>(null);
+  const triggerDrip = useDripTrigger();
 
   const begin = useCallback(() => {
     setError(null);
@@ -402,6 +407,10 @@ function WheelRound({
     if (!pick || state.kind !== "guessing") return;
     const round = state.round;
     setError(null);
+    if (wheelMarkerRef.current && smudgeRef.current) {
+      const dripColour = `hsl(${pick.hue}, ${pick.saturation}%, ${WHEEL_LIGHTNESS}%)`;
+      triggerDrip(wheelMarkerRef.current, smudgeRef.current, dripColour);
+    }
     startSubmit(async () => {
       try {
         const result = await submitWheelGuess({
@@ -418,11 +427,22 @@ function WheelRound({
     });
   };
 
-  if (isLoading || state.kind === "idle") {
+  // Initial mount loading is brief and the Sparkles button's internal
+  // spinner is the affordance. Next-round loading falls through to the
+  // revealed layout below, so the previous smudge stays visible until the
+  // new excerpt bleeds in.
+  if (state.kind === "idle") {
     return (
-      <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
-        <Loader2 className="size-5 animate-spin" />
-        <p className="text-xs italic">Pulling a smudge…</p>
+      <div className="flex flex-col items-center gap-4 py-10">
+        {error && <p className="text-sm italic text-destructive">{error}</p>}
+        <Button onClick={begin} disabled={isLoading}>
+          {isLoading ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Sparkles className="size-4" />
+          )}
+          Start a round
+        </Button>
       </div>
     );
   }
@@ -436,7 +456,7 @@ function WheelRound({
 
   return (
     <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
-      <Smudge excerpt={round.excerpt} />
+      <Smudge excerpt={round.excerpt} ref={smudgeRef} roundKey={round.roundId} />
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Pick on the wheel</CardTitle>
@@ -477,6 +497,7 @@ function WheelRound({
           >
             {pickMarker && (
               <span
+                ref={wheelMarkerRef}
                 aria-hidden="true"
                 className="absolute size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white shadow"
                 style={{
@@ -636,6 +657,7 @@ function TwinRound({
   const [isLoading, startLoading] = useTransition();
   const [isSubmitting, startSubmit] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const pulse = usePulseTrigger();
 
   const begin = useCallback(() => {
     setError(null);
@@ -656,10 +678,11 @@ function TwinRound({
     begin();
   }, []);
 
-  const guess = (choice: TwinJudgement) => {
+  const guess = (choice: TwinJudgement, sourceEl: HTMLElement | null) => {
     if (state.kind !== "guessing") return;
     const round = state.round;
     setError(null);
+    pulse(sourceEl);
     startSubmit(async () => {
       try {
         const result = await submitTwinGuess({ roundId: round.roundId, guess: choice });
@@ -671,11 +694,21 @@ function TwinRound({
     });
   };
 
-  if (isLoading || state.kind === "idle") {
+  // First-round loading shows the Sparkles button with internal spinner;
+  // subsequent rounds keep the previous pair on screen until the new
+  // excerpts bleed in.
+  if (state.kind === "idle") {
     return (
-      <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
-        <Loader2 className="size-5 animate-spin" />
-        <p className="text-xs italic">Pulling a pair…</p>
+      <div className="flex flex-col items-center gap-4 py-10">
+        {error && <p className="text-sm italic text-destructive">{error}</p>}
+        <Button onClick={begin} disabled={isLoading}>
+          {isLoading ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Sparkles className="size-4" />
+          )}
+          Start a round
+        </Button>
       </div>
     );
   }
@@ -686,8 +719,8 @@ function TwinRound({
   return (
     <div className="grid gap-6">
       <div className="grid gap-6 md:grid-cols-2">
-        <Smudge excerpt={round.excerptA} variant="left" />
-        <Smudge excerpt={round.excerptB} variant="right" />
+        <Smudge excerpt={round.excerptA} variant="left" roundKey={`${round.roundId}-a`} />
+        <Smudge excerpt={round.excerptB} variant="right" roundKey={`${round.roundId}-b`} />
       </div>
 
       {isRevealed ? (
@@ -722,13 +755,17 @@ function TwinRound({
         <div className="flex flex-wrap items-center justify-center gap-3">
           <Button
             variant="outline"
-            onClick={() => guess("different")}
+            onClick={(e) => guess("different", e.currentTarget)}
             disabled={isSubmitting}
             className="min-w-[140px]"
           >
             Different hues
           </Button>
-          <Button onClick={() => guess("same")} disabled={isSubmitting} className="min-w-[140px]">
+          <Button
+            onClick={(e) => guess("same", e.currentTarget)}
+            disabled={isSubmitting}
+            className="min-w-[140px]"
+          >
             Same hue
           </Button>
         </div>
@@ -764,9 +801,19 @@ function TwinSwatch({
 function Smudge({
   excerpt,
   variant = "single",
+  roundKey,
+  ref,
 }: {
   excerpt?: string;
   variant?: "single" | "left" | "right";
+  // When set, the excerpt is wrapped in <BleedingText> keyed by this string,
+  // so a new round triggers the word-by-word bleed-in. When unset (no round
+  // loaded yet), the fallback text renders plain — no animation on the
+  // pre-load placeholder.
+  roundKey?: string;
+  // Forwarded to a wrapper div so callers can measure the smudge's screen
+  // position (drip target).
+  ref?: React.Ref<HTMLDivElement>;
 }) {
   // Wheel + Twin modes are still placeholder — fall back to seed copy so they
   // render until #33/#34 ship.
@@ -776,17 +823,19 @@ function Smudge({
       ? "There were doors all round the hall, but they were all locked; and when Alice had been all the way down one side and up the other, trying every door, she walked sadly down the middle, wondering how she was ever to get out again."
       : "It was a bright cold day in April, and the clocks were striking thirteen. Winston Smith, his chin nuzzled into his breast in an effort to escape the vile wind, slipped quickly through the glass doors of Victory Mansions.");
   return (
-    <Card className="bg-card/60">
-      <CardHeader className="pb-2">
-        <CardDescription className="text-[10px] uppercase tracking-wider">
-          smudge {variant !== "single" && `· ${variant}`}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <p className="font-serif text-lg leading-relaxed text-ink-deep whitespace-pre-wrap">
-          {text}
-        </p>
-      </CardContent>
-    </Card>
+    <div ref={ref}>
+      <Card className="bg-card/60">
+        <CardHeader className="pb-2">
+          <CardDescription className="text-[10px] uppercase tracking-wider">
+            smudge {variant !== "single" && `· ${variant}`}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <p className="font-serif text-lg leading-relaxed text-ink-deep whitespace-pre-wrap">
+            {roundKey ? <BleedingText key={roundKey} text={text} /> : text}
+          </p>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

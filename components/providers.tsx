@@ -3,6 +3,7 @@
 import { ThemeProvider } from "next-themes";
 import type { ReactNode } from "react";
 import { Toaster } from "sonner";
+import { DripProvider } from "@/components/game/animations/drip-overlay";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 export function Providers({ children }: { children: ReactNode }) {
@@ -13,7 +14,9 @@ export function Providers({ children }: { children: ReactNode }) {
     // localStorage. The library injects a synchronous head script to set
     // the class pre-paint, so there's no FOUC.
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-      <TooltipProvider delayDuration={150}>{children}</TooltipProvider>
+      <TooltipProvider delayDuration={150}>
+        <DripProvider>{children}</DripProvider>
+      </TooltipProvider>
       <Toaster
         position="bottom-right"
         // Match the brand serif — sonner uses CSS vars `--toast-*`, but

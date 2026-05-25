@@ -296,6 +296,11 @@ async function waitForCount(opts: {
   const startedAt = Date.now();
   let lastShown = -1;
   let lastHeartbeat = startedAt;
+  // Track time-of-last-progress separately from start-of-wait so the
+  // stuck hint reflects "no movement recently", not "elapsed since
+  // start". Without this, the hint re-fires on every progress tick
+  // after the first 2 min — noise instead of signal.
+  let lastProgressAt = startedAt;
   // Heartbeat every 30 s even when the count hasn't moved — turns
   // an opaque hang into a visible "still N/M" line so the operator
   // can decide to stop early.
@@ -312,15 +317,16 @@ async function waitForCount(opts: {
       log(`  ${String(current).padStart(4)}/${opts.expected} ${opts.label}  (${sec}s)`);
       lastShown = current;
       lastHeartbeat = now;
+      lastProgressAt = now;
       hintShown = false;
     } else if (now - lastHeartbeat > HEARTBEAT_MS) {
       log(`  ${String(current).padStart(4)}/${opts.expected} ${opts.label}  (${sec}s, still)`);
       lastHeartbeat = now;
     }
     if (current >= opts.expected) return;
-    if (current < opts.expected && now - startedAt > STUCK_HINT_MS && !hintShown) {
+    if (current < opts.expected && now - lastProgressAt > STUCK_HINT_MS && !hintShown) {
       log(
-        `  ⚠ no progress in ${Math.round((now - startedAt) / 1000)}s. Check the Inngest dashboard at http://localhost:8288 — if no runs are appearing, Next dev isn't serving /api/inngest or your event names don't match.`,
+        `  ⚠ no progress in ${Math.round((now - lastProgressAt) / 1000)}s. Check the Inngest dashboard at http://localhost:8288 — if no runs are appearing, the worker probably stalled.`,
       );
       hintShown = true;
     }

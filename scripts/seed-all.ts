@@ -1,8 +1,12 @@
 // Usage:
-//   pnpm seed:all                          dev: needs Next + Inngest dev servers
-//   pnpm seed:all --top=1000               pull top-N curated English lit from PG
-//   pnpm seed:all --prod                   prod: needs INNGEST_EVENT_KEY + DATABASE_URL_PROD
-//   pnpm seed:all --top=1000 --prod        both
+//   pnpm seed:all                          dev: hand-picked SEED_BOOKS (~36)
+//   pnpm seed:all --top=100                dev: top-100 from PG catalog
+//   pnpm seed:all --top=1000 --prod        prod: full 1k against prod DB
+//
+// Convention (#83): dev stays small (≤100 books, snappy UMAP and queries);
+// prod gets the real 1k corpus. --prod requires INNGEST_EVENT_KEY +
+// DATABASE_URL_PROD in .env; the Inngest + Next servers still need to be
+// running locally so the registered functions can drain events.
 
 // IMPORTANT: --prod must take effect BEFORE _load-env or @/lib/* are imported,
 // because they read process.env at module-load. Hence dynamic imports below.

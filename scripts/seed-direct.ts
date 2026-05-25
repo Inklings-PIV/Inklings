@@ -197,9 +197,21 @@ void (async () => {
   log(`  done: ${doneCount} ingested, ${failedCount} failed\n`);
 
   if (failedCount > 0) {
-    log(`  ⚠ Failures:`);
-    for (const f of failed.slice(0, 20)) log(`    #${f.gutenbergId}  ${f.error}`);
-    if (failed.length > 20) log(`    … and ${failed.length - 20} more\n`);
+    log(`  ⚠ ${failedCount} failures`);
+    // Group by error message so a systemic problem (schema drift, env var
+    // missing, etc.) doesn't drown in 1k near-identical lines. Show the
+    // first 5 IDs per error class and a total count.
+    const groups = new Map<string, number[]>();
+    for (const f of failed) {
+      const key = f.error.split("\n")[0]?.slice(0, 200) ?? f.error.slice(0, 200);
+      const arr = groups.get(key) ?? [];
+      arr.push(f.gutenbergId);
+      groups.set(key, arr);
+    }
+    for (const [errMsg, gids] of groups) {
+      log(`    ${gids.length}× — ${errMsg}`);
+      log(`        e.g. #${gids.slice(0, 5).join(", #")}${gids.length > 5 ? ", …" : ""}`);
+    }
   }
 
   // 3. Layouts inline. Same logic as recomputeLayout* Inngest functions

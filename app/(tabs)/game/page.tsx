@@ -256,7 +256,7 @@ function SwatchRound({
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
       <Smudge excerpt={round?.excerpt} ref={smudgeRef} roundKey={round?.roundId ?? "loading"} />
-      <Card className="py-3 sm:py-6">
+      <Card className="gap-2 py-3 sm:gap-6 sm:py-6">
         <CardHeader className="px-3 sm:px-6">
           <CardTitle className="text-base">Pick a swatch</CardTitle>
           <CardDescription>
@@ -269,7 +269,7 @@ function SwatchRound({
                 : "Which hue belongs to this smudge?"}
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col gap-4 px-3 sm:px-6">
+        <CardContent className="flex flex-col gap-3 px-3 sm:gap-4 sm:px-6">
           {!round ? (
             <RadialPickerSkeleton />
           ) : (
@@ -415,8 +415,8 @@ function WheelRound({
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
       <Smudge excerpt={round?.excerpt} ref={smudgeRef} roundKey={round?.roundId ?? "loading"} />
-      <Card>
-        <CardHeader>
+      <Card className="gap-2 py-3 sm:gap-6 sm:py-6">
+        <CardHeader className="px-3 sm:px-6">
           <CardTitle className="text-base">Pick on the wheel</CardTitle>
           <CardDescription>
             {!round
@@ -428,7 +428,7 @@ function WheelRound({
                 : "Click the wheel to drop the nib — angle picks hue, distance from the centre picks saturation."}
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col items-center gap-4">
+        <CardContent className="flex flex-col items-center gap-3 px-3 sm:gap-4 sm:px-6">
           <button
             type="button"
             aria-label="Colour wheel — click to set hue (angle) and saturation (distance from centre)"
@@ -799,13 +799,13 @@ function Smudge({
   const text = excerpt ?? "Pulling a smudge…";
   return (
     <div ref={ref}>
-      <Card className="bg-card/60">
-        <CardHeader className="pb-2">
+      <Card className="gap-2 bg-card/60 py-3 sm:gap-6 sm:py-6">
+        <CardHeader className="px-3 sm:px-6">
           <CardDescription className="text-[10px] uppercase tracking-wider">
             smudge {variant !== "single" && `· ${variant}`}
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-3 sm:px-6">
           <p
             className={cn(
               "font-serif text-lg leading-relaxed text-ink-deep whitespace-pre-wrap",

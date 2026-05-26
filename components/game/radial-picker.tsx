@@ -65,9 +65,9 @@ const CENTER = VIEW_SIZE / 2; // (400, 400) — the splash anchor + picker centr
 const CENTROID_X = 530;
 const CENTROID_Y = 315;
 // Shrink each tile around its own centroid to introduce the inter-splash
-// gap. 0.97 ⇒ ~3% shrink ⇒ roughly 4px gap between neighbours at a 300px
-// picker. Tunable by feel.
-const GAP_SCALE = 0.97;
+// gap. 0.955 ⇒ ~4.5% shrink ⇒ roughly 6px gap between neighbours at a
+// 300-ish px picker. Tunable by feel.
+const GAP_SCALE = 0.955;
 // Rotation offset (degrees) applied to every tile. The raw path points
 // upper-right; we shift so the first tile's centroid sits at the top.
 const ROTATION_OFFSET = -57;

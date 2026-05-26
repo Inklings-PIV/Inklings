@@ -150,7 +150,7 @@ export default async function AuthorPage({ params }: { params: Promise<{ slug: s
   const signatureFeatures = averageClassicalFeatures(author.books);
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-8 sm:px-6">
+    <div className="mx-auto w-full max-w-5xl px-4 py-8 sm:px-6">
       <Link
         href="/blots"
         className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-ink-deep"

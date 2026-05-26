@@ -99,7 +99,7 @@ export default function GamePage() {
   );
 
   return (
-    <div className="mx-auto max-w-5xl px-4 py-4 sm:px-6 sm:py-8">
+    <div className="mx-auto w-full max-w-5xl px-4 py-4 sm:px-6 sm:py-8">
       {/* Desktop header: title + tagline + score chips. Mobile drops both
           the title and the tagline to reclaim ~70px above the fold. */}
       <header className="hidden flex-wrap items-end justify-between gap-4 sm:flex">

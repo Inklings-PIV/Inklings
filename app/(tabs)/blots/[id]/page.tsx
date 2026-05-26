@@ -149,7 +149,7 @@ export default async function BlotPage({ params }: { params: Promise<{ id: strin
       : null;
 
   return (
-    <div className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
+    <div className="mx-auto w-full max-w-4xl px-4 py-8 sm:px-6">
       <Link
         href="/blots"
         className="inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-ink-deep"

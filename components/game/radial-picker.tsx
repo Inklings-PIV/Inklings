@@ -52,17 +52,19 @@ type RadialPickerProps = {
 // sits at (0,0) and the rim at radius ≈ 50.
 // Small inner hole so the six splashes barely touch in the middle, and a
 // thin angular gap so they barely touch each other along their sides.
-const INNER_R = 4;
-const OUTER_R = 47;
+const INNER_R = 6;
+const OUTER_R = 46;
 const SECTOR_DEG = 60;
-const GAP_DEG = 5; // slightly bigger gap so the bulges don't merge
+const GAP_DEG = 8; // wider angular channel so the bigger bulges don't merge
 const SECTOR_HALF_SPAN = (SECTOR_DEG - GAP_DEG) / 2;
-// Shoulder = the off-axis fat point of each splash. Higher = fatter blob.
-const SHOULDER_FRACTION = 0.5;
+// Shoulder = the off-axis fat point of each splash. Pushed outward so the
+// blob is pear-shaped — narrow at the centre, big puffy splash-head at the rim.
+const SHOULDER_FRACTION = 0.62;
 // Tangent length scalars for the cubic Beziers — bigger = more outward
-// bulge, lower = closer to a wedge. Tuned empirically.
-const INNER_BULGE = 0.6;
-const OUTER_BULGE = 0.65;
+// bulge. Cranked high enough that the side curves bow generously past the
+// chord between shoulders and the outer rim balloons.
+const INNER_BULGE = 0.95;
+const OUTER_BULGE = 1.25;
 
 // --- Pointer-push tuning, in viewBox units (where the picker spans 100).
 const PUSH_FIELD = 32;
@@ -112,6 +114,22 @@ export function RadialPicker({
         className="absolute inset-0 size-full overflow-visible"
         aria-hidden="true"
       >
+        <defs>
+          {/* Ink-warp filter: low-frequency fractal turbulence displaces
+              the otherwise-smooth Bezier shape to give each splash an
+              organic, hand-drawn irregularity. baseFrequency low ⇒ large
+              wobble features (not jagged noise); scale ⇒ how much push. */}
+          <filter id="ink-warp" x="-20%" y="-20%" width="140%" height="140%">
+            <feTurbulence
+              type="fractalNoise"
+              baseFrequency="0.025"
+              numOctaves="2"
+              seed="7"
+              result="noise"
+            />
+            <feDisplacementMap in="SourceGraphic" in2="noise" scale="3.5" />
+          </filter>
+        </defs>
         {wedges.map((swatch, i) => (
           <Wedge
             key={swatch.swatchId}
@@ -259,12 +277,12 @@ function Wedge({
         fill={swatch.css}
         stroke={stroke}
         strokeWidth={strokeWidth}
-        // Round the outer/inner arc joins so the rim doesn't sharpen at
-        // the corners — feels ink-like rather than knife-cut.
         strokeLinejoin="round"
         strokeLinecap="round"
-        // A subtle inner shadow via SVG filter would be richer; for now
-        // a flat fill keeps render cheap.
+        // Apply the ink-warp filter so the smooth Bezier shape gets
+        // displaced into something asymmetric and splattery. Without
+        // this, even fat petals look too geometric to read as "ink".
+        filter="url(#ink-warp)"
       />
       <AnimatePresence>
         {isPicked && !reducedMotion && (

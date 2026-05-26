@@ -1,11 +1,12 @@
 "use client";
 
-import { Check, Flame, Loader2, Sparkles, Trophy, X } from "lucide-react";
+import { Flame, Loader2, Sparkles, Trophy } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { BleedingText } from "@/components/game/animations/bleeding-text";
 import { usePulseTrigger } from "@/components/game/animations/border-pulse";
 import { useDripTrigger } from "@/components/game/animations/drip-overlay";
 import { StaggeredRows } from "@/components/game/animations/staggered-rows";
+import { RadialPicker, RadialPickerSkeleton } from "@/components/game/radial-picker";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
@@ -203,11 +204,15 @@ function SwatchRound({
   const [isLoading, startLoading] = useTransition();
   const [isSubmitting, startSubmit] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  // Show the picker's "picked" affordance immediately on tap, before the
+  // server round-trip finishes and `state.kind` flips to "revealed".
+  const [tentativePick, setTentativePick] = useState<string | null>(null);
   const smudgeRef = useRef<HTMLDivElement>(null);
   const triggerDrip = useDripTrigger();
 
   const begin = useCallback(() => {
     setError(null);
+    setTentativePick(null);
     startLoading(async () => {
       try {
         const round = await startSwatchRound({ sessionId });
@@ -230,6 +235,7 @@ function SwatchRound({
     if (state.kind !== "guessing") return;
     const round = state.round;
     setError(null);
+    setTentativePick(swatchId);
     if (sourceEl && smudgeRef.current) {
       triggerDrip(sourceEl, smudgeRef.current, colour);
     }
@@ -264,54 +270,17 @@ function SwatchRound({
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
-          <div className="grid grid-cols-3 gap-3 sm:gap-2">
-            {!round
-              ? Array.from({ length: 6 }).map((_, i) => (
-                  <div
-                    // biome-ignore lint/suspicious/noArrayIndexKey: stable skeleton placeholders
-                    key={i}
-                    className="aspect-square animate-pulse rounded-md border border-dashed border-border/60 bg-muted/40"
-                  />
-                ))
-              : round.swatches.map((s, i) => {
-                  const isPicked = isRevealed && state.pickedId === s.swatchId;
-                  const isCorrect = isRevealed && state.result.correctSwatchId === s.swatchId;
-                  return (
-                    <button
-                      key={s.swatchId}
-                      type="button"
-                      aria-label={`Swatch ${i + 1} of ${round.swatches.length}`}
-                      onClick={(e) => guess(s.swatchId, e.currentTarget, s.css)}
-                      disabled={isRevealed || isSubmitting}
-                      className={cn(
-                        "relative aspect-square rounded-md border border-border transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-                        !isRevealed && "enabled:hover:scale-[1.03]",
-                        isCorrect && "ring-2 ring-emerald-500 ring-offset-2 ring-offset-background",
-                        isPicked &&
-                          !isCorrect &&
-                          "ring-2 ring-destructive ring-offset-2 ring-offset-background",
-                      )}
-                      style={{ backgroundColor: s.css }}
-                    >
-                      {isCorrect && (
-                        <Check
-                          aria-hidden="true"
-                          className="absolute inset-0 m-auto size-6 text-white drop-shadow"
-                        />
-                      )}
-                      {isPicked && !isCorrect && (
-                        <X
-                          aria-hidden="true"
-                          className="absolute inset-0 m-auto size-6 text-white drop-shadow"
-                        />
-                      )}
-                      {isSubmitting && state.kind === "guessing" && (
-                        <Loader2 className="absolute inset-0 m-auto size-4 animate-spin text-white/80" />
-                      )}
-                    </button>
-                  );
-                })}
-          </div>
+          {!round ? (
+            <RadialPickerSkeleton />
+          ) : (
+            <RadialPicker
+              swatches={round.swatches}
+              pickedId={state.kind === "revealed" ? state.pickedId : tentativePick}
+              correctId={state.kind === "revealed" ? state.result.correctSwatchId : null}
+              disabled={isRevealed || isSubmitting}
+              onPick={guess}
+            />
+          )}
           {isRevealed && (
             <Button onClick={begin} disabled={isLoading}>
               {isLoading ? (

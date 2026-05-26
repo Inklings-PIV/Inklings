@@ -809,7 +809,11 @@ function Smudge({
           <p
             className={cn(
               "font-serif text-lg leading-relaxed text-ink-deep whitespace-pre-wrap",
-              !excerpt && "italic text-muted-foreground",
+              // Reserve roughly the height of a typical excerpt while the
+              // round is loading so the smudge card doesn't visibly grow
+              // when the real text arrives. ~6 lines at text-lg +
+              // leading-relaxed.
+              !excerpt && "min-h-44 italic text-muted-foreground sm:min-h-40",
             )}
           >
             <BleedingText key={roundKey} text={text} />

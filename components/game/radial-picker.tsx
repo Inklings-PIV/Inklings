@@ -359,7 +359,11 @@ export function RadialPickerSkeleton() {
           return (
             // biome-ignore lint/suspicious/noArrayIndexKey: stable skeleton placeholders
             <g key={i} transform={transform}>
-              <path d={SPLASH_PATH} className="fill-muted/40" />
+              {/* Fill uses `foreground` rather than `muted` so contrast
+                  against `bg-card` is consistent across themes — `muted`
+                  in light mode is only 3% darker than the card, leaving
+                  the skeleton nearly invisible. */}
+              <path d={SPLASH_PATH} className="fill-foreground/25" />
             </g>
           );
         })}

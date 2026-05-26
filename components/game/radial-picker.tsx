@@ -9,25 +9,29 @@ import {
   useSpring,
   useTransform,
 } from "motion/react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * Radial 6-dot picker for Swatch mode. Replaces the prior 3-col grid with
- * dots arranged in a hexagon. Three "fun layers" stack:
+ * Radial 6-wedge ink-splatter picker for Swatch mode. Six rounded
+ * pie-slice shapes nearly tile the circular space — a small central
+ * gap + thin angular channels keep them "barely touching", like ink
+ * drops spreading on paper until they meet.
  *
- *   1. Pointer-push: each dot gently translates away from the cursor when
- *      it gets close, springing back when the cursor leaves. Desktop only —
- *      `pointermove` on touch only fires while a finger is pressed, so
- *      finger-tap UX is unaffected.
- *   2. Pick scale + halo: the tapped dot scales to 1.15× and grows a soft
- *      ring in its own colour.
- *   3. Ripple: a single ring expands from the picked dot over ~600 ms,
- *      fading out. Feels like ink spreading.
+ * Three "fun layers" stack on the existing game logic:
+ *
+ *   1. Pointer-push: each wedge translates radially-outward when the
+ *      cursor approaches its centroid, opening a gap between it and
+ *      its neighbours. Disabled on `prefers-reduced-motion` and during
+ *      the reveal state (no movement under the result rings).
+ *   2. Pick scale + halo: the tapped wedge scales to 1.06× and grows
+ *      a soft outline.
+ *   3. Ripple: a 600ms expanding ring fades out from the wedge centroid.
  *
  * Game integrity is preserved: the parent (`SwatchRound`) still receives
- * the same `(swatchId, sourceEl, colour)` tuple via `onPick`, fires its
- * existing drip animation, and submits the same guess.
+ * the same `(swatchId, sourceEl, colour)` tuple via `onPick` and submits
+ * the same guess. `sourceEl` is the wedge's `<g>` element — its bounding
+ * rect is a close approximation of the wedge centroid for the drip start.
  */
 
 type Swatch = { swatchId: string; css: string };
@@ -38,22 +42,31 @@ type RadialPickerProps = {
   swatches: Swatch[];
   pickedId?: string | null;
   // When non-null, the picker is in "revealed" state — rings appear on
-  // the picked + correct dots, others dim.
+  // the picked + correct wedges, others dim.
   correctId?: string | null;
   disabled?: boolean;
   onPick: (swatchId: string, sourceEl: HTMLElement, colour: string) => void;
 };
 
-// 6 dots arranged in a hexagon starting at the top (-90°), clockwise.
-// Position is expressed as a fraction of the container's half-extent so
-// the picker scales with available width.
-const HEX_RADIUS_FRACTION = 0.36;
-const HEX_ANGLES = Array.from({ length: 6 }, (_, i) => (i / 6) * 2 * Math.PI - Math.PI / 2);
+// --- Geometry constants. SVG viewBox is -50,-50,100,100, so the centre
+// sits at (0,0) and the rim at radius ≈ 50.
+// Small inner hole so the six splashes barely touch in the middle, and a
+// thin angular gap so they barely touch each other along their sides.
+const INNER_R = 4;
+const OUTER_R = 47;
+const SECTOR_DEG = 60;
+const GAP_DEG = 5; // slightly bigger gap so the bulges don't merge
+const SECTOR_HALF_SPAN = (SECTOR_DEG - GAP_DEG) / 2;
+// Shoulder = the off-axis fat point of each splash. Higher = fatter blob.
+const SHOULDER_FRACTION = 0.5;
+// Tangent length scalars for the cubic Beziers — bigger = more outward
+// bulge, lower = closer to a wedge. Tuned empirically.
+const INNER_BULGE = 0.6;
+const OUTER_BULGE = 0.65;
 
-// Pointer-push tuning. Field range = how far the cursor's influence reaches
-// (in px from the dot's natural centre). Strength = max displacement.
-const PUSH_FIELD_PX = 110;
-const PUSH_STRENGTH_PX = 16;
+// --- Pointer-push tuning, in viewBox units (where the picker spans 100).
+const PUSH_FIELD = 32;
+const PUSH_STRENGTH = 4.5;
 
 export function RadialPicker({
   swatches,
@@ -63,29 +76,14 @@ export function RadialPicker({
   onPick,
 }: RadialPickerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const [containerSize, setContainerSize] = useState(0);
   const reducedMotion = useReducedMotion();
 
-  // Pointer offset relative to container centre, in pixels. Stays at (0,0)
-  // until the user moves the cursor — so on first paint and on mobile
-  // (where pointermove rarely fires without a press) all dots sit at rest.
-  const pointerX = useMotionValue(0);
-  const pointerY = useMotionValue(0);
-
-  // Track container size for the push math. ResizeObserver keeps it in
-  // sync across orientation changes / dev-tools resizes.
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const update = () => {
-      const rect = el.getBoundingClientRect();
-      setContainerSize(rect.width);
-    };
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, []);
+  // Pointer offset relative to container centre, in viewBox units
+  // (-50..50 range). Stays at (0,0) until the user moves the cursor —
+  // so on first paint and on mobile (where pointermove rarely fires
+  // without a press) all wedges sit at rest.
+  const pointerVbX = useMotionValue(0);
+  const pointerVbY = useMotionValue(0);
 
   useEffect(() => {
     if (reducedMotion) return;
@@ -93,201 +91,328 @@ export function RadialPicker({
       const el = containerRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      pointerX.set(e.clientX - rect.left - rect.width / 2);
-      pointerY.set(e.clientY - rect.top - rect.height / 2);
+      if (rect.width === 0) return;
+      // Convert client coords → viewBox coords.
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      pointerVbX.set(((e.clientX - cx) * 100) / rect.width);
+      pointerVbY.set(((e.clientY - cy) * 100) / rect.width);
     };
     window.addEventListener("pointermove", handler);
     return () => window.removeEventListener("pointermove", handler);
-  }, [pointerX, pointerY, reducedMotion]);
+  }, [pointerVbX, pointerVbY, reducedMotion]);
 
   const isRevealed = correctId != null;
-  const dots = swatches.slice(0, 6);
+  const wedges = swatches.slice(0, 6);
 
   return (
     <div ref={containerRef} className="relative mx-auto aspect-square w-full max-w-72">
-      {dots.map((swatch, i) => (
-        <Dot
-          key={swatch.swatchId}
-          swatch={swatch}
-          angleRad={HEX_ANGLES[i] ?? 0}
-          index={i}
-          total={dots.length}
-          containerSize={containerSize}
-          pointerX={pointerX}
-          pointerY={pointerY}
-          isPicked={pickedId === swatch.swatchId}
-          isCorrect={correctId === swatch.swatchId}
-          isRevealed={isRevealed}
-          disabled={disabled ?? false}
-          reducedMotion={reducedMotion ?? false}
-          onPick={(el) => onPick(swatch.swatchId, el, swatch.css)}
-        />
-      ))}
+      <svg
+        viewBox="-50 -50 100 100"
+        className="absolute inset-0 size-full overflow-visible"
+        aria-hidden="true"
+      >
+        {wedges.map((swatch, i) => (
+          <Wedge
+            key={swatch.swatchId}
+            swatch={swatch}
+            sectorIndex={i}
+            pointerVbX={pointerVbX}
+            pointerVbY={pointerVbY}
+            isPicked={pickedId === swatch.swatchId}
+            isCorrect={correctId === swatch.swatchId}
+            isRevealed={isRevealed}
+            disabled={disabled ?? false}
+            reducedMotion={reducedMotion ?? false}
+            label={`Swatch ${i + 1} of ${wedges.length}`}
+            onPick={(el) => onPick(swatch.swatchId, el, swatch.css)}
+          />
+        ))}
+      </svg>
     </div>
   );
 }
 
-type DotProps = {
+type WedgeProps = {
   swatch: Swatch;
-  angleRad: number;
-  index: number;
-  total: number;
-  containerSize: number;
-  pointerX: MotionValue<number>;
-  pointerY: MotionValue<number>;
+  sectorIndex: number;
+  pointerVbX: MotionValue<number>;
+  pointerVbY: MotionValue<number>;
   isPicked: boolean;
   isCorrect: boolean;
   isRevealed: boolean;
   disabled: boolean;
   reducedMotion: boolean;
+  label: string;
   onPick: (el: HTMLElement) => void;
 };
 
-function Dot({
+function Wedge({
   swatch,
-  angleRad,
-  index,
-  total,
-  containerSize,
-  pointerX,
-  pointerY,
+  sectorIndex,
+  pointerVbX,
+  pointerVbY,
   isPicked,
   isCorrect,
   isRevealed,
   disabled,
   reducedMotion,
+  label,
   onPick,
-}: DotProps) {
-  const cosA = Math.cos(angleRad);
-  const sinA = Math.sin(angleRad);
+}: WedgeProps) {
+  const centerAngleDeg = sectorIndex * SECTOR_DEG - 90; // top first, then clockwise
+  const centerAngleRad = (centerAngleDeg * Math.PI) / 180;
 
-  // Natural offset from container centre (in px). Container's half-extent
-  // is containerSize/2; the dot's centre lives at HEX_RADIUS_FRACTION of
-  // that, projected onto cos/sin.
-  const halfExtent = containerSize / 2;
-  const naturalX = HEX_RADIUS_FRACTION * halfExtent * cosA;
-  const naturalY = HEX_RADIUS_FRACTION * halfExtent * sinA;
+  // Centroid in viewBox units — used for pointer-push origin and
+  // ripple positioning.
+  const centroidR = (INNER_R + OUTER_R) / 2;
+  const centroidX = centroidR * Math.cos(centerAngleRad);
+  const centroidY = centroidR * Math.sin(centerAngleRad);
 
-  // Pointer-push: project the cursor's offset onto the (dot - cursor)
-  // vector. Closer cursor = larger push, capped at PUSH_STRENGTH_PX and
-  // zero beyond PUSH_FIELD_PX.
-  const pushX = useTransform([pointerX, pointerY], (values) => {
-    if (reducedMotion || disabled) return 0;
+  const d = useMemo(
+    () => buildSplashPath(centerAngleDeg, INNER_R, OUTER_R, SECTOR_HALF_SPAN),
+    [centerAngleDeg],
+  );
+
+  // Pointer-push: project (centroid - cursor) into a push vector,
+  // capped at PUSH_STRENGTH viewBox units, zeroed beyond PUSH_FIELD.
+  // Suppressed once the round is revealed so the result ring stays put.
+  const pushSilenced = reducedMotion || disabled || isRevealed;
+  const pushX = useTransform([pointerVbX, pointerVbY], (values) => {
+    if (pushSilenced) return 0;
     const [px, py] = values as number[];
-    const dx = naturalX - (px ?? 0);
-    const dy = naturalY - (py ?? 0);
+    const dx = centroidX - (px ?? 0);
+    const dy = centroidY - (py ?? 0);
     const dist = Math.hypot(dx, dy);
-    if (dist === 0 || dist > PUSH_FIELD_PX) return 0;
-    const t = 1 - dist / PUSH_FIELD_PX;
-    return (dx / dist) * PUSH_STRENGTH_PX * t;
+    if (dist === 0 || dist > PUSH_FIELD) return 0;
+    const t = 1 - dist / PUSH_FIELD;
+    return (dx / dist) * PUSH_STRENGTH * t;
   });
-  const pushY = useTransform([pointerX, pointerY], (values) => {
-    if (reducedMotion || disabled) return 0;
+  const pushY = useTransform([pointerVbX, pointerVbY], (values) => {
+    if (pushSilenced) return 0;
     const [px, py] = values as number[];
-    const dx = naturalX - (px ?? 0);
-    const dy = naturalY - (py ?? 0);
+    const dx = centroidX - (px ?? 0);
+    const dy = centroidY - (py ?? 0);
     const dist = Math.hypot(dx, dy);
-    if (dist === 0 || dist > PUSH_FIELD_PX) return 0;
-    const t = 1 - dist / PUSH_FIELD_PX;
-    return (dy / dist) * PUSH_STRENGTH_PX * t;
+    if (dist === 0 || dist > PUSH_FIELD) return 0;
+    const t = 1 - dist / PUSH_FIELD;
+    return (dy / dist) * PUSH_STRENGTH * t;
   });
 
-  // Smooth the push with springs — feels like ink suspended in water.
+  // Smooth the push with springs — gives the ink-in-water feel.
   const springX = useSpring(pushX, { damping: 18, stiffness: 220, mass: 0.6 });
   const springY = useSpring(pushY, { damping: 18, stiffness: 220, mass: 0.6 });
 
-  // Position via percentage so layout scales with container width.
-  const leftPct = 50 + HEX_RADIUS_FRACTION * 100 * cosA;
-  const topPct = 50 + HEX_RADIUS_FRACTION * 100 * sinA;
+  // Result-state styling. SVG strokes work nicer than Tailwind ring
+  // utilities for non-rectangular shapes — we just thicken the path
+  // outline in the relevant colour.
+  const stroke = (() => {
+    if (isPicked && isCorrect) return "rgb(16, 185, 129)"; // emerald-500
+    if (isPicked && isRevealed && !isCorrect) return "rgb(239, 68, 68)"; // red-500
+    if (isPicked && !isRevealed) return "rgba(255, 255, 255, 0.85)";
+    if (isRevealed && !isPicked && isCorrect) return "rgba(16, 185, 129, 0.65)";
+    return "transparent";
+  })();
+  const strokeWidth = isPicked ? 2 : isRevealed && isCorrect ? 1.5 : 0;
 
-  // Visual state hierarchy: picked-correct > picked-wrong > correct-but-unpicked > default
   const dimmed = isRevealed && !isPicked && !isCorrect;
-  const showHaloOnPicked = isPicked;
+
+  // Handle click: we attach onClick to the <g> wrapper so the entire
+  // wedge is clickable; the inner <path> would also work but is harder
+  // to hit on the angular gaps.
+  const handleClick = (e: React.MouseEvent<SVGGElement>) => {
+    if (disabled) return;
+    onPick(e.currentTarget as unknown as HTMLElement);
+  };
 
   return (
-    <motion.button
-      type="button"
-      aria-label={`Swatch ${index + 1} of ${total}`}
-      onClick={(e) => onPick(e.currentTarget)}
-      disabled={disabled}
-      whileTap={reducedMotion ? undefined : { scale: 0.94 }}
+    <motion.g
+      role="button"
+      aria-label={label}
+      aria-disabled={disabled}
+      tabIndex={disabled ? -1 : 0}
+      onClick={handleClick}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          if (!disabled) onPick(e.currentTarget as unknown as HTMLElement);
+        }
+      }}
+      style={{
+        // Motion translates these to a CSS `transform: translate3d(...)`
+        // which composes with SVG transforms cleanly in all modern
+        // browsers. `transform-origin: center` keeps scale centred.
+        x: springX,
+        y: springY,
+        cursor: disabled ? "default" : "pointer",
+        transformOrigin: "0 0",
+      }}
       animate={{
-        scale: isPicked ? 1.15 : 1,
+        scale: isPicked ? 1.06 : 1,
         opacity: dimmed ? 0.45 : 1,
       }}
+      whileTap={reducedMotion || disabled ? undefined : { scale: 0.97 }}
       transition={{ duration: 0.25, ease: "easeOut" }}
-      style={{
-        position: "absolute",
-        left: `${leftPct}%`,
-        top: `${topPct}%`,
-        x: "-50%",
-        y: "-50%",
-        translateX: springX,
-        translateY: springY,
-        backgroundColor: swatch.css,
-      }}
-      className={cn(
-        "size-14 rounded-full border border-border shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background sm:size-12",
-        // Halo: picked-correct green, picked-wrong red, otherwise the
-        // dot's own colour (gives a subtle pop on pick).
-        showHaloOnPicked &&
-          isCorrect &&
-          "ring-4 ring-emerald-500 ring-offset-2 ring-offset-background",
-        showHaloOnPicked &&
-          isRevealed &&
-          !isCorrect &&
-          "ring-4 ring-destructive ring-offset-2 ring-offset-background",
-        showHaloOnPicked &&
-          !isRevealed &&
-          "ring-4 ring-white/60 ring-offset-2 ring-offset-background",
-        // Pulse a faint green ring on the actual correct one if the user missed it.
-        isRevealed && !isPicked && isCorrect && "ring-4 ring-emerald-500/60",
-      )}
     >
+      <motion.path
+        d={d}
+        fill={swatch.css}
+        stroke={stroke}
+        strokeWidth={strokeWidth}
+        // Round the outer/inner arc joins so the rim doesn't sharpen at
+        // the corners — feels ink-like rather than knife-cut.
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        // A subtle inner shadow via SVG filter would be richer; for now
+        // a flat fill keeps render cheap.
+      />
       <AnimatePresence>
-        {isPicked && !reducedMotion && <Ripple key="ripple" colour={swatch.css} />}
+        {isPicked && !reducedMotion && (
+          <Ripple key="ripple" cx={centroidX} cy={centroidY} colour={swatch.css} />
+        )}
       </AnimatePresence>
-    </motion.button>
+    </motion.g>
   );
 }
 
 /**
- * Single 600ms ring that expands from the dot and fades. Mounted once per
- * pick via AnimatePresence; unmounts cleanly on round transition.
+ * Single 600ms ring that expands from a wedge centroid and fades out.
+ * Mounted via AnimatePresence; unmounts cleanly on round transition.
  */
-function Ripple({ colour }: { colour: string }) {
+function Ripple({ cx, cy, colour }: { cx: number; cy: number; colour: string }) {
   return (
-    <motion.span
-      aria-hidden="true"
-      className="pointer-events-none absolute inset-0 rounded-full"
-      initial={{ scale: 1, opacity: 0.55 }}
-      animate={{ scale: 2.4, opacity: 0 }}
+    <motion.circle
+      cx={cx}
+      cy={cy}
+      r={8}
+      fill="none"
+      stroke={colour}
+      strokeWidth={2}
+      initial={{ scale: 1, opacity: 0.6 }}
+      animate={{ scale: 4, opacity: 0 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.6, ease: "easeOut" }}
-      style={{ boxShadow: `0 0 0 3px ${colour}` }}
+      style={{ transformOrigin: `${cx}px ${cy}px` }}
+      pointerEvents="none"
     />
   );
 }
 
 /**
- * Loading skeleton: six dashed-border circles in the same hexagonal
- * arrangement, pulsing. Used while the first round is being fetched.
+ * Loading skeleton: six dashed wedges in the same layout, dimmed and
+ * pulsing. Used while the first round is being fetched.
  */
 export function RadialPickerSkeleton() {
+  const paths = useMemo(
+    () =>
+      Array.from({ length: 6 }, (_, i) =>
+        buildSplashPath(i * SECTOR_DEG - 90, INNER_R, OUTER_R, SECTOR_HALF_SPAN),
+      ),
+    [],
+  );
+
   return (
     <div className="relative mx-auto aspect-square w-full max-w-72">
-      {HEX_ANGLES.map((angle, i) => {
-        const leftPct = 50 + HEX_RADIUS_FRACTION * 100 * Math.cos(angle);
-        const topPct = 50 + HEX_RADIUS_FRACTION * 100 * Math.sin(angle);
-        return (
-          <div
+      <svg
+        viewBox="-50 -50 100 100"
+        className="absolute inset-0 size-full animate-pulse"
+        aria-hidden="true"
+      >
+        {paths.map((d, i) => (
+          <path
             // biome-ignore lint/suspicious/noArrayIndexKey: stable skeleton placeholders
             key={i}
-            className="absolute size-14 -translate-x-1/2 -translate-y-1/2 animate-pulse rounded-full border border-dashed border-border/60 bg-muted/40 sm:size-12"
-            style={{ left: `${leftPct}%`, top: `${topPct}%` }}
+            d={d}
+            className={cn("fill-muted/40 stroke-border/60")}
+            strokeWidth={0.5}
+            strokeDasharray="2 2"
           />
-        );
-      })}
+        ))}
+      </svg>
     </div>
   );
+}
+
+/**
+ * Build a cubic-Bezier ink-splash blob for one sector.
+ *
+ * Four anchor points trace the petal clockwise (in SVG y-down coords):
+ *   A0 = inner tip (small, near the centre)
+ *   A1 = right shoulder (off-axis, the fat side bulge)
+ *   A2 = outer tip (rounded splash head at the rim)
+ *   A3 = left shoulder (mirror of A1)
+ *
+ * Between every pair of anchors sits a cubic Bezier whose tangent
+ * vectors at start/end are *aligned with the boundary direction* (perp
+ * to radial at the on-axis anchors, radial at the shoulder anchors).
+ * This produces a smooth blob with no visible corners — the rim bulges
+ * outward, the inner end stays small, and the sides curve fluidly.
+ *
+ * Tangent magnitudes (INNER_BULGE, OUTER_BULGE) control how *fat* each
+ * curve gets. Bigger → more dramatic splash; smaller → tighter wedge.
+ */
+function buildSplashPath(
+  centerDeg: number,
+  innerR: number,
+  outerR: number,
+  halfSpan: number,
+): string {
+  const c = (centerDeg * Math.PI) / 180;
+  const h = (halfSpan * Math.PI) / 180;
+  const shoulderR = innerR + (outerR - innerR) * SHOULDER_FRACTION;
+
+  const cosC = Math.cos(c);
+  const sinC = Math.sin(c);
+  const cosCH = Math.cos(c + h);
+  const sinCH = Math.sin(c + h);
+  const cosCmH = Math.cos(c - h);
+  const sinCmH = Math.sin(c - h);
+
+  // Anchors
+  const A0 = { x: innerR * cosC, y: innerR * sinC };
+  const A1 = { x: shoulderR * cosCH, y: shoulderR * sinCH };
+  const A2 = { x: outerR * cosC, y: outerR * sinC };
+  const A3 = { x: shoulderR * cosCmH, y: shoulderR * sinCmH };
+
+  // Unit tangent vectors. `perp` is +90° from radial (the "clockwise"
+  // boundary direction at the on-axis anchors); `radPlus` and `radMinus`
+  // are the outward radials at the right and left shoulders.
+  const perp = { x: -sinC, y: cosC };
+  const radPlus = { x: cosCH, y: sinCH };
+  const radMinus = { x: cosCmH, y: sinCmH };
+
+  // Tangent magnitudes — these set the bulge.
+  const tIn = (shoulderR - innerR) * INNER_BULGE;
+  const tOut = (outerR - shoulderR) * OUTER_BULGE;
+
+  // Cubic Bezier control points. For each segment from P0→P3, the curve
+  // leaves P0 in direction +tangent_at_P0 and arrives at P3 from
+  // direction +tangent_at_P3, so:
+  //   C1 = P0 + tangent_at_P0 * length
+  //   C2 = P3 - tangent_at_P3 * length
+
+  // A0 → A1: leaves perpendicular (clockwise), arrives radially outward
+  const C01a = { x: A0.x + perp.x * tIn, y: A0.y + perp.y * tIn };
+  const C01b = { x: A1.x - radPlus.x * tIn, y: A1.y - radPlus.y * tIn };
+
+  // A1 → A2: leaves radially outward, arrives perpendicular (still CW)
+  const C12a = { x: A1.x + radPlus.x * tOut, y: A1.y + radPlus.y * tOut };
+  const C12b = { x: A2.x + perp.x * tOut, y: A2.y + perp.y * tOut };
+
+  // A2 → A3: leaves perpendicular (-CW), arrives radially inward
+  const C23a = { x: A2.x - perp.x * tOut, y: A2.y - perp.y * tOut };
+  const C23b = { x: A3.x + radMinus.x * tOut, y: A3.y + radMinus.y * tOut };
+
+  // A3 → A0: leaves radially inward, arrives perpendicular (back to start)
+  const C30a = { x: A3.x - radMinus.x * tIn, y: A3.y - radMinus.y * tIn };
+  const C30b = { x: A0.x - perp.x * tIn, y: A0.y - perp.y * tIn };
+
+  return [
+    `M ${A0.x.toFixed(2)} ${A0.y.toFixed(2)}`,
+    `C ${C01a.x.toFixed(2)} ${C01a.y.toFixed(2)} ${C01b.x.toFixed(2)} ${C01b.y.toFixed(2)} ${A1.x.toFixed(2)} ${A1.y.toFixed(2)}`,
+    `C ${C12a.x.toFixed(2)} ${C12a.y.toFixed(2)} ${C12b.x.toFixed(2)} ${C12b.y.toFixed(2)} ${A2.x.toFixed(2)} ${A2.y.toFixed(2)}`,
+    `C ${C23a.x.toFixed(2)} ${C23a.y.toFixed(2)} ${C23b.x.toFixed(2)} ${C23b.y.toFixed(2)} ${A3.x.toFixed(2)} ${A3.y.toFixed(2)}`,
+    `C ${C30a.x.toFixed(2)} ${C30a.y.toFixed(2)} ${C30b.x.toFixed(2)} ${C30b.y.toFixed(2)} ${A0.x.toFixed(2)} ${A0.y.toFixed(2)}`,
+    "Z",
+  ].join(" ");
 }

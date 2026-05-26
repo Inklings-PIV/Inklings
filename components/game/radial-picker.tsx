@@ -1,16 +1,6 @@
 "use client";
 
-import {
-  AnimatePresence,
-  type MotionValue,
-  motion,
-  useMotionTemplate,
-  useMotionValue,
-  useReducedMotion,
-  useSpring,
-  useTransform,
-} from "motion/react";
-import { useEffect, useRef } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -24,15 +14,18 @@ import { cn } from "@/lib/utils";
  * ~2px gap between neighbours, like ink dropped just close enough to
  * almost merge.
  *
- * Three "fun layers" sit on top of the existing game logic:
+ * Two animation layers sit on top of the existing game logic:
  *
- *   1. Pointer-push: each splash translates radially-outward when the
- *      cursor approaches its centroid. Disabled on
- *      `prefers-reduced-motion` and during the reveal state.
- *   2. Pick scale + ring: the tapped splash scales to 1.06× and the
+ *   1. Pick scale + ring: the tapped splash scales to 1.06× and the
  *      result colour traces its outline.
- *   3. Ripple: a 600ms expanding ring fades out from the splash
+ *   2. Ripple: a 600ms expanding ring fades out from the splash
  *      centroid.
+ *
+ * Pointer-push has been parked — it needs a Motion-value driven SVG
+ * `transform` attribute and that path was rendering all six tiles at
+ * identical positions. The static base transform is what makes the
+ * hexagon legible in the first place; we can layer push back on top
+ * via a wrapping motion.g + CSS transform later.
  *
  * Game integrity is preserved: the parent (`SwatchRound`) still receives
  * the same `(swatchId, sourceEl, colour)` tuple via `onPick` and submits
@@ -72,10 +65,6 @@ const GAP_SCALE = 0.985;
 // upper-right; we shift so the first tile's centroid sits at the top.
 const ROTATION_OFFSET = -57;
 
-// --- Pointer-push tuning, in 800-unit viewBox space.
-const PUSH_FIELD = 260;
-const PUSH_STRENGTH = 28;
-
 export function RadialPicker({
   swatches,
   pickedId,
@@ -83,36 +72,12 @@ export function RadialPicker({
   disabled,
   onPick,
 }: RadialPickerProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
   const reducedMotion = useReducedMotion();
-
-  // Pointer offset relative to picker centre (400, 400), in viewBox units.
-  const pointerX = useMotionValue(0);
-  const pointerY = useMotionValue(0);
-
-  useEffect(() => {
-    if (reducedMotion) return;
-    const handler = (e: PointerEvent) => {
-      const el = containerRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      if (rect.width === 0) return;
-      // Container → viewBox coords. The SVG fills the container, so
-      // a client-x of (rect.left + rect.width) maps to viewBox x = 800.
-      const vx = ((e.clientX - rect.left) / rect.width) * VIEW_SIZE;
-      const vy = ((e.clientY - rect.top) / rect.height) * VIEW_SIZE;
-      pointerX.set(vx - CENTER);
-      pointerY.set(vy - CENTER);
-    };
-    window.addEventListener("pointermove", handler);
-    return () => window.removeEventListener("pointermove", handler);
-  }, [pointerX, pointerY, reducedMotion]);
-
   const isRevealed = correctId != null;
   const splashes = swatches.slice(0, 6);
 
   return (
-    <div ref={containerRef} className="relative mx-auto aspect-square w-full max-w-72">
+    <div className="relative mx-auto aspect-square w-full max-w-72">
       <svg
         viewBox={`0 0 ${VIEW_SIZE} ${VIEW_SIZE}`}
         className="absolute inset-0 size-full"
@@ -123,8 +88,6 @@ export function RadialPicker({
             key={swatch.swatchId}
             swatch={swatch}
             sectorIndex={i}
-            pointerX={pointerX}
-            pointerY={pointerY}
             isPicked={pickedId === swatch.swatchId}
             isCorrect={correctId === swatch.swatchId}
             isRevealed={isRevealed}
@@ -142,8 +105,6 @@ export function RadialPicker({
 type SplashProps = {
   swatch: Swatch;
   sectorIndex: number;
-  pointerX: MotionValue<number>;
-  pointerY: MotionValue<number>;
   isPicked: boolean;
   isCorrect: boolean;
   isRevealed: boolean;
@@ -156,8 +117,6 @@ type SplashProps = {
 function Splash({
   swatch,
   sectorIndex,
-  pointerX,
-  pointerY,
   isPicked,
   isCorrect,
   isRevealed,
@@ -172,51 +131,19 @@ function Splash({
   const sinR = Math.sin(rotationRad);
 
   // Where the splash's visual centroid lands after rotation, expressed
-  // as an offset from the picker centre. Used to aim pointer-push and
+  // in viewBox coords (relative to (0,0), not the picker centre). Used
   // to position the ripple.
   const centroidVecX = CENTROID_X - CENTER;
   const centroidVecY = CENTROID_Y - CENTER;
-  const rotatedCx = centroidVecX * cosR - centroidVecY * sinR;
-  const rotatedCy = centroidVecX * sinR + centroidVecY * cosR;
-  const rippleCx = CENTER + rotatedCx;
-  const rippleCy = CENTER + rotatedCy;
+  const rippleCx = CENTER + centroidVecX * cosR - centroidVecY * sinR;
+  const rippleCy = CENTER + centroidVecX * sinR + centroidVecY * cosR;
 
-  // Pointer-push: project (centroid - cursor) onto a push vector,
-  // capped at PUSH_STRENGTH viewBox units, zeroed beyond PUSH_FIELD.
-  // Suppressed once the round is revealed so the result outline stays
-  // put under the colour reveal.
-  const pushSilenced = reducedMotion || disabled || isRevealed;
-  const pushX = useTransform([pointerX, pointerY], (values) => {
-    if (pushSilenced) return 0;
-    const [px, py] = values as number[];
-    const dx = rotatedCx - (px ?? 0);
-    const dy = rotatedCy - (py ?? 0);
-    const dist = Math.hypot(dx, dy);
-    if (dist === 0 || dist > PUSH_FIELD) return 0;
-    const t = 1 - dist / PUSH_FIELD;
-    return (dx / dist) * PUSH_STRENGTH * t;
-  });
-  const pushY = useTransform([pointerX, pointerY], (values) => {
-    if (pushSilenced) return 0;
-    const [px, py] = values as number[];
-    const dx = rotatedCx - (px ?? 0);
-    const dy = rotatedCy - (py ?? 0);
-    const dist = Math.hypot(dx, dy);
-    if (dist === 0 || dist > PUSH_FIELD) return 0;
-    const t = 1 - dist / PUSH_FIELD;
-    return (dy / dist) * PUSH_STRENGTH * t;
-  });
-  const springX = useSpring(pushX, { damping: 18, stiffness: 220, mass: 0.6 });
-  const springY = useSpring(pushY, { damping: 18, stiffness: 220, mass: 0.6 });
-
-  // SVG transform string assembled with the motion-value translation.
-  // Applied right-to-left:
+  // Static SVG transform — rotation + gap-scale. Applied right-to-left:
   //   1. translate(-CENTROID): centroid → origin
   //   2. scale(GAP): shrink around centroid for the gap
   //   3. translate(CENTROID): centroid back
   //   4. rotate(angle, CENTER, CENTER): rotate around picker centre
-  //   5. translate(spring): push displacement
-  const baseTransform = useMotionTemplate`translate(${springX} ${springY}) rotate(${rotationDeg} ${CENTER} ${CENTER}) translate(${CENTROID_X} ${CENTROID_Y}) scale(${GAP_SCALE}) translate(${-CENTROID_X} ${-CENTROID_Y})`;
+  const baseTransform = `rotate(${rotationDeg} ${CENTER} ${CENTER}) translate(${CENTROID_X} ${CENTROID_Y}) scale(${GAP_SCALE}) translate(${-CENTROID_X} ${-CENTROID_Y})`;
 
   // Result-state stroke. We outline the picked / correct splash in the
   // result colour because filling its outline is more legible than a
@@ -239,7 +166,8 @@ function Splash({
 
   return (
     <>
-      <motion.g
+      {/* biome-ignore lint/a11y/useSemanticElements: <button> isn't a valid SVG child */}
+      <g
         role="button"
         aria-label={label}
         aria-disabled={disabled}
@@ -253,9 +181,6 @@ function Splash({
           }
         }}
         style={{ cursor: disabled ? "default" : "pointer" }}
-        animate={{ opacity: dimmed ? 0.45 : 1 }}
-        whileTap={reducedMotion || disabled ? undefined : { scale: 0.97 }}
-        transition={{ duration: 0.25, ease: "easeOut" }}
       >
         <motion.path
           d={SPLASH_PATH}
@@ -264,14 +189,18 @@ function Splash({
           strokeWidth={strokeWidth}
           strokeLinejoin="round"
           strokeLinecap="round"
-          animate={{ scale: isPicked ? 1.06 : 1 }}
+          animate={{
+            scale: isPicked ? 1.06 : 1,
+            opacity: dimmed ? 0.45 : 1,
+          }}
+          whileTap={reducedMotion || disabled ? undefined : { scale: 0.97 }}
           style={{
             transformBox: "fill-box",
             transformOrigin: "center",
           }}
           transition={{ duration: 0.25, ease: "easeOut" }}
         />
-      </motion.g>
+      </g>
       <AnimatePresence>
         {isPicked && !reducedMotion && (
           <Ripple key={`ripple-${sectorIndex}`} cx={rippleCx} cy={rippleCy} colour={swatch.css} />

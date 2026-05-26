@@ -132,7 +132,7 @@ export function RadialPicker({
   const pushStrength = containerSize * PUSH_STRENGTH_FRAC;
 
   return (
-    <div ref={containerRef} className="relative mx-auto aspect-square w-full max-w-sm sm:max-w-72">
+    <div ref={containerRef} className="relative mx-auto aspect-square w-full max-w-72">
       <svg
         viewBox={`0 0 ${VIEW_SIZE} ${VIEW_SIZE}`}
         className="absolute inset-0 size-full"

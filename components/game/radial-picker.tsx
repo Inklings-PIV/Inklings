@@ -4,71 +4,77 @@ import {
   AnimatePresence,
   type MotionValue,
   motion,
+  useMotionTemplate,
   useMotionValue,
   useReducedMotion,
   useSpring,
   useTransform,
 } from "motion/react";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 
 /**
- * Radial 6-wedge ink-splatter picker for Swatch mode. Six rounded
- * pie-slice shapes nearly tile the circular space — a small central
- * gap + thin angular channels keep them "barely touching", like ink
- * drops spreading on paper until they meet.
+ * Radial ink-splash picker for Swatch mode.
  *
- * Three "fun layers" stack on the existing game logic:
+ * Uses the hand-drawn `public/splash_tile.svg` path: a single splash
+ * anchored at (400, 400) in an 800×800 viewBox. Six instances rotated
+ * by 60° around that anchor tile the circular space perfectly — see
+ * `public/splash_hexagon.svg` for the reference arrangement. We scale
+ * each tile slightly around its own visual centroid to introduce a
+ * ~2px gap between neighbours, like ink dropped just close enough to
+ * almost merge.
  *
- *   1. Pointer-push: each wedge translates radially-outward when the
- *      cursor approaches its centroid, opening a gap between it and
- *      its neighbours. Disabled on `prefers-reduced-motion` and during
- *      the reveal state (no movement under the result rings).
- *   2. Pick scale + halo: the tapped wedge scales to 1.06× and grows
- *      a soft outline.
- *   3. Ripple: a 600ms expanding ring fades out from the wedge centroid.
+ * Three "fun layers" sit on top of the existing game logic:
+ *
+ *   1. Pointer-push: each splash translates radially-outward when the
+ *      cursor approaches its centroid. Disabled on
+ *      `prefers-reduced-motion` and during the reveal state.
+ *   2. Pick scale + ring: the tapped splash scales to 1.06× and the
+ *      result colour traces its outline.
+ *   3. Ripple: a 600ms expanding ring fades out from the splash
+ *      centroid.
  *
  * Game integrity is preserved: the parent (`SwatchRound`) still receives
  * the same `(swatchId, sourceEl, colour)` tuple via `onPick` and submits
- * the same guess. `sourceEl` is the wedge's `<g>` element — its bounding
- * rect is a close approximation of the wedge centroid for the drip start.
+ * the same guess.
  */
 
 type Swatch = { swatchId: string; css: string };
 
 type RadialPickerProps = {
-  // Caller is expected to pass 6 swatches — the existing server contract.
-  // If fewer arrive we render what's there; if more, extras are dropped.
   swatches: Swatch[];
   pickedId?: string | null;
-  // When non-null, the picker is in "revealed" state — rings appear on
-  // the picked + correct wedges, others dim.
   correctId?: string | null;
   disabled?: boolean;
   onPick: (swatchId: string, sourceEl: HTMLElement, colour: string) => void;
 };
 
-// --- Geometry constants. SVG viewBox is -50,-50,100,100, so the centre
-// sits at (0,0) and the rim at radius ≈ 50.
-// Small inner hole so the six splashes barely touch in the middle, and a
-// thin angular gap so they barely touch each other along their sides.
-const INNER_R = 6;
-const OUTER_R = 46;
-const SECTOR_DEG = 60;
-const GAP_DEG = 8; // wider angular channel so the bigger bulges don't merge
-const SECTOR_HALF_SPAN = (SECTOR_DEG - GAP_DEG) / 2;
-// Shoulder = the off-axis fat point of each splash. Pushed outward so the
-// blob is pear-shaped — narrow at the centre, big puffy splash-head at the rim.
-const SHOULDER_FRACTION = 0.62;
-// Tangent length scalars for the cubic Beziers — bigger = more outward
-// bulge. Cranked high enough that the side curves bow generously past the
-// chord between shoulders and the outer rim balloons.
-const INNER_BULGE = 0.95;
-const OUTER_BULGE = 1.25;
+// --- The hand-drawn splash shape, inlined from public/splash_tile.svg.
+// One blob anchored at (400, 400) of the 800-unit viewBox, extending
+// outward into one 60° slice of the hexagon.
+const SPLASH_PATH =
+  "M 400.00 400.00 C 406.30 400.00 405.20 399.04 418.00 408.00 C 430.80 416.96 425.92 424.80 440.00 428.00 C 454.08 431.20 448.56 428.88 462.00 418.00 C 475.44 407.12 469.20 406.16 482.00 394.00 C 494.80 381.84 489.20 381.28 502.00 380.00 C 514.80 378.72 509.84 377.84 522.00 390.00 C 534.16 402.16 528.48 402.64 540.00 418.00 C 551.52 433.36 545.84 434.80 558.00 438.00 C 570.16 441.20 565.84 438.88 578.00 428.00 C 590.16 417.12 585.12 416.16 596.00 404.00 C 606.88 391.84 601.76 391.92 612.00 390.00 C 622.24 388.08 619.04 394.80 628.00 398.00 C 636.96 401.20 640.00 403.89 640.00 400.00 C 640.00 393.30 641.84 397.65 651.39 382.42 C 660.93 367.20 675.00 369.81 669.84 352.42 C 664.67 335.03 645.01 345.36 635.25 328.08 C 625.49 310.79 636.46 320.51 639.33 298.41 C 642.20 276.31 657.43 274.25 644.22 259.00 C 631.01 243.75 614.98 264.76 598.06 250.75 C 581.14 236.74 602.48 229.72 591.34 215.22 C 580.21 200.72 578.33 214.74 563.27 205.42 C 548.20 196.11 558.12 190.35 544.27 186.11 C 530.43 181.86 513.07 188.15 520.00 192.15 C 523.37 194.10 519.52 195.39 512.27 201.55 C 505.02 207.71 500.80 201.57 497.34 211.40 C 493.88 221.23 496.37 216.76 501.46 232.26 C 506.55 247.76 509.91 243.88 513.25 259.85 C 516.59 275.82 520.76 273.24 511.91 282.17 C 503.06 291.10 504.65 285.46 485.59 287.76 C 466.53 290.05 468.95 284.89 452.34 289.34 C 435.73 293.80 438.97 289.94 433.68 301.67 C 428.39 313.39 431.67 308.82 435.80 325.99 C 439.93 343.15 443.89 338.23 446.59 355.31 C 449.29 372.39 454.06 368.77 444.25 379.36 C 434.44 389.95 430.09 381.81 415.93 388.41 C 401.77 395.02 403.15 394.54 400.00 400.00 Z";
 
-// --- Pointer-push tuning, in viewBox units (where the picker spans 100).
-const PUSH_FIELD = 32;
-const PUSH_STRENGTH = 4.5;
+// --- Geometry constants, all in the 800×800 viewBox.
+const VIEW_SIZE = 800;
+const CENTER = VIEW_SIZE / 2; // (400, 400) — the splash anchor + picker centre
+// Approximate visual centroid of one splash blob (eyeballed from the
+// path bounding box, ~540, 310). Used for the pointer-push origin and
+// for scaling each tile to create the inter-splash gap.
+const CENTROID_X = 530;
+const CENTROID_Y = 315;
+// Shrink each tile slightly around its own centroid → ~2px visible gap
+// between neighbours in a 288px container (where 1 viewBox unit ≈ 0.36px).
+// At a centroid radius ~165 from picker centre, a 0.985 scale frees up
+// ~2.5 units = ~0.9px on each side, ~1.8px between adjacent splashes.
+const GAP_SCALE = 0.985;
+// Rotation offset (degrees) applied to every tile. The raw path points
+// upper-right; we shift so the first tile's centroid sits at the top.
+const ROTATION_OFFSET = -57;
+
+// --- Pointer-push tuning, in 800-unit viewBox space.
+const PUSH_FIELD = 260;
+const PUSH_STRENGTH = 28;
 
 export function RadialPicker({
   swatches,
@@ -80,12 +86,9 @@ export function RadialPicker({
   const containerRef = useRef<HTMLDivElement>(null);
   const reducedMotion = useReducedMotion();
 
-  // Pointer offset relative to container centre, in viewBox units
-  // (-50..50 range). Stays at (0,0) until the user moves the cursor —
-  // so on first paint and on mobile (where pointermove rarely fires
-  // without a press) all wedges sit at rest.
-  const pointerVbX = useMotionValue(0);
-  const pointerVbY = useMotionValue(0);
+  // Pointer offset relative to picker centre (400, 400), in viewBox units.
+  const pointerX = useMotionValue(0);
+  const pointerY = useMotionValue(0);
 
   useEffect(() => {
     if (reducedMotion) return;
@@ -94,55 +97,40 @@ export function RadialPicker({
       if (!el) return;
       const rect = el.getBoundingClientRect();
       if (rect.width === 0) return;
-      // Convert client coords → viewBox coords.
-      const cx = rect.left + rect.width / 2;
-      const cy = rect.top + rect.height / 2;
-      pointerVbX.set(((e.clientX - cx) * 100) / rect.width);
-      pointerVbY.set(((e.clientY - cy) * 100) / rect.width);
+      // Container → viewBox coords. The SVG fills the container, so
+      // a client-x of (rect.left + rect.width) maps to viewBox x = 800.
+      const vx = ((e.clientX - rect.left) / rect.width) * VIEW_SIZE;
+      const vy = ((e.clientY - rect.top) / rect.height) * VIEW_SIZE;
+      pointerX.set(vx - CENTER);
+      pointerY.set(vy - CENTER);
     };
     window.addEventListener("pointermove", handler);
     return () => window.removeEventListener("pointermove", handler);
-  }, [pointerVbX, pointerVbY, reducedMotion]);
+  }, [pointerX, pointerY, reducedMotion]);
 
   const isRevealed = correctId != null;
-  const wedges = swatches.slice(0, 6);
+  const splashes = swatches.slice(0, 6);
 
   return (
     <div ref={containerRef} className="relative mx-auto aspect-square w-full max-w-72">
       <svg
-        viewBox="-50 -50 100 100"
-        className="absolute inset-0 size-full overflow-visible"
+        viewBox={`0 0 ${VIEW_SIZE} ${VIEW_SIZE}`}
+        className="absolute inset-0 size-full"
         aria-hidden="true"
       >
-        <defs>
-          {/* Ink-warp filter: low-frequency fractal turbulence displaces
-              the otherwise-smooth Bezier shape to give each splash an
-              organic, hand-drawn irregularity. baseFrequency low ⇒ large
-              wobble features (not jagged noise); scale ⇒ how much push. */}
-          <filter id="ink-warp" x="-20%" y="-20%" width="140%" height="140%">
-            <feTurbulence
-              type="fractalNoise"
-              baseFrequency="0.025"
-              numOctaves="2"
-              seed="7"
-              result="noise"
-            />
-            <feDisplacementMap in="SourceGraphic" in2="noise" scale="3.5" />
-          </filter>
-        </defs>
-        {wedges.map((swatch, i) => (
-          <Wedge
+        {splashes.map((swatch, i) => (
+          <Splash
             key={swatch.swatchId}
             swatch={swatch}
             sectorIndex={i}
-            pointerVbX={pointerVbX}
-            pointerVbY={pointerVbY}
+            pointerX={pointerX}
+            pointerY={pointerY}
             isPicked={pickedId === swatch.swatchId}
             isCorrect={correctId === swatch.swatchId}
             isRevealed={isRevealed}
             disabled={disabled ?? false}
             reducedMotion={reducedMotion ?? false}
-            label={`Swatch ${i + 1} of ${wedges.length}`}
+            label={`Swatch ${i + 1} of ${splashes.length}`}
             onPick={(el) => onPick(swatch.swatchId, el, swatch.css)}
           />
         ))}
@@ -151,11 +139,11 @@ export function RadialPicker({
   );
 }
 
-type WedgeProps = {
+type SplashProps = {
   swatch: Swatch;
   sectorIndex: number;
-  pointerVbX: MotionValue<number>;
-  pointerVbY: MotionValue<number>;
+  pointerX: MotionValue<number>;
+  pointerY: MotionValue<number>;
   isPicked: boolean;
   isCorrect: boolean;
   isRevealed: boolean;
@@ -165,11 +153,11 @@ type WedgeProps = {
   onPick: (el: HTMLElement) => void;
 };
 
-function Wedge({
+function Splash({
   swatch,
   sectorIndex,
-  pointerVbX,
-  pointerVbY,
+  pointerX,
+  pointerY,
   isPicked,
   isCorrect,
   isRevealed,
@@ -177,53 +165,62 @@ function Wedge({
   reducedMotion,
   label,
   onPick,
-}: WedgeProps) {
-  const centerAngleDeg = sectorIndex * SECTOR_DEG - 90; // top first, then clockwise
-  const centerAngleRad = (centerAngleDeg * Math.PI) / 180;
+}: SplashProps) {
+  const rotationDeg = sectorIndex * 60 + ROTATION_OFFSET;
+  const rotationRad = (rotationDeg * Math.PI) / 180;
+  const cosR = Math.cos(rotationRad);
+  const sinR = Math.sin(rotationRad);
 
-  // Centroid in viewBox units — used for pointer-push origin and
-  // ripple positioning.
-  const centroidR = (INNER_R + OUTER_R) / 2;
-  const centroidX = centroidR * Math.cos(centerAngleRad);
-  const centroidY = centroidR * Math.sin(centerAngleRad);
+  // Where the splash's visual centroid lands after rotation, expressed
+  // as an offset from the picker centre. Used to aim pointer-push and
+  // to position the ripple.
+  const centroidVecX = CENTROID_X - CENTER;
+  const centroidVecY = CENTROID_Y - CENTER;
+  const rotatedCx = centroidVecX * cosR - centroidVecY * sinR;
+  const rotatedCy = centroidVecX * sinR + centroidVecY * cosR;
+  const rippleCx = CENTER + rotatedCx;
+  const rippleCy = CENTER + rotatedCy;
 
-  const d = useMemo(
-    () => buildSplashPath(centerAngleDeg, INNER_R, OUTER_R, SECTOR_HALF_SPAN),
-    [centerAngleDeg],
-  );
-
-  // Pointer-push: project (centroid - cursor) into a push vector,
+  // Pointer-push: project (centroid - cursor) onto a push vector,
   // capped at PUSH_STRENGTH viewBox units, zeroed beyond PUSH_FIELD.
-  // Suppressed once the round is revealed so the result ring stays put.
+  // Suppressed once the round is revealed so the result outline stays
+  // put under the colour reveal.
   const pushSilenced = reducedMotion || disabled || isRevealed;
-  const pushX = useTransform([pointerVbX, pointerVbY], (values) => {
+  const pushX = useTransform([pointerX, pointerY], (values) => {
     if (pushSilenced) return 0;
     const [px, py] = values as number[];
-    const dx = centroidX - (px ?? 0);
-    const dy = centroidY - (py ?? 0);
+    const dx = rotatedCx - (px ?? 0);
+    const dy = rotatedCy - (py ?? 0);
     const dist = Math.hypot(dx, dy);
     if (dist === 0 || dist > PUSH_FIELD) return 0;
     const t = 1 - dist / PUSH_FIELD;
     return (dx / dist) * PUSH_STRENGTH * t;
   });
-  const pushY = useTransform([pointerVbX, pointerVbY], (values) => {
+  const pushY = useTransform([pointerX, pointerY], (values) => {
     if (pushSilenced) return 0;
     const [px, py] = values as number[];
-    const dx = centroidX - (px ?? 0);
-    const dy = centroidY - (py ?? 0);
+    const dx = rotatedCx - (px ?? 0);
+    const dy = rotatedCy - (py ?? 0);
     const dist = Math.hypot(dx, dy);
     if (dist === 0 || dist > PUSH_FIELD) return 0;
     const t = 1 - dist / PUSH_FIELD;
     return (dy / dist) * PUSH_STRENGTH * t;
   });
-
-  // Smooth the push with springs — gives the ink-in-water feel.
   const springX = useSpring(pushX, { damping: 18, stiffness: 220, mass: 0.6 });
   const springY = useSpring(pushY, { damping: 18, stiffness: 220, mass: 0.6 });
 
-  // Result-state styling. SVG strokes work nicer than Tailwind ring
-  // utilities for non-rectangular shapes — we just thicken the path
-  // outline in the relevant colour.
+  // SVG transform string assembled with the motion-value translation.
+  // Applied right-to-left:
+  //   1. translate(-CENTROID): centroid → origin
+  //   2. scale(GAP): shrink around centroid for the gap
+  //   3. translate(CENTROID): centroid back
+  //   4. rotate(angle, CENTER, CENTER): rotate around picker centre
+  //   5. translate(spring): push displacement
+  const baseTransform = useMotionTemplate`translate(${springX} ${springY}) rotate(${rotationDeg} ${CENTER} ${CENTER}) translate(${CENTROID_X} ${CENTROID_Y}) scale(${GAP_SCALE}) translate(${-CENTROID_X} ${-CENTROID_Y})`;
+
+  // Result-state stroke. We outline the picked / correct splash in the
+  // result colour because filling its outline is more legible than a
+  // box ring on an irregular shape.
   const stroke = (() => {
     if (isPicked && isCorrect) return "rgb(16, 185, 129)"; // emerald-500
     if (isPicked && isRevealed && !isCorrect) return "rgb(239, 68, 68)"; // red-500
@@ -231,206 +228,105 @@ function Wedge({
     if (isRevealed && !isPicked && isCorrect) return "rgba(16, 185, 129, 0.65)";
     return "transparent";
   })();
-  const strokeWidth = isPicked ? 2 : isRevealed && isCorrect ? 1.5 : 0;
+  const strokeWidth = isPicked ? 14 : isRevealed && isCorrect ? 10 : 0;
 
   const dimmed = isRevealed && !isPicked && !isCorrect;
 
-  // Handle click: we attach onClick to the <g> wrapper so the entire
-  // wedge is clickable; the inner <path> would also work but is harder
-  // to hit on the angular gaps.
   const handleClick = (e: React.MouseEvent<SVGGElement>) => {
     if (disabled) return;
     onPick(e.currentTarget as unknown as HTMLElement);
   };
 
   return (
-    <motion.g
-      role="button"
-      aria-label={label}
-      aria-disabled={disabled}
-      tabIndex={disabled ? -1 : 0}
-      onClick={handleClick}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          if (!disabled) onPick(e.currentTarget as unknown as HTMLElement);
-        }
-      }}
-      style={{
-        // Motion translates these to a CSS `transform: translate3d(...)`
-        // which composes with SVG transforms cleanly in all modern
-        // browsers. `transform-origin: center` keeps scale centred.
-        x: springX,
-        y: springY,
-        cursor: disabled ? "default" : "pointer",
-        transformOrigin: "0 0",
-      }}
-      animate={{
-        scale: isPicked ? 1.06 : 1,
-        opacity: dimmed ? 0.45 : 1,
-      }}
-      whileTap={reducedMotion || disabled ? undefined : { scale: 0.97 }}
-      transition={{ duration: 0.25, ease: "easeOut" }}
-    >
-      <motion.path
-        d={d}
-        fill={swatch.css}
-        stroke={stroke}
-        strokeWidth={strokeWidth}
-        strokeLinejoin="round"
-        strokeLinecap="round"
-        // Apply the ink-warp filter so the smooth Bezier shape gets
-        // displaced into something asymmetric and splattery. Without
-        // this, even fat petals look too geometric to read as "ink".
-        filter="url(#ink-warp)"
-      />
+    <>
+      <motion.g
+        role="button"
+        aria-label={label}
+        aria-disabled={disabled}
+        tabIndex={disabled ? -1 : 0}
+        transform={baseTransform}
+        onClick={handleClick}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            if (!disabled) onPick(e.currentTarget as unknown as HTMLElement);
+          }
+        }}
+        style={{ cursor: disabled ? "default" : "pointer" }}
+        animate={{ opacity: dimmed ? 0.45 : 1 }}
+        whileTap={reducedMotion || disabled ? undefined : { scale: 0.97 }}
+        transition={{ duration: 0.25, ease: "easeOut" }}
+      >
+        <motion.path
+          d={SPLASH_PATH}
+          fill={swatch.css}
+          stroke={stroke}
+          strokeWidth={strokeWidth}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          animate={{ scale: isPicked ? 1.06 : 1 }}
+          style={{
+            transformBox: "fill-box",
+            transformOrigin: "center",
+          }}
+          transition={{ duration: 0.25, ease: "easeOut" }}
+        />
+      </motion.g>
       <AnimatePresence>
         {isPicked && !reducedMotion && (
-          <Ripple key="ripple" cx={centroidX} cy={centroidY} colour={swatch.css} />
+          <Ripple key={`ripple-${sectorIndex}`} cx={rippleCx} cy={rippleCy} colour={swatch.css} />
         )}
       </AnimatePresence>
-    </motion.g>
+    </>
   );
 }
 
 /**
- * Single 600ms ring that expands from a wedge centroid and fades out.
- * Mounted via AnimatePresence; unmounts cleanly on round transition.
+ * Single 600ms ring that expands from the splash centroid and fades.
+ * Lives at the SVG root so its transform isn't fighting the splash's.
  */
 function Ripple({ cx, cy, colour }: { cx: number; cy: number; colour: string }) {
   return (
     <motion.circle
       cx={cx}
       cy={cy}
-      r={8}
+      r={40}
       fill="none"
       stroke={colour}
-      strokeWidth={2}
-      initial={{ scale: 1, opacity: 0.6 }}
-      animate={{ scale: 4, opacity: 0 }}
+      strokeWidth={10}
+      initial={{ scale: 1, opacity: 0.55 }}
+      animate={{ scale: 3, opacity: 0 }}
       exit={{ opacity: 0 }}
       transition={{ duration: 0.6, ease: "easeOut" }}
-      style={{ transformOrigin: `${cx}px ${cy}px` }}
+      style={{ transformBox: "fill-box", transformOrigin: "center" }}
       pointerEvents="none"
     />
   );
 }
 
 /**
- * Loading skeleton: six dashed wedges in the same layout, dimmed and
- * pulsing. Used while the first round is being fetched.
+ * Loading skeleton: six splash silhouettes in the same arrangement,
+ * muted and pulsing. Used while the first round is being fetched.
  */
 export function RadialPickerSkeleton() {
-  const paths = useMemo(
-    () =>
-      Array.from({ length: 6 }, (_, i) =>
-        buildSplashPath(i * SECTOR_DEG - 90, INNER_R, OUTER_R, SECTOR_HALF_SPAN),
-      ),
-    [],
-  );
-
   return (
     <div className="relative mx-auto aspect-square w-full max-w-72">
       <svg
-        viewBox="-50 -50 100 100"
-        className="absolute inset-0 size-full animate-pulse"
+        viewBox={`0 0 ${VIEW_SIZE} ${VIEW_SIZE}`}
+        className={cn("absolute inset-0 size-full animate-pulse")}
         aria-hidden="true"
       >
-        {paths.map((d, i) => (
-          <path
+        {Array.from({ length: 6 }, (_, i) => {
+          const rotationDeg = i * 60 + ROTATION_OFFSET;
+          const transform = `rotate(${rotationDeg} ${CENTER} ${CENTER}) translate(${CENTROID_X} ${CENTROID_Y}) scale(${GAP_SCALE}) translate(${-CENTROID_X} ${-CENTROID_Y})`;
+          return (
             // biome-ignore lint/suspicious/noArrayIndexKey: stable skeleton placeholders
-            key={i}
-            d={d}
-            className={cn("fill-muted/40 stroke-border/60")}
-            strokeWidth={0.5}
-            strokeDasharray="2 2"
-          />
-        ))}
+            <g key={i} transform={transform}>
+              <path d={SPLASH_PATH} className="fill-muted/40" />
+            </g>
+          );
+        })}
       </svg>
     </div>
   );
-}
-
-/**
- * Build a cubic-Bezier ink-splash blob for one sector.
- *
- * Four anchor points trace the petal clockwise (in SVG y-down coords):
- *   A0 = inner tip (small, near the centre)
- *   A1 = right shoulder (off-axis, the fat side bulge)
- *   A2 = outer tip (rounded splash head at the rim)
- *   A3 = left shoulder (mirror of A1)
- *
- * Between every pair of anchors sits a cubic Bezier whose tangent
- * vectors at start/end are *aligned with the boundary direction* (perp
- * to radial at the on-axis anchors, radial at the shoulder anchors).
- * This produces a smooth blob with no visible corners — the rim bulges
- * outward, the inner end stays small, and the sides curve fluidly.
- *
- * Tangent magnitudes (INNER_BULGE, OUTER_BULGE) control how *fat* each
- * curve gets. Bigger → more dramatic splash; smaller → tighter wedge.
- */
-function buildSplashPath(
-  centerDeg: number,
-  innerR: number,
-  outerR: number,
-  halfSpan: number,
-): string {
-  const c = (centerDeg * Math.PI) / 180;
-  const h = (halfSpan * Math.PI) / 180;
-  const shoulderR = innerR + (outerR - innerR) * SHOULDER_FRACTION;
-
-  const cosC = Math.cos(c);
-  const sinC = Math.sin(c);
-  const cosCH = Math.cos(c + h);
-  const sinCH = Math.sin(c + h);
-  const cosCmH = Math.cos(c - h);
-  const sinCmH = Math.sin(c - h);
-
-  // Anchors
-  const A0 = { x: innerR * cosC, y: innerR * sinC };
-  const A1 = { x: shoulderR * cosCH, y: shoulderR * sinCH };
-  const A2 = { x: outerR * cosC, y: outerR * sinC };
-  const A3 = { x: shoulderR * cosCmH, y: shoulderR * sinCmH };
-
-  // Unit tangent vectors. `perp` is +90° from radial (the "clockwise"
-  // boundary direction at the on-axis anchors); `radPlus` and `radMinus`
-  // are the outward radials at the right and left shoulders.
-  const perp = { x: -sinC, y: cosC };
-  const radPlus = { x: cosCH, y: sinCH };
-  const radMinus = { x: cosCmH, y: sinCmH };
-
-  // Tangent magnitudes — these set the bulge.
-  const tIn = (shoulderR - innerR) * INNER_BULGE;
-  const tOut = (outerR - shoulderR) * OUTER_BULGE;
-
-  // Cubic Bezier control points. For each segment from P0→P3, the curve
-  // leaves P0 in direction +tangent_at_P0 and arrives at P3 from
-  // direction +tangent_at_P3, so:
-  //   C1 = P0 + tangent_at_P0 * length
-  //   C2 = P3 - tangent_at_P3 * length
-
-  // A0 → A1: leaves perpendicular (clockwise), arrives radially outward
-  const C01a = { x: A0.x + perp.x * tIn, y: A0.y + perp.y * tIn };
-  const C01b = { x: A1.x - radPlus.x * tIn, y: A1.y - radPlus.y * tIn };
-
-  // A1 → A2: leaves radially outward, arrives perpendicular (still CW)
-  const C12a = { x: A1.x + radPlus.x * tOut, y: A1.y + radPlus.y * tOut };
-  const C12b = { x: A2.x + perp.x * tOut, y: A2.y + perp.y * tOut };
-
-  // A2 → A3: leaves perpendicular (-CW), arrives radially inward
-  const C23a = { x: A2.x - perp.x * tOut, y: A2.y - perp.y * tOut };
-  const C23b = { x: A3.x + radMinus.x * tOut, y: A3.y + radMinus.y * tOut };
-
-  // A3 → A0: leaves radially inward, arrives perpendicular (back to start)
-  const C30a = { x: A3.x - radMinus.x * tIn, y: A3.y - radMinus.y * tIn };
-  const C30b = { x: A0.x - perp.x * tIn, y: A0.y - perp.y * tIn };
-
-  return [
-    `M ${A0.x.toFixed(2)} ${A0.y.toFixed(2)}`,
-    `C ${C01a.x.toFixed(2)} ${C01a.y.toFixed(2)} ${C01b.x.toFixed(2)} ${C01b.y.toFixed(2)} ${A1.x.toFixed(2)} ${A1.y.toFixed(2)}`,
-    `C ${C12a.x.toFixed(2)} ${C12a.y.toFixed(2)} ${C12b.x.toFixed(2)} ${C12b.y.toFixed(2)} ${A2.x.toFixed(2)} ${A2.y.toFixed(2)}`,
-    `C ${C23a.x.toFixed(2)} ${C23a.y.toFixed(2)} ${C23b.x.toFixed(2)} ${C23b.y.toFixed(2)} ${A3.x.toFixed(2)} ${A3.y.toFixed(2)}`,
-    `C ${C30a.x.toFixed(2)} ${C30a.y.toFixed(2)} ${C30b.x.toFixed(2)} ${C30b.y.toFixed(2)} ${A0.x.toFixed(2)} ${A0.y.toFixed(2)}`,
-    "Z",
-  ].join(" ");
 }

@@ -31,17 +31,36 @@ const parser = new XMLParser({
 
 /**
  * Fetch and parse Project Gutenberg's RDF metadata for a single book.
- * Returns `null` on network error, 4xx/5xx response, or malformed XML.
+ * Returns `null` on persistent network failure, 4xx response, or malformed
+ * XML. Retries with exponential backoff on 5xx + network errors — PG's
+ * mirror is occasionally flaky at higher concurrencies, and one transient
+ * 503 is enough to silently drop a book from the seed run otherwise.
  */
-export async function fetchBookMeta(gutenbergId: number): Promise<GutenbergBookMeta | null> {
-  try {
-    const res = await fetch(RDF_URL(gutenbergId));
-    if (!res.ok) return null;
-    const xml = await res.text();
-    return parseGutenbergRdf(xml, gutenbergId);
-  } catch {
-    return null;
+export async function fetchBookMeta(
+  gutenbergId: number,
+  options: { maxRetries?: number; backoffMs?: number } = {},
+): Promise<GutenbergBookMeta | null> {
+  const maxRetries = options.maxRetries ?? 2;
+  const backoffMs = options.backoffMs ?? 750;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(RDF_URL(gutenbergId));
+      if (res.ok) {
+        const xml = await res.text();
+        return parseGutenbergRdf(xml, gutenbergId);
+      }
+      // 4xx — book genuinely missing, don't bother retrying.
+      if (res.status >= 400 && res.status < 500) return null;
+      // 5xx — fall through to retry.
+    } catch {
+      // Network / timeout — fall through to retry.
+    }
+    if (attempt < maxRetries) {
+      await new Promise((r) => setTimeout(r, backoffMs * 2 ** attempt));
+    }
   }
+  return null;
 }
 
 /**
@@ -78,8 +97,23 @@ type RdfDocument = {
 
 type RdfEbook = {
   title?: RdfTextNode;
+  // dcterms:* — the canonical Dublin Core predicates.
   creator?: RdfCreator | RdfCreator[];
   editor?: RdfCreator | RdfCreator[];
+  // marcrel:* — Library-of-Congress MARC relator codes. PG uses these
+  // when the contributor isn't a canonical "author" of the work:
+  //   aut = author (rare, usually canonical creator covers it)
+  //   edt = editor (anthologies, collected works)
+  //   trl = translator (works originally in another language)
+  //   ctb = contributor (one of many writers in a collection)
+  //   com = compiler
+  // `removeNSPrefix: true` on the parser strips the `marcrel:` prefix,
+  // so they show up here as bare keys.
+  aut?: RdfCreator | RdfCreator[];
+  edt?: RdfCreator | RdfCreator[];
+  trl?: RdfCreator | RdfCreator[];
+  ctb?: RdfCreator | RdfCreator[];
+  com?: RdfCreator | RdfCreator[];
   language?: RdfDescriptionWrapper;
   subject?: RdfDescriptionWrapper | RdfDescriptionWrapper[];
 };
@@ -103,15 +137,32 @@ type RdfDescriptionWrapper = {
 type RdfTextNode = string | number | { "#text"?: string | number };
 
 function extractAuthors(ebook: RdfEbook): GutenbergAuthor[] {
-  const raw = ebook.creator ?? ebook.editor;
-  if (!raw) return [];
-  const arr = Array.isArray(raw) ? raw : [raw];
-  return arr
-    .map((c) => {
-      const agent = "agent" in c ? c.agent : (c as RdfAgent);
-      return parseAgent(agent);
-    })
-    .filter((a): a is GutenbergAuthor => a !== null);
+  // Walk the relator predicates in order of canonical authorship and
+  // return the first list of agents we successfully parse. Without
+  // this fallback, translators-only works (e.g. Cormac the Skald #265,
+  // Song of Roland #391) and anthology editors (e.g. Modern Verse
+  // #1165) silently come back author-less and fail to ingest.
+  const sources: Array<RdfCreator | RdfCreator[] | undefined> = [
+    ebook.creator, // dcterms:creator
+    ebook.aut, // marcrel:aut
+    ebook.editor, // dcterms:editor
+    ebook.edt, // marcrel:edt
+    ebook.trl, // marcrel:trl
+    ebook.ctb, // marcrel:ctb
+    ebook.com, // marcrel:com
+  ];
+  for (const raw of sources) {
+    if (!raw) continue;
+    const arr = Array.isArray(raw) ? raw : [raw];
+    const authors = arr
+      .map((c) => {
+        const agent = "agent" in c ? c.agent : (c as RdfAgent);
+        return parseAgent(agent);
+      })
+      .filter((a): a is GutenbergAuthor => a !== null);
+    if (authors.length > 0) return authors;
+  }
+  return [];
 }
 
 function parseAgent(agent: RdfAgent | undefined): GutenbergAuthor | null {

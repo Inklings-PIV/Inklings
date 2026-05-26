@@ -248,7 +248,7 @@ function SwatchRound({
   const isRevealed = state.kind === "revealed";
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
       <Smudge excerpt={round?.excerpt} ref={smudgeRef} roundKey={round?.roundId ?? "loading"} />
       <Card>
         <CardHeader>
@@ -444,7 +444,7 @@ function WheelRound({
   const pickMarker = pick ? polarToOffsetPercent(pick.hue, pick.saturation) : null;
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
+    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
       <Smudge excerpt={round?.excerpt} ref={smudgeRef} roundKey={round?.roundId ?? "loading"} />
       <Card>
         <CardHeader>
@@ -706,7 +706,7 @@ function TwinRound({
 
   return (
     <div className="grid gap-6">
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <Smudge
           excerpt={round?.excerptA}
           variant="left"

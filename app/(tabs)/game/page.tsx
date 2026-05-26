@@ -256,8 +256,8 @@ function SwatchRound({
   return (
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
       <Smudge excerpt={round?.excerpt} ref={smudgeRef} roundKey={round?.roundId ?? "loading"} />
-      <Card>
-        <CardHeader>
+      <Card className="py-3 sm:py-6">
+        <CardHeader className="px-3 sm:px-6">
           <CardTitle className="text-base">Pick a swatch</CardTitle>
           <CardDescription>
             {!round
@@ -269,7 +269,7 @@ function SwatchRound({
                 : "Which hue belongs to this smudge?"}
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col gap-4">
+        <CardContent className="flex flex-col gap-4 px-3 sm:px-6">
           {!round ? (
             <RadialPickerSkeleton />
           ) : (

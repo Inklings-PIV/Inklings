@@ -1,12 +1,14 @@
 "use client";
 
-import { Check, Cloud, CloudOff, Loader2, Sparkles, X } from "lucide-react";
+import { AlignLeft, Check, Cloud, CloudOff, Columns2, Loader2, Sparkles, X } from "lucide-react";
 import { useEffect, useState, useTransition } from "react";
 import { Editor } from "@/components/quill/editor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { hueFromHSL } from "@/lib/colour/placeholder";
+import type { RewriteSegment } from "@/lib/quill/diff";
+import { cn } from "@/lib/utils";
 import {
   deleteCloudDraft,
   deriveTextColour,
@@ -237,7 +239,6 @@ export default function QuillPage() {
 
       {mode === "target" && (rewrite || rewriteError || isRewriting) && (
         <RewritePanel
-          original={draft}
           rewrite={rewrite}
           isPending={isRewriting}
           error={rewriteError}
@@ -355,32 +356,48 @@ function TargetPicker({
   );
 }
 
+type DiffView = "split" | "inline";
+
 function RewritePanel({
-  original,
   rewrite,
   isPending,
   error,
   onAccept,
   onReject,
 }: {
-  original: string;
   rewrite: TargetRewrite | null;
   isPending: boolean;
   error: string | null;
   onAccept: () => void;
   onReject: () => void;
 }) {
+  // Split shows original | rewrite side by side; inline weaves removals and
+  // additions into one column. Split is the default — it answers "what did it
+  // do?" at a glance; inline is for readers who want to trace every edit.
+  const [view, setView] = useState<DiffView>("split");
+
   return (
     <Card className="mt-6 bg-card/60">
       <CardContent className="flex flex-col gap-4 p-6">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
             Suggested rewrite
           </h2>
           {!isPending && rewrite && (
-            <span className="text-[11px] italic text-muted-foreground">
-              Accept replaces your draft. Reject keeps it.
-            </span>
+            <ToggleGroup
+              type="single"
+              value={view}
+              onValueChange={(v) => v && setView(v as DiffView)}
+              variant="outline"
+              size="sm"
+            >
+              <ToggleGroupItem value="split" className="gap-1.5 text-xs">
+                <Columns2 className="size-3.5" /> Side-by-side
+              </ToggleGroupItem>
+              <ToggleGroupItem value="inline" className="gap-1.5 text-xs">
+                <AlignLeft className="size-3.5" /> Inline diff
+              </ToggleGroupItem>
+            </ToggleGroup>
           )}
         </div>
 
@@ -392,22 +409,8 @@ function RewritePanel({
           <p className="text-xs italic text-destructive">{error}</p>
         ) : rewrite ? (
           <>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <h3 className="text-[10px] tracking-wider text-muted-foreground uppercase">
-                  Original
-                </h3>
-                <p className="mt-2 font-serif text-base leading-relaxed whitespace-pre-wrap text-ink-deep/70">
-                  {plainText(original)}
-                </p>
-              </div>
-              <div>
-                <h3 className="text-[10px] tracking-wider text-ink-bleed uppercase">Nudge</h3>
-                <p className="mt-2 font-serif text-base leading-relaxed whitespace-pre-wrap text-ink-deep">
-                  {rewrite.rewrite}
-                </p>
-              </div>
-            </div>
+            <DiffBody diff={rewrite.diff} view={view} />
+            <DiffLegend />
             <div className="flex flex-wrap items-center justify-end gap-2">
               <Button variant="outline" size="sm" onClick={onReject}>
                 <X className="size-4" /> Keep original
@@ -423,16 +426,92 @@ function RewritePanel({
   );
 }
 
-function plainText(html: string): string {
-  return html
-    .replace(/<\/?(p|br|div|h[1-6]|li)[^>]*>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+/**
+ * Renders the structured rewrite diff. `split` reconstructs the original (same +
+ * removed) and the rewrite (same + added) into two columns; `inline` weaves the
+ * whole diff into one column. Added text glows green, removed text is struck
+ * through in rose — the green/pink language from the pitch. Spans transition
+ * their tint so toggling views feels like one surface re-settling, not a redraw.
+ */
+function DiffBody({ diff, view }: { diff: RewriteSegment[]; view: DiffView }) {
+  if (view === "inline") {
+    return (
+      <div className="font-serif text-base leading-relaxed text-ink-deep">
+        {diff.map((seg, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: diff is static and never reordered
+          <DiffSpan key={`i-${i}`} seg={seg} />
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-4 md:grid-cols-2">
+      <div>
+        <h3 className="text-[10px] tracking-wider text-muted-foreground uppercase">Original</h3>
+        <p className="mt-2 font-serif text-base leading-relaxed text-ink-deep/70">
+          {diff
+            .filter((s) => s.op !== "add")
+            .map((seg, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: diff is static and never reordered
+              <DiffSpan key={`o-${i}`} seg={seg} side="original" />
+            ))}
+        </p>
+      </div>
+      <div>
+        <h3 className="text-[10px] tracking-wider text-ink-bleed uppercase">Nudge</h3>
+        <p className="mt-2 font-serif text-base leading-relaxed text-ink-deep">
+          {diff
+            .filter((s) => s.op !== "remove")
+            .map((seg, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: diff is static and never reordered
+              <DiffSpan key={`r-${i}`} seg={seg} side="rewrite" />
+            ))}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * One diff segment. In a single-side column (`side` set) the opposite op never
+ * arrives, so we only ever tint the one that belongs there; in the inline view
+ * (`side` undefined) both adds and removes are tinted together.
+ */
+function DiffSpan({ seg, side }: { seg: RewriteSegment; side?: "original" | "rewrite" }) {
+  const base = "transition-colors duration-200 ease-out";
+  if (seg.op === "add" && side !== "original") {
+    return (
+      <span className={cn(base, "rounded-[3px] bg-emerald-500/12 px-0.5 text-emerald-700")}>
+        {seg.text}
+      </span>
+    );
+  }
+  if (seg.op === "remove" && side !== "rewrite") {
+    return (
+      <span
+        className={cn(base, "rounded-[3px] bg-rose-500/12 px-0.5 text-rose-700/80 line-through")}
+      >
+        {seg.text}
+      </span>
+    );
+  }
+  return <span>{seg.text}</span>;
+}
+
+function DiffLegend() {
+  return (
+    <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
+      <span className="inline-flex items-center gap-1.5">
+        <span className="size-2.5 rounded-[3px] bg-rose-500/30" aria-hidden="true" />
+        Removed or toned down
+      </span>
+      <span className="inline-flex items-center gap-1.5">
+        <span className="size-2.5 rounded-[3px] bg-emerald-500/30" aria-hidden="true" />
+        Added or emphasised
+      </span>
+    </div>
+  );
 }
 
 function escapeHtml(s: string): string {

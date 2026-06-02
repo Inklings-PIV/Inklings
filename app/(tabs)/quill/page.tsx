@@ -13,13 +13,19 @@ import {
   Wind,
   X,
 } from "lucide-react";
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { Editor } from "@/components/quill/editor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { hueFromHSL } from "@/lib/colour/placeholder";
-import type { RewriteNudge, RewriteSegment } from "@/lib/quill/diff";
+import {
+  applyDecisions,
+  type DiffToken,
+  type RewriteNudge,
+  type RewriteSegment,
+  toDiffTokens,
+} from "@/lib/quill/diff";
 import { cn } from "@/lib/utils";
 import {
   deleteCloudDraft,
@@ -164,11 +170,11 @@ export default function QuillPage() {
     });
   };
 
-  const acceptRewrite = () => {
-    if (!rewrite) return;
-    // Wrap each non-empty line in <p>…</p> so TipTap renders paragraphs
-    // properly when it remounts. Claude returns plain text with newlines.
-    const html = rewrite.rewrite
+  // Receives the text the writer chose to apply — either the full rewrite or
+  // only the changes they accepted (B4 ownership). Wrap each non-empty line in
+  // <p>…</p> so TipTap renders paragraphs properly when it remounts.
+  const acceptRewrite = (text: string) => {
+    const html = text
       .split(/\n\s*\n+/)
       .map((p) => p.trim())
       .filter(Boolean)
@@ -370,6 +376,8 @@ function TargetPicker({
 
 type DiffView = "split" | "inline";
 
+const EMPTY_DIFF: RewriteSegment[] = [];
+
 function RewritePanel({
   rewrite,
   isPending,
@@ -380,13 +388,41 @@ function RewritePanel({
   rewrite: TargetRewrite | null;
   isPending: boolean;
   error: string | null;
-  onAccept: () => void;
+  onAccept: (text: string) => void;
   onReject: () => void;
 }) {
   // Split shows original | rewrite side by side; inline weaves removals and
-  // additions into one column. Split is the default — it answers "what did it
-  // do?" at a glance; inline is for readers who want to trace every edit.
+  // additions into one column where each change can be taken or left.
   const [view, setView] = useState<DiffView>("split");
+
+  const diff = rewrite?.diff ?? EMPTY_DIFF;
+  const tokens = useMemo(() => toDiffTokens(diff), [diff]);
+  const changeIndices = useMemo(
+    () => tokens.filter((t) => t.kind === "change").map((t) => t.index),
+    [tokens],
+  );
+
+  // Per-change accept set — B4 ownership. Start with every change accepted (so
+  // the default "apply" equals the full rewrite); the writer deselects the ones
+  // they want to keep in their own voice. Reset whenever a new rewrite lands.
+  const [accepted, setAccepted] = useState<Set<number>>(new Set());
+  useEffect(() => {
+    setAccepted(new Set(changeIndices));
+  }, [changeIndices]);
+
+  const toggleChange = (index: number) => {
+    setAccepted((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  };
+
+  const total = changeIndices.length;
+  const acceptedCount = changeIndices.filter((i) => accepted.has(i)).length;
+  const applyLabel =
+    acceptedCount === total ? "Use the rewrite" : `Apply ${acceptedCount} of ${total}`;
 
   return (
     <Card className="mt-6 bg-card/60">
@@ -421,21 +457,108 @@ function RewritePanel({
           <p className="text-xs italic text-destructive">{error}</p>
         ) : rewrite ? (
           <>
-            <DiffBody diff={rewrite.diff} view={view} />
-            <DiffLegend />
+            {view === "inline" ? (
+              <InteractiveDiff tokens={tokens} accepted={accepted} onToggle={toggleChange} />
+            ) : (
+              <DiffBody diff={rewrite.diff} view="split" />
+            )}
+            <DiffLegend
+              hint={
+                view === "split"
+                  ? "Switch to Inline diff to keep or drop each change individually."
+                  : "Click any change to keep it in your own words."
+              }
+            />
             {rewrite.nudges.length > 0 && <NudgesApplied nudges={rewrite.nudges} />}
             <div className="flex flex-wrap items-center justify-end gap-2">
               <Button variant="outline" size="sm" onClick={onReject}>
                 <X className="size-4" /> Keep original
               </Button>
-              <Button size="sm" onClick={onAccept}>
-                <Check className="size-4" /> Use the nudge
+              <Button
+                size="sm"
+                disabled={acceptedCount === 0}
+                onClick={() => onAccept(applyDecisions(diff, accepted))}
+              >
+                <Check className="size-4" /> {applyLabel}
               </Button>
             </div>
           </>
         ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * The inline diff as an editable decision surface (B4 ownership). Unchanged
+ * text is plain; each change is a button the writer toggles. Accepted changes
+ * show the rewrite's words in emerald; rejected ones fall back to the original
+ * so the prose stays in the writer's voice. Nothing is committed until they
+ * apply — agency stays with the author, never full-text regeneration.
+ */
+function InteractiveDiff({
+  tokens,
+  accepted,
+  onToggle,
+}: {
+  tokens: DiffToken[];
+  accepted: Set<number>;
+  onToggle: (index: number) => void;
+}) {
+  return (
+    <p className="font-serif text-base leading-relaxed text-ink-deep">
+      {tokens.map((token, i) =>
+        token.kind === "same" ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: tokens are static and never reordered
+          <span key={`s-${i}`}>{token.text}</span>
+        ) : (
+          <ChangeChip
+            key={`c-${token.index}`}
+            change={token}
+            isAccepted={accepted.has(token.index)}
+            onToggle={() => onToggle(token.index)}
+          />
+        ),
+      )}
+    </p>
+  );
+}
+
+function ChangeChip({
+  change,
+  isAccepted,
+  onToggle,
+}: {
+  change: { removed: string; added: string };
+  isAccepted: boolean;
+  onToggle: () => void;
+}) {
+  const { removed, added } = change;
+  // Always show something toggleable: an accepted insertion shows the new words;
+  // a rejected one shows the original; the degenerate empty side falls back to
+  // the other, struck through, so the change can still be flipped back.
+  const accepted = added !== "" ? { text: added, struck: false } : { text: removed, struck: true };
+  const rejected =
+    removed !== "" ? { text: removed, struck: false } : { text: added, struck: true };
+  const shown = isAccepted ? accepted : rejected;
+
+  return (
+    <button
+      type="button"
+      aria-pressed={isAccepted}
+      title={isAccepted ? "Keep your original wording here" : "Apply this change"}
+      onClick={onToggle}
+      className={cn(
+        "rounded-[3px] px-0.5 align-baseline transition-colors duration-150 ease-out",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+        shown.struck && "line-through",
+        isAccepted
+          ? "bg-emerald-500/12 text-emerald-700 hover:bg-emerald-500/20"
+          : "bg-transparent text-ink-deep/70 underline decoration-dotted decoration-ink-deep/30 underline-offset-2 hover:bg-rose-500/10 hover:text-rose-700/80",
+      )}
+    >
+      {shown.text || "·"}
+    </button>
   );
 }
 
@@ -554,9 +677,9 @@ function NudgesApplied({ nudges }: { nudges: RewriteNudge[] }) {
   );
 }
 
-function DiffLegend() {
+function DiffLegend({ hint }: { hint?: string }) {
   return (
-    <div className="flex items-center gap-4 text-[11px] text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
       <span className="inline-flex items-center gap-1.5">
         <span className="size-2.5 rounded-[3px] bg-rose-500/30" aria-hidden="true" />
         Removed or toned down
@@ -565,6 +688,7 @@ function DiffLegend() {
         <span className="size-2.5 rounded-[3px] bg-emerald-500/30" aria-hidden="true" />
         Added or emphasised
       </span>
+      {hint && <span className="italic">{hint}</span>}
     </div>
   );
 }

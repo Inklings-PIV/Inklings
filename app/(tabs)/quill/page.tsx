@@ -2,7 +2,9 @@
 
 import { Check, Cloud, CloudOff, Loader2, Sparkles, X } from "lucide-react";
 import { useEffect, useState, useTransition } from "react";
+import { DiffActions, DiffText } from "@/components/quill/diff-view";
 import { Editor } from "@/components/quill/editor";
+import { useDiff } from "@/components/quill/use-diff";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -46,6 +48,11 @@ export default function QuillPage() {
   const [rewrite, setRewrite] = useState<TargetRewrite | null>(null);
   const [rewriteError, setRewriteError] = useState<string | null>(null);
   const [isRewriting, startRewrite] = useTransition();
+  const [viewMode, setViewMode] = useState<"diff" | "side-by-side">("diff");
+
+  // Diff state — computed from the current draft and the active rewrite.
+  // When rewrite is null we pass empty strings; useDiff handles that gracefully.
+  const diff = useDiff(rewrite ? plainText(draft) : "", rewrite?.rewrite ?? "");
   // Bumping this remounts the Editor with new initialContent — TipTap
   // doesn't expose a reactive `value` prop and remount is the least
   // invasive way to replace the buffer when the user accepts a rewrite
@@ -150,11 +157,11 @@ export default function QuillPage() {
     });
   };
 
-  const acceptRewrite = () => {
-    if (!rewrite) return;
-    // Wrap each non-empty line in <p>…</p> so TipTap renders paragraphs
-    // properly when it remounts. Claude returns plain text with newlines.
-    const html = rewrite.rewrite
+  const acceptRewrite = (resolvedText: string) => {
+    // Wrap each non-empty paragraph in <p>…</p> so TipTap renders correctly
+    // when it remounts. Both full rewrites and partial-accept merges arrive
+    // as plain text with double-newline paragraph breaks.
+    const html = resolvedText
       .split(/\n\s*\n+/)
       .map((p) => p.trim())
       .filter(Boolean)
@@ -201,12 +208,44 @@ export default function QuillPage() {
             className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-ink-bleed to-transparent opacity-60"
           />
           <CardContent className="p-6 sm:p-8">
-            <Editor
-              key={editorKey}
-              initialContent={draft}
-              placeholder="Write a paragraph and watch the ink reveal itself…"
-              onChange={setDraft}
-            />
+            {mode === "target" && rewrite && viewMode === "diff" ? (
+              <div className="flex flex-col gap-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
+                    Suggested rewrite
+                  </h2>
+                  <ToggleGroup
+                    type="single"
+                    value={viewMode}
+                    onValueChange={(v) => v && setViewMode(v as "diff" | "side-by-side")}
+                    variant="outline"
+                    size="sm"
+                  >
+                    <ToggleGroupItem value="diff">Inline diff</ToggleGroupItem>
+                    <ToggleGroupItem value="side-by-side">Side by side</ToggleGroupItem>
+                  </ToggleGroup>
+                </div>
+                <DiffActions
+                  resolvedCount={diff.resolvedCount}
+                  totalChanges={diff.totalChanges}
+                  onApply={() => acceptRewrite(diff.resolvedText())}
+                  onAcceptAll={() => acceptRewrite(rewrite.rewrite)}
+                  onReject={rejectRewrite}
+                />
+                <DiffText
+                  segments={diff.segments}
+                  states={diff.states}
+                  setHunkState={diff.setHunkState}
+                />
+              </div>
+            ) : (
+              <Editor
+                key={editorKey}
+                initialContent={draft}
+                placeholder="Write a paragraph and watch the ink reveal itself…"
+                onChange={setDraft}
+              />
+            )}
           </CardContent>
         </Card>
 
@@ -235,16 +274,19 @@ export default function QuillPage() {
         </aside>
       </div>
 
-      {mode === "target" && (rewrite || rewriteError || isRewriting) && (
-        <RewritePanel
-          original={draft}
-          rewrite={rewrite}
-          isPending={isRewriting}
-          error={rewriteError}
-          onAccept={acceptRewrite}
-          onReject={rejectRewrite}
-        />
-      )}
+      {mode === "target" &&
+        (isRewriting || rewriteError || (rewrite && viewMode === "side-by-side")) && (
+          <RewritePanel
+            original={draft}
+            rewrite={rewrite}
+            isPending={isRewriting}
+            error={rewriteError}
+            viewMode={viewMode}
+            setViewMode={setViewMode}
+            onAccept={acceptRewrite}
+            onReject={rejectRewrite}
+          />
+        )}
     </div>
   );
 }
@@ -360,6 +402,8 @@ function RewritePanel({
   rewrite,
   isPending,
   error,
+  viewMode,
+  setViewMode,
   onAccept,
   onReject,
 }: {
@@ -367,20 +411,29 @@ function RewritePanel({
   rewrite: TargetRewrite | null;
   isPending: boolean;
   error: string | null;
-  onAccept: () => void;
+  viewMode: "diff" | "side-by-side";
+  setViewMode: (v: "diff" | "side-by-side") => void;
+  onAccept: (resolvedText: string) => void;
   onReject: () => void;
 }) {
   return (
     <Card className="mt-6 bg-card/60">
       <CardContent className="flex flex-col gap-4 p-6">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
             Suggested rewrite
           </h2>
           {!isPending && rewrite && (
-            <span className="text-[11px] italic text-muted-foreground">
-              Accept replaces your draft. Reject keeps it.
-            </span>
+            <ToggleGroup
+              type="single"
+              value={viewMode}
+              onValueChange={(v) => v && setViewMode(v as "diff" | "side-by-side")}
+              variant="outline"
+              size="sm"
+            >
+              <ToggleGroupItem value="diff">Inline diff</ToggleGroupItem>
+              <ToggleGroupItem value="side-by-side">Side by side</ToggleGroupItem>
+            </ToggleGroup>
           )}
         </div>
 
@@ -412,7 +465,7 @@ function RewritePanel({
               <Button variant="outline" size="sm" onClick={onReject}>
                 <X className="size-4" /> Keep original
               </Button>
-              <Button size="sm" onClick={onAccept}>
+              <Button size="sm" onClick={() => onAccept(rewrite.rewrite)}>
                 <Check className="size-4" /> Use the nudge
               </Button>
             </div>

@@ -1,21 +1,20 @@
 "use server";
 
 import { anthropic } from "@ai-sdk/anthropic";
-import { generateObject, generateText } from "ai";
+import { generateObject } from "ai";
 import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { ensureScribe } from "@/lib/auth/scribe";
 import { getDb, schema } from "@/lib/db";
+import { rewriteFromDiff, type TargetRewrite } from "@/lib/quill/diff";
+
+export type { TargetRewrite } from "@/lib/quill/diff";
 
 export type TextColour = {
   hue: number;
   saturation: number;
   lightness: number;
   justification: string;
-};
-
-export type TargetRewrite = {
-  rewrite: string;
 };
 
 const ResponseSchema = z.object({
@@ -87,14 +86,52 @@ Rewrite the draft so it FEELS like the target while preserving:
 - proper grammar and punctuation
 - the writer's chosen tense and POV
 
-Make changes at the level of word choice, sentence rhythm, image-density, and connective tissue. Don't add new facts, characters, or events. Don't moralise. Don't preface the rewrite with explanation or commentary.
+Make changes at the level of word choice, sentence rhythm, image-density, and connective tissue. Don't add new facts, characters, or events. Don't moralise.
 
-Return ONLY the rewritten prose. No quotes around it, no "Here's the rewrite:" preamble, no trailing notes.`;
+Return your answer as an aligned diff plus a short list of named nudges:
+
+- "diff": an ordered list of text segments that, read together, spell out BOTH the
+  original and the rewrite. Each segment has "op":
+    - "same"   — unchanged text shared by both versions (include the surrounding
+                 untouched words, punctuation and spaces verbatim)
+    - "remove" — text present in the ORIGINAL but cut or toned down
+    - "add"    — text present only in the REWRITE
+  Keep segments tight: wrap only the words that actually changed in remove/add,
+  and put a remove immediately before its replacement add. Preserve all
+  whitespace inside segments so the views read naturally. Concatenating every
+  non-"remove" segment MUST equal the rewritten prose; concatenating every
+  non-"add" segment MUST equal the original prose exactly.
+
+- "nudges": 1–4 named changes you made toward the target, each a short "label"
+  (2–4 words, e.g. "Softened intensity", "Grounded imagery") and a one-line
+  "reason" describing what it did. No periods required.`;
+
+const RewriteResponseSchema = z.object({
+  diff: z
+    .array(
+      z.object({
+        text: z.string(),
+        op: z.enum(["same", "add", "remove"]),
+      }),
+    )
+    .min(1),
+  nudges: z
+    .array(
+      z.object({
+        label: z.string().min(2).max(40),
+        reason: z.string().min(3).max(160),
+      }),
+    )
+    .min(1)
+    .max(4),
+});
 
 /**
  * Asks Claude to rewrite the user's draft toward a free-form target descriptor.
- * Returns just the rewritten text — the client diffs it against the original
- * and lets the user accept or reject.
+ * Returns a structured, explainable rewrite — an aligned word-level diff plus a
+ * list of named nudges — so the client can show green/pink highlighting and a
+ * "Nudges Applied" panel (pitch p7) instead of an opaque text swap. The full
+ * rewrite text is reconstructed from the diff, keeping all three views in sync.
  */
 export async function suggestRewrite(input: {
   text: string;
@@ -105,13 +142,19 @@ export async function suggestRewrite(input: {
   if (countWords(text) < MIN_WORDS) return null;
   if (target.length === 0) return null;
 
-  const { text: rewrite } = await generateText({
+  const { object } = await generateObject({
     model: anthropic("claude-sonnet-4-6"),
+    schema: RewriteResponseSchema,
     system: REWRITE_SYSTEM_PROMPT,
     prompt: `Target: ${target}\n\nOriginal:\n${text}`,
     maxRetries: 2,
   });
-  return { rewrite: rewrite.trim() };
+
+  return {
+    diff: object.diff,
+    nudges: object.nudges,
+    rewrite: rewriteFromDiff(object.diff).trim(),
+  };
 }
 
 // ---------------------------------------------------------------------------

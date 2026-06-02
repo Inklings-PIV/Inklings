@@ -64,3 +64,36 @@ export function toFingerprint(features: ClassicalFeatures): FingerprintMetric[] 
     },
   ];
 }
+
+export type FingerprintComparison = {
+  key: string;
+  label: string;
+  /** Normalised 0..1 bar value for side A. */
+  a: number;
+  /** Normalised 0..1 bar value for side B. */
+  b: number;
+  detailA: string;
+  detailB: string;
+};
+
+/**
+ * Align two fingerprints metric-for-metric so two books (or a draft and a book)
+ * can be overlaid bar-for-bar. Pure; metric order follows {@link toFingerprint}.
+ */
+export function compareFingerprints(
+  a: ClassicalFeatures,
+  b: ClassicalFeatures,
+): FingerprintComparison[] {
+  const fb = new Map(toFingerprint(b).map((m) => [m.key, m]));
+  return toFingerprint(a).map((m) => {
+    const other = fb.get(m.key);
+    return {
+      key: m.key,
+      label: m.label,
+      a: m.value,
+      b: other?.value ?? 0,
+      detailA: m.detail,
+      detailB: other?.detail ?? "—",
+    };
+  });
+}

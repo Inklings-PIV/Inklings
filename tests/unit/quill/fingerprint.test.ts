@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { toFingerprint } from "@/lib/quill/fingerprint";
+import { compareFingerprints, toFingerprint } from "@/lib/quill/fingerprint";
 import type { ClassicalFeatures } from "@/lib/stylometry/classical";
 
 function makeFeatures(overrides: Partial<ClassicalFeatures> = {}): ClassicalFeatures {
@@ -57,5 +57,24 @@ describe("toFingerprint", () => {
   it("clamps extreme values to 1", () => {
     const fp = toFingerprint(makeFeatures({ mtld: 9999 }));
     expect(fp.find((m) => m.key === "richness")?.value).toBe(1);
+  });
+});
+
+describe("compareFingerprints", () => {
+  it("aligns the same metrics for both sides", () => {
+    const cmp = compareFingerprints(makeFeatures(), makeFeatures());
+    expect(cmp.map((c) => c.key)).toEqual(toFingerprint(makeFeatures()).map((m) => m.key));
+  });
+
+  it("identical inputs give equal a and b values", () => {
+    for (const c of compareFingerprints(makeFeatures(), makeFeatures())) {
+      expect(c.a).toBe(c.b);
+    }
+  });
+
+  it("reflects a per-metric difference", () => {
+    const cmp = compareFingerprints(makeFeatures({ mtld: 110 }), makeFeatures({ mtld: 40 }));
+    const rich = cmp.find((c) => c.key === "richness");
+    expect(rich?.a).toBeGreaterThan(rich?.b ?? 1);
   });
 });

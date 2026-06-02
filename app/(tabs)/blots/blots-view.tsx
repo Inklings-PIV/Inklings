@@ -1,11 +1,12 @@
 "use client";
 
-import { ArrowRight, Loader2, Search } from "lucide-react";
+import { ArrowRight, GitCompareArrows, Loader2, Search } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import type { Hand } from "@/app/(tabs)/authors/hands-view";
 import { HandCard } from "@/components/authors/hand-card";
 import { BlotCard } from "@/components/blots/card";
+import { type CompareBook, FingerprintCompare } from "@/components/blots/fingerprint-compare";
 import { SubmitGutenbergDialog } from "@/components/blots/submit-dialog";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -38,6 +39,22 @@ export function BlotsView({ blots }: { blots: Blot[] }) {
   const [mode, setMode] = useState<SearchMode>("text");
   const [vibeOrder, setVibeOrder] = useState<string[] | null>(null);
   const [vibePending, startVibe] = useTransition();
+  const [comparing, setComparing] = useState(false);
+
+  // Books with a real classical fingerprint are the ones we can overlay.
+  const compareBooks = useMemo<CompareBook[]>(
+    () =>
+      blots
+        .filter((b) => b.classical !== null)
+        .map((b) => ({
+          bookId: b.bookId,
+          title: b.title,
+          authorName: b.authorName,
+          classical: b.classical as NonNullable<typeof b.classical>,
+          hue: b.blended ?? b.algorithmic ?? b.llm ?? b.crowd,
+        })),
+    [blots],
+  );
 
   // Debounced vibe search — 500ms idle before we burn an OpenAI embedding call.
   useEffect(() => {
@@ -152,6 +169,20 @@ export function BlotsView({ blots }: { blots: Blot[] }) {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button
+            size="sm"
+            variant={comparing ? "default" : "outline"}
+            disabled={compareBooks.length < 2}
+            aria-pressed={comparing}
+            onClick={() => setComparing((c) => !c)}
+            title={
+              compareBooks.length < 2
+                ? "Need at least two books with a fingerprint"
+                : "Compare two fingerprints"
+            }
+          >
+            <GitCompareArrows className="size-3.5" /> Compare
+          </Button>
           <Button asChild size="sm" variant="outline">
             <Link href="/authors">
               Browse by hand <ArrowRight className="size-3.5" />
@@ -212,6 +243,12 @@ export function BlotsView({ blots }: { blots: Blot[] }) {
           </ToggleGroupItem>
         </ToggleGroup>
       </div>
+
+      {comparing && compareBooks.length >= 2 && (
+        <div className="mt-4">
+          <FingerprintCompare books={compareBooks} />
+        </div>
+      )}
 
       <Separator className="my-6" />
 

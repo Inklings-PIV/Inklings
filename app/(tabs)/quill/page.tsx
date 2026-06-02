@@ -35,6 +35,8 @@ import {
   deriveParagraphHues,
   deriveTextColour,
   loadCloudDraft,
+  nearestAuthors,
+  type StyleNeighbour,
   saveCloudDraft,
   suggestRewrite,
   type TargetRewrite,
@@ -87,6 +89,8 @@ export default function QuillPage() {
   // Live stylometric fingerprint of the draft (style-level). Cheap CPU-only
   // derivation, so we can recompute on the same cadence as the hue readout.
   const [fingerprint, setFingerprint] = useState<FingerprintMetric[] | null>(null);
+  // Corpus authors closest to the draft's fingerprint (style-level, S4).
+  const [neighbours, setNeighbours] = useState<StyleNeighbour[]>([]);
 
   // Hydrate from localStorage on mount. If cloud-save was on, also pull
   // the server-side draft and prefer it when present (cross-device case).
@@ -176,6 +180,20 @@ export default function QuillPage() {
       const features = await deriveDraftStylometry(draft);
       if (!cancelled) setFingerprint(features ? toFingerprint(features) : null);
     }, 700);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [draft]);
+
+  // Debounced nearest-author match — longer 1500 ms window since it reads the
+  // corpus. Empty (too short, or no corpus loaded) hides the card.
+  useEffect(() => {
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      const matches = await nearestAuthors(draft);
+      if (!cancelled) setNeighbours(matches);
+    }, 1500);
     return () => {
       cancelled = true;
       clearTimeout(handle);
@@ -302,6 +320,7 @@ export default function QuillPage() {
             isPending={isPending}
           />
           {fingerprint && <StyleFingerprint metrics={fingerprint} />}
+          {neighbours.length > 0 && <NeighbourAuthors neighbours={neighbours} />}
           <SaveSettings
             cloudSave={cloudSave}
             cloudSavedAt={cloudSavedAt}
@@ -456,6 +475,63 @@ function HueBand({ segments }: { segments: BandSegment[] }) {
 
 function truncate(s: string): string {
   return s.length > 52 ? `${s.slice(0, 52).trimEnd()}…` : s;
+}
+
+/**
+ * The corpus books the writer's prose is stylistically closest to (S4) — the
+ * Quill's bridge into the Inkwell. Each row carries the book's own hue, tying
+ * the match back to the colour language; a closeness bar (inverse of distance)
+ * shows how near each one sits without exposing a raw metric.
+ */
+function NeighbourAuthors({ neighbours }: { neighbours: StyleNeighbour[] }) {
+  // Map distance (0 = identical, ~1+ = far across five 0..1 axes) to a 0..1
+  // closeness for the bar. Clamp so the nearest never reads as a full bar
+  // unless it's an exact match.
+  const closeness = (d: number) => Math.max(0, 1 - d);
+
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-2.5 p-5">
+        <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
+          Closest in the Inkwell
+        </h2>
+        <ul className="flex flex-col gap-2">
+          {neighbours.map((n) => {
+            const css = n.hue
+              ? hueFromHSL(n.hue.hue, n.hue.saturation, n.hue.lightness).css
+              : "var(--ink-faded)";
+            return (
+              <li key={n.bookId} className="flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <span
+                    aria-hidden="true"
+                    className="size-2.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: css }}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-xs text-ink-deep" title={n.title}>
+                    {n.title}
+                  </span>
+                  <span className="shrink-0 text-[11px] text-muted-foreground">{n.authorName}</span>
+                </div>
+                <div className="h-1 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full transition-[width] duration-500 ease-out"
+                    style={{
+                      width: `${Math.max(4, closeness(n.distance) * 100)}%`,
+                      backgroundColor: css,
+                    }}
+                  />
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        <p className="text-[11px] italic leading-snug text-muted-foreground">
+          By classical stylometry — the same distance the Inkwell is laid out on.
+        </p>
+      </CardContent>
+    </Card>
+  );
 }
 
 /**

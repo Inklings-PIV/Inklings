@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { compareFingerprints, toFingerprint } from "@/lib/quill/fingerprint";
+import {
+  compareFingerprints,
+  fingerprintDistance,
+  fingerprintVector,
+  toFingerprint,
+} from "@/lib/quill/fingerprint";
 import type { ClassicalFeatures } from "@/lib/stylometry/classical";
 
 function makeFeatures(overrides: Partial<ClassicalFeatures> = {}): ClassicalFeatures {
@@ -76,5 +81,22 @@ describe("compareFingerprints", () => {
     const cmp = compareFingerprints(makeFeatures({ mtld: 110 }), makeFeatures({ mtld: 40 }));
     const rich = cmp.find((c) => c.key === "richness");
     expect(rich?.a).toBeGreaterThan(rich?.b ?? 1);
+  });
+});
+
+describe("fingerprintVector / fingerprintDistance", () => {
+  it("vector length matches the metric count", () => {
+    expect(fingerprintVector(makeFeatures())).toHaveLength(toFingerprint(makeFeatures()).length);
+  });
+
+  it("distance to self is zero", () => {
+    expect(fingerprintDistance(makeFeatures(), makeFeatures())).toBe(0);
+  });
+
+  it("more similar features are closer than dissimilar ones", () => {
+    const me = makeFeatures({ mtld: 70 });
+    const near = makeFeatures({ mtld: 75 });
+    const far = makeFeatures({ mtld: 20, sentenceLength: { mean: 40, std: 2, p50: 40, p90: 44 } });
+    expect(fingerprintDistance(me, near)).toBeLessThan(fingerprintDistance(me, far));
   });
 });

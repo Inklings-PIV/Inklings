@@ -2,11 +2,13 @@
 
 import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject } from "ai";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { ensureScribe } from "@/lib/auth/scribe";
 import { getDb, schema } from "@/lib/db";
 import { rewriteFromDiff, type TargetRewrite } from "@/lib/quill/diff";
+import { fingerprintDistance } from "@/lib/quill/fingerprint";
 import { type ClassicalFeatures, extractClassical } from "@/lib/stylometry/classical";
 
 export type { TargetRewrite } from "@/lib/quill/diff";
@@ -82,6 +84,66 @@ export async function deriveDraftStylometry(rawText: string): Promise<ClassicalF
   const text = stripHtml(rawText).trim();
   if (countWords(text) < MIN_WORDS) return null;
   return extractClassical(text);
+}
+
+export type StyleNeighbour = {
+  bookId: string;
+  title: string;
+  authorName: string;
+  /** Euclidean fingerprint distance — smaller is closer. */
+  distance: number;
+  hue: { hue: number; saturation: number; lightness: number } | null;
+};
+
+/**
+ * The corpus books whose stylometric fingerprint is closest to the writer's
+ * draft (style-level, S4) — "your prose writes most like these". Reuses the
+ * classical fingerprint distance the Inkwell layout is built on, so the answer
+ * is consistent with the canvas. Returns [] when the draft is too short or no
+ * corpus is loaded.
+ */
+export async function nearestAuthors(rawText: string, limit = 5): Promise<StyleNeighbour[]> {
+  const text = stripHtml(rawText).trim();
+  if (countWords(text) < MIN_WORDS) return [];
+  const mine = extractClassical(text);
+
+  const db = getDb();
+  const blended = alias(schema.bookColours, "blended_colours");
+  const rows = await db
+    .select({
+      bookId: schema.books.id,
+      title: schema.books.title,
+      authorName: schema.authors.name,
+      classical: schema.bookFeatures.classical,
+      h: blended.hue,
+      s: blended.saturation,
+      l: blended.lightness,
+    })
+    .from(schema.books)
+    .innerJoin(schema.authors, eq(schema.books.authorId, schema.authors.id))
+    .leftJoin(schema.bookFeatures, eq(schema.bookFeatures.bookId, schema.books.id))
+    .leftJoin(blended, and(eq(blended.bookId, schema.books.id), eq(blended.source, "blended")))
+    .where(eq(schema.books.status, "ready"));
+
+  return rows
+    .flatMap((r) => {
+      const classical = r.classical as ClassicalFeatures | null;
+      if (!classical) return [];
+      return [
+        {
+          bookId: r.bookId,
+          title: r.title,
+          authorName: r.authorName,
+          distance: fingerprintDistance(mine, classical),
+          hue:
+            r.h != null && r.s != null && r.l != null
+              ? { hue: r.h, saturation: r.s, lightness: r.l }
+              : null,
+        },
+      ];
+    })
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, limit);
 }
 
 function stripHtml(s: string): string {

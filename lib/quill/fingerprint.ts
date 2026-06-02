@@ -65,6 +65,27 @@ export function toFingerprint(features: ClassicalFeatures): FingerprintMetric[] 
   ];
 }
 
+/** The fingerprint as a plain numeric vector (metric order = toFingerprint). */
+export function fingerprintVector(features: ClassicalFeatures): number[] {
+  return toFingerprint(features).map((m) => m.value);
+}
+
+/**
+ * Euclidean distance between two fingerprints in the normalised 0..1 metric
+ * space — small means stylistically alike. Used to find a draft's nearest
+ * authors in the corpus (S4).
+ */
+export function fingerprintDistance(a: ClassicalFeatures, b: ClassicalFeatures): number {
+  const va = fingerprintVector(a);
+  const vb = fingerprintVector(b);
+  let sum = 0;
+  for (let i = 0; i < va.length; i++) {
+    const d = (va[i] ?? 0) - (vb[i] ?? 0);
+    sum += d * d;
+  }
+  return Math.sqrt(sum);
+}
+
 export type FingerprintComparison = {
   key: string;
   label: string;

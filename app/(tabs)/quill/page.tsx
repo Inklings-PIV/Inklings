@@ -13,7 +13,7 @@ import {
   Wind,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Editor } from "@/components/quill/editor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -26,9 +26,11 @@ import {
   type RewriteSegment,
   toDiffTokens,
 } from "@/lib/quill/diff";
+import { splitParagraphs } from "@/lib/quill/paragraphs";
 import { cn } from "@/lib/utils";
 import {
   deleteCloudDraft,
+  deriveParagraphHues,
   deriveTextColour,
   loadCloudDraft,
   saveCloudDraft,
@@ -36,6 +38,8 @@ import {
   type TargetRewrite,
   type TextColour,
 } from "./actions";
+
+type BandSegment = { id: string; text: string; colour: TextColour | null };
 
 const LOCAL_DRAFT_KEY = "inklings-quill-draft";
 const CLOUD_PREF_KEY = "inklings-quill-cloud-save";
@@ -71,6 +75,12 @@ export default function QuillPage() {
   // invasive way to replace the buffer when the user accepts a rewrite
   // or we restore a draft from storage.
   const [editorKey, setEditorKey] = useState(0);
+
+  // EmoArc hue band (B5). Cache hues by paragraph text so a typing burst only
+  // re-derives the block that actually changed; the band shows the arc across
+  // the whole draft in Readout mode.
+  const hueCacheRef = useRef<Record<string, TextColour | null>>({});
+  const [band, setBand] = useState<BandSegment[]>([]);
 
   // Hydrate from localStorage on mount. If cloud-save was on, also pull
   // the server-side draft and prefer it when present (cross-device case).
@@ -153,6 +163,38 @@ export default function QuillPage() {
     };
   }, [draft]);
 
+  // Debounced EmoArc band — 800 ms after the last keystroke, derive a hue per
+  // paragraph (only the uncached ones) and lay them out as an arc. Single-
+  // paragraph drafts fall back to the global swatch, so we only build a band
+  // once there are at least two blocks to compare.
+  useEffect(() => {
+    if (mode !== "readout") return;
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      const paras = splitParagraphs(draft);
+      if (paras.length < 2) {
+        if (!cancelled) setBand([]);
+        return;
+      }
+      const cache = hueCacheRef.current;
+      const missing = paras.filter((p) => !(p in cache));
+      if (missing.length > 0) {
+        const hues = await deriveParagraphHues(missing);
+        missing.forEach((p, i) => {
+          cache[p] = hues[i] ?? null;
+        });
+      }
+      if (cancelled) return;
+      setBand(
+        paras.map((p, i) => ({ id: `${i}:${p.slice(0, 16)}`, text: p, colour: cache[p] ?? null })),
+      );
+    }, 800);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [draft, mode]);
+
   const requestRewrite = () => {
     setRewriteError(null);
     setRewrite(null);
@@ -215,20 +257,23 @@ export default function QuillPage() {
       </header>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_280px]">
-        <Card className="relative overflow-hidden bg-card/60">
-          <div
-            aria-hidden="true"
-            className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-ink-bleed to-transparent opacity-60"
-          />
-          <CardContent className="p-6 sm:p-8">
-            <Editor
-              key={editorKey}
-              initialContent={draft}
-              placeholder="Write a paragraph and watch the ink reveal itself…"
-              onChange={setDraft}
+        <div className="flex flex-col gap-4">
+          {mode === "readout" && band.length >= 2 && <HueBand segments={band} />}
+          <Card className="relative overflow-hidden bg-card/60">
+            <div
+              aria-hidden="true"
+              className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-ink-bleed to-transparent opacity-60"
             />
-          </CardContent>
-        </Card>
+            <CardContent className="p-6 sm:p-8">
+              <Editor
+                key={editorKey}
+                initialContent={draft}
+                placeholder="Write a paragraph and watch the ink reveal itself…"
+                onChange={setDraft}
+              />
+            </CardContent>
+          </Card>
+        </div>
 
         <aside className="flex flex-col gap-4">
           <HueReadout
@@ -326,6 +371,71 @@ function HueReadout({
       </CardContent>
     </Card>
   );
+}
+
+/**
+ * The EmoArc hue band — a horizontal arc of one hue per paragraph, so the
+ * writer sees how the stylistic temperature rises and falls across the whole
+ * draft, not just its average (Amin's "Interactive Emotion Graph"). Hovering a
+ * segment dims the rest and surfaces that paragraph's reading below — the band
+ * is an index into the text, not just decoration.
+ */
+function HueBand({ segments }: { segments: BandSegment[] }) {
+  const [hovered, setHovered] = useState<number | null>(null);
+  const active = hovered != null ? segments[hovered] : null;
+
+  return (
+    <Card className="bg-card/60">
+      <CardContent className="flex flex-col gap-2 p-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">Hue arc</h2>
+          <span className="text-[11px] tabular-nums text-muted-foreground">
+            {segments.length} paragraphs
+          </span>
+        </div>
+        <div className="flex h-9 gap-0.5">
+          {segments.map((seg, i) => {
+            const css = seg.colour
+              ? hueFromHSL(seg.colour.hue, seg.colour.saturation, seg.colour.lightness).css
+              : undefined;
+            return (
+              <button
+                type="button"
+                key={seg.id}
+                onMouseEnter={() => setHovered(i)}
+                onMouseLeave={() => setHovered(null)}
+                onFocus={() => setHovered(i)}
+                onBlur={() => setHovered(null)}
+                aria-label={
+                  seg.colour
+                    ? `Paragraph ${i + 1}: ${seg.colour.justification}`
+                    : `Paragraph ${i + 1}: too short to read`
+                }
+                className={cn(
+                  "h-full flex-1 rounded-[2px] transition-all duration-200 ease-out",
+                  "first:rounded-l-md last:rounded-r-md focus-visible:outline-none",
+                  hovered === i && "z-10 ring-2 ring-ink-deep/25",
+                  hovered != null && hovered !== i && "opacity-40",
+                )}
+                style={{ backgroundColor: css ?? "var(--muted)" }}
+              />
+            );
+          })}
+        </div>
+        <p className="min-h-4 text-[11px] italic leading-snug text-muted-foreground transition-opacity duration-200">
+          {active
+            ? active.colour
+              ? `“${truncate(active.text)}” — ${active.colour.justification}`
+              : `“${truncate(active.text)}” — too short to read`
+            : "Hover the arc to read each paragraph’s hue."}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function truncate(s: string): string {
+  return s.length > 52 ? `${s.slice(0, 52).trimEnd()}…` : s;
 }
 
 function TargetPicker({

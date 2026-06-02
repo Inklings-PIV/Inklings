@@ -60,6 +60,17 @@ export async function deriveTextColour(rawText: string): Promise<TextColour | nu
   return object;
 }
 
+/**
+ * Per-paragraph hues for the EmoArc band (B5). Derives a colour for each
+ * paragraph in parallel so the writer sees the stylistic arc across the text,
+ * not just one global swatch. Paragraphs too short to read return null (the
+ * band renders them neutral). Callers pass only the paragraphs they don't
+ * already have cached, so a typing burst re-derives at most the edited block.
+ */
+export async function deriveParagraphHues(paragraphs: string[]): Promise<(TextColour | null)[]> {
+  return Promise.all(paragraphs.map((p) => deriveTextColour(p)));
+}
+
 function stripHtml(s: string): string {
   return s
     .replace(/<[^>]+>/g, " ")

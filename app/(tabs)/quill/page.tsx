@@ -43,6 +43,7 @@ export default function QuillPage() {
 
   // Target mode state.
   const [target, setTarget] = useState("");
+  const [intensity, setIntensity] = useState(3);
   const [rewrite, setRewrite] = useState<TargetRewrite | null>(null);
   const [rewriteError, setRewriteError] = useState<string | null>(null);
   const [isRewriting, startRewrite] = useTransition();
@@ -138,7 +139,7 @@ export default function QuillPage() {
     setRewrite(null);
     startRewrite(async () => {
       try {
-        const result = await suggestRewrite({ text: draft, target });
+        const result = await suggestRewrite({ text: draft, target, intensity });
         if (!result) {
           setRewriteError("Write at least 8 words and enter a target before asking for a rewrite.");
           return;
@@ -226,6 +227,8 @@ export default function QuillPage() {
             <TargetPicker
               target={target}
               onTargetChange={setTarget}
+              intensity={intensity}
+              onIntensityChange={setIntensity}
               wordCount={countWords(draft)}
               onRequest={requestRewrite}
               isPending={isRewriting}
@@ -309,9 +312,19 @@ function HueReadout({
   );
 }
 
+const INTENSITY_LABELS: Record<number, string> = {
+  1: "Whisper",
+  2: "Subtle",
+  3: "Moderate",
+  4: "Bold",
+  5: "Full",
+};
+
 function TargetPicker({
   target,
   onTargetChange,
+  intensity,
+  onIntensityChange,
   wordCount,
   onRequest,
   isPending,
@@ -319,6 +332,8 @@ function TargetPicker({
 }: {
   target: string;
   onTargetChange: (s: string) => void;
+  intensity: number;
+  onIntensityChange: (n: number) => void;
   wordCount: number;
   onRequest: () => void;
   isPending: boolean;
@@ -338,6 +353,28 @@ function TargetPicker({
             className="h-9 rounded-md border border-border bg-card px-3 text-sm placeholder:text-muted-foreground focus:ring-2 focus:ring-ring/40 focus:outline-none"
           />
         </label>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-baseline justify-between">
+            <span className="text-xs uppercase tracking-wider text-muted-foreground">
+              intensity
+            </span>
+            <span className="text-xs text-ink-bleed">{INTENSITY_LABELS[intensity]}</span>
+          </div>
+          <input
+            type="range"
+            min={1}
+            max={5}
+            step={1}
+            value={intensity}
+            onChange={(e) => onIntensityChange(Number(e.target.value))}
+            className="w-full accent-ink-bleed"
+            aria-label="Rewrite intensity"
+          />
+          <div className="flex justify-between text-[10px] text-muted-foreground">
+            <span>Whisper</span>
+            <span>Full</span>
+          </div>
+        </div>
         <p className="text-[11px] italic leading-snug text-muted-foreground">
           Describe how you want the prose to feel — Claude will rewrite toward it. Colour names,
           authors' voices, or moods all work.

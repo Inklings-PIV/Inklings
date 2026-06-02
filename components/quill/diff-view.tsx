@@ -136,6 +136,11 @@ function HunkSpan({
     };
   }, []);
 
+  const wrap = (fn: () => void) => () => {
+    fn();
+    setIsOpen(false);
+  };
+
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: mouse-only tooltip reveal; keyboard users interact via the buttons inside
     <span
@@ -157,15 +162,15 @@ function HunkSpan({
       >
         {state === "pending" ? (
           <>
-            <HunkButton label="Accept this change" onClick={onAccept} variant="accept">
+            <HunkButton label="Accept this change" onClick={wrap(onAccept)} variant="accept">
               <Check className="size-3" />
             </HunkButton>
-            <HunkButton label="Reject this change" onClick={onReject} variant="reject">
+            <HunkButton label="Reject this change" onClick={wrap(onReject)} variant="reject">
               <X className="size-3" />
             </HunkButton>
           </>
         ) : (
-          <HunkButton label="Reset this change" onClick={onReset} variant="reset">
+          <HunkButton label="Reset this change" onClick={wrap(onReset)} variant="reset">
             <RotateCcw className="size-3" />
           </HunkButton>
         )}
@@ -174,9 +179,9 @@ function HunkSpan({
       <HunkText
         segment={segment}
         state={state}
-        onAccept={onAccept}
-        onReject={onReject}
-        onReset={onReset}
+        onAccept={wrap(onAccept)}
+        onReject={wrap(onReject)}
+        onReset={wrap(onReset)}
       />
     </span>
   );

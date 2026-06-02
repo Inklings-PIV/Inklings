@@ -6,6 +6,7 @@ import { BlotDetail, type NeighbourBlot } from "@/components/inkwell/blot-detail
 import { MethodologyDialog } from "@/components/inkwell/methodology-dialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { type HSLOverride, type HueSource, hueFor } from "@/lib/colour/placeholder";
+import { layoutGuide } from "@/lib/inkwell/layout-guide";
 import type { ClassicalFeatures } from "@/lib/stylometry/classical";
 
 type Layout = "classical" | "modern" | "by-hue";
@@ -106,11 +107,12 @@ export function InkwellView({
       onSelectDot={setSelectedId}
       toolbar={
         <>
-          <div className="flex flex-col">
+          <div className="flex max-w-md flex-col">
             <span className="font-serif text-lg tracking-tight text-ink-deep">The Inkwell</span>
             <span className="text-xs text-muted-foreground">
               {layoutBlurb[layout]} · {blots.length} {blots.length === 1 ? "blot" : "blots"}
             </span>
+            <LayoutLegend layout={layout} />
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <div className="flex items-center gap-1.5">
@@ -186,6 +188,24 @@ export function InkwellView({
         )
       }
     />
+  );
+}
+
+/**
+ * An honest, per-layout reading hint. UMAP axes aren't semantic, so the legend
+ * tells the viewer to read proximity, not position — and what the current
+ * layout is actually derived from. Crossfades on layout change (keyed) so the
+ * text re-settles rather than snapping, since only the wording changes.
+ */
+function LayoutLegend({ layout }: { layout: Layout }) {
+  const guide = layoutGuide(layout);
+  return (
+    <span
+      key={layout}
+      className="mt-1 animate-in text-[11px] leading-snug text-muted-foreground/80 fade-in duration-300"
+    >
+      {guide.distance}
+    </span>
   );
 }
 

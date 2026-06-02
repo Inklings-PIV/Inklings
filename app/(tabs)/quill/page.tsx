@@ -1,13 +1,25 @@
 "use client";
 
-import { AlignLeft, Check, Cloud, CloudOff, Columns2, Loader2, Sparkles, X } from "lucide-react";
+import {
+  AlignLeft,
+  Check,
+  Cloud,
+  CloudOff,
+  Columns2,
+  Feather,
+  Loader2,
+  Sparkles,
+  Wand2,
+  Wind,
+  X,
+} from "lucide-react";
 import { useEffect, useState, useTransition } from "react";
 import { Editor } from "@/components/quill/editor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { hueFromHSL } from "@/lib/colour/placeholder";
-import type { RewriteSegment } from "@/lib/quill/diff";
+import type { RewriteNudge, RewriteSegment } from "@/lib/quill/diff";
 import { cn } from "@/lib/utils";
 import {
   deleteCloudDraft,
@@ -411,6 +423,7 @@ function RewritePanel({
           <>
             <DiffBody diff={rewrite.diff} view={view} />
             <DiffLegend />
+            {rewrite.nudges.length > 0 && <NudgesApplied nudges={rewrite.nudges} />}
             <div className="flex flex-wrap items-center justify-end gap-2">
               <Button variant="outline" size="sm" onClick={onReject}>
                 <X className="size-4" /> Keep original
@@ -497,6 +510,48 @@ function DiffSpan({ seg, side }: { seg: RewriteSegment; side?: "original" | "rew
     );
   }
   return <span>{seg.text}</span>;
+}
+
+// Rotating glyphs so each nudge card reads as its own small object rather than a
+// repeated bullet — variety is cheap delight on a feature seen now and then.
+const NUDGE_ICONS = [Wand2, Feather, Wind, Sparkles];
+
+/**
+ * The "Nudges applied" panel — each named change the rewrite made toward the
+ * target, as an inspectable card (label + reason). This is the PromptCanvas
+ * move: the prompt's effects become visible, discrete objects instead of an
+ * invisible transformation. Cards fade/slide in with a short stagger so the
+ * list assembles itself rather than snapping in all at once.
+ */
+function NudgesApplied({ nudges }: { nudges: RewriteNudge[] }) {
+  return (
+    <div className="flex flex-col gap-2">
+      <h3 className="text-[10px] tracking-wider text-muted-foreground uppercase">Nudges applied</h3>
+      <ul className="grid gap-2 sm:grid-cols-2">
+        {nudges.map((nudge, i) => {
+          const Icon = NUDGE_ICONS[i % NUDGE_ICONS.length] ?? Sparkles;
+          return (
+            <li
+              // biome-ignore lint/suspicious/noArrayIndexKey: nudges are static and never reordered
+              key={`nudge-${i}`}
+              style={{ animationDelay: `${i * 45}ms` }}
+              className="flex animate-in items-start gap-2.5 rounded-lg border border-border/60 bg-card/50 p-3 fade-in slide-in-from-bottom-1 fill-mode-backwards duration-300 ease-out"
+            >
+              <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-ink-bleed/10 text-ink-bleed">
+                <Icon className="size-3.5" />
+              </span>
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="text-sm font-medium leading-tight text-ink-deep">
+                  {nudge.label}
+                </span>
+                <span className="text-xs leading-snug text-muted-foreground">{nudge.reason}</span>
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 function DiffLegend() {

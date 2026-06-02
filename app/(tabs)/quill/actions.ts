@@ -7,6 +7,7 @@ import { z } from "zod";
 import { ensureScribe } from "@/lib/auth/scribe";
 import { getDb, schema } from "@/lib/db";
 import { rewriteFromDiff, type TargetRewrite } from "@/lib/quill/diff";
+import { type ClassicalFeatures, extractClassical } from "@/lib/stylometry/classical";
 
 export type { TargetRewrite } from "@/lib/quill/diff";
 
@@ -69,6 +70,18 @@ export async function deriveTextColour(rawText: string): Promise<TextColour | nu
  */
 export async function deriveParagraphHues(paragraphs: string[]): Promise<(TextColour | null)[]> {
   return Promise.all(paragraphs.map((p) => deriveTextColour(p)));
+}
+
+/**
+ * Classical stylometric fingerprint of the writer's draft (style-level feature).
+ * Pure CPU via wink-nlp — no LLM, no network — so the Quill can show the writer
+ * their own style numbers (the same fingerprint the Inkwell shows per author)
+ * live while typing. Returns null when the draft is too short to be meaningful.
+ */
+export async function deriveDraftStylometry(rawText: string): Promise<ClassicalFeatures | null> {
+  const text = stripHtml(rawText).trim();
+  if (countWords(text) < MIN_WORDS) return null;
+  return extractClassical(text);
 }
 
 function stripHtml(s: string): string {

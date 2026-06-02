@@ -26,10 +26,12 @@ import {
   type RewriteSegment,
   toDiffTokens,
 } from "@/lib/quill/diff";
+import { type FingerprintMetric, toFingerprint } from "@/lib/quill/fingerprint";
 import { splitParagraphs } from "@/lib/quill/paragraphs";
 import { cn } from "@/lib/utils";
 import {
   deleteCloudDraft,
+  deriveDraftStylometry,
   deriveParagraphHues,
   deriveTextColour,
   loadCloudDraft,
@@ -81,6 +83,10 @@ export default function QuillPage() {
   // the whole draft in Readout mode.
   const hueCacheRef = useRef<Record<string, TextColour | null>>({});
   const [band, setBand] = useState<BandSegment[]>([]);
+
+  // Live stylometric fingerprint of the draft (style-level). Cheap CPU-only
+  // derivation, so we can recompute on the same cadence as the hue readout.
+  const [fingerprint, setFingerprint] = useState<FingerprintMetric[] | null>(null);
 
   // Hydrate from localStorage on mount. If cloud-save was on, also pull
   // the server-side draft and prefer it when present (cross-device case).
@@ -156,6 +162,19 @@ export default function QuillPage() {
         const result = await deriveTextColour(draft);
         if (!cancelled) setReadout(result);
       });
+    }, 700);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [draft]);
+
+  // Debounced stylometric fingerprint — same 700 ms window as the hue readout.
+  useEffect(() => {
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      const features = await deriveDraftStylometry(draft);
+      if (!cancelled) setFingerprint(features ? toFingerprint(features) : null);
     }, 700);
     return () => {
       cancelled = true;
@@ -282,6 +301,7 @@ export default function QuillPage() {
             readout={readout}
             isPending={isPending}
           />
+          {fingerprint && <StyleFingerprint metrics={fingerprint} />}
           <SaveSettings
             cloudSave={cloudSave}
             cloudSavedAt={cloudSavedAt}
@@ -436,6 +456,42 @@ function HueBand({ segments }: { segments: BandSegment[] }) {
 
 function truncate(s: string): string {
   return s.length > 52 ? `${s.slice(0, 52).trimEnd()}…` : s;
+}
+
+/**
+ * Live stylometric fingerprint of the draft — the same measurable shape the
+ * Inkwell shows per author (pitch p5), but for the writer's own prose. Bars
+ * ease toward their value so each keystroke nudges the shape rather than
+ * snapping it, making the numbers feel like a live reading of the ink.
+ */
+function StyleFingerprint({ metrics }: { metrics: FingerprintMetric[] }) {
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-2.5 p-5">
+        <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
+          Style fingerprint
+        </h2>
+        <ul className="flex flex-col gap-2">
+          {metrics.map((m) => (
+            <li key={m.key} className="flex flex-col gap-1" title={m.detail}>
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-xs text-ink-deep">{m.label}</span>
+                <span className="text-[11px] tabular-nums text-muted-foreground">
+                  {m.value.toFixed(2)}
+                </span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-ink-bleed/70 transition-[width] duration-500 ease-out"
+                  style={{ width: `${Math.max(2, m.value * 100)}%` }}
+                />
+              </div>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  );
 }
 
 function TargetPicker({

@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Cloud, CloudOff, Loader2, Sparkles, X } from "lucide-react";
+import { Cloud, CloudOff, Loader2, Sparkles } from "lucide-react";
 import { useEffect, useState, useTransition } from "react";
 import { DiffActions, DiffText } from "@/components/quill/diff-view";
 import { Editor } from "@/components/quill/editor";
@@ -48,7 +48,6 @@ export default function QuillPage() {
   const [rewrite, setRewrite] = useState<TargetRewrite | null>(null);
   const [rewriteError, setRewriteError] = useState<string | null>(null);
   const [isRewriting, startRewrite] = useTransition();
-  const [viewMode, setViewMode] = useState<"diff" | "side-by-side">("diff");
 
   // Diff state — computed from the current draft and the active rewrite.
   // When rewrite is null we pass empty strings; useDiff handles that gracefully.
@@ -208,23 +207,11 @@ export default function QuillPage() {
             className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-ink-bleed to-transparent opacity-60"
           />
           <CardContent className="p-6 sm:p-8">
-            {mode === "target" && rewrite && viewMode === "diff" ? (
+            {mode === "target" && rewrite ? (
               <div className="flex flex-col gap-4">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
-                    Suggested rewrite
-                  </h2>
-                  <ToggleGroup
-                    type="single"
-                    value={viewMode}
-                    onValueChange={(v) => v && setViewMode(v as "diff" | "side-by-side")}
-                    variant="outline"
-                    size="sm"
-                  >
-                    <ToggleGroupItem value="diff">Inline diff</ToggleGroupItem>
-                    <ToggleGroupItem value="side-by-side">Side by side</ToggleGroupItem>
-                  </ToggleGroup>
-                </div>
+                <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
+                  Suggested rewrite
+                </h2>
                 <DiffActions
                   resolvedCount={diff.resolvedCount}
                   totalChanges={diff.totalChanges}
@@ -269,24 +256,11 @@ export default function QuillPage() {
               onRequest={requestRewrite}
               isPending={isRewriting}
               hasRewrite={rewrite !== null}
+              error={rewriteError}
             />
           )}
         </aside>
       </div>
-
-      {mode === "target" &&
-        (isRewriting || rewriteError || (rewrite && viewMode === "side-by-side")) && (
-          <RewritePanel
-            original={draft}
-            rewrite={rewrite}
-            isPending={isRewriting}
-            error={rewriteError}
-            viewMode={viewMode}
-            setViewMode={setViewMode}
-            onAccept={acceptRewrite}
-            onReject={rejectRewrite}
-          />
-        )}
     </div>
   );
 }
@@ -358,6 +332,7 @@ function TargetPicker({
   onRequest,
   isPending,
   hasRewrite,
+  error,
 }: {
   target: string;
   onTargetChange: (s: string) => void;
@@ -365,6 +340,7 @@ function TargetPicker({
   onRequest: () => void;
   isPending: boolean;
   hasRewrite: boolean;
+  error: string | null;
 }) {
   const canAsk = wordCount >= 8 && target.trim().length > 0 && !isPending;
   return (
@@ -392,85 +368,10 @@ function TargetPicker({
           )}
           {hasRewrite ? "Try another nudge" : "Suggest a nudge"}
         </Button>
-      </CardContent>
-    </Card>
-  );
-}
-
-function RewritePanel({
-  original,
-  rewrite,
-  isPending,
-  error,
-  viewMode,
-  setViewMode,
-  onAccept,
-  onReject,
-}: {
-  original: string;
-  rewrite: TargetRewrite | null;
-  isPending: boolean;
-  error: string | null;
-  viewMode: "diff" | "side-by-side";
-  setViewMode: (v: "diff" | "side-by-side") => void;
-  onAccept: (resolvedText: string) => void;
-  onReject: () => void;
-}) {
-  return (
-    <Card className="mt-6 bg-card/60">
-      <CardContent className="flex flex-col gap-4 p-6">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
-            Suggested rewrite
-          </h2>
-          {!isPending && rewrite && (
-            <ToggleGroup
-              type="single"
-              value={viewMode}
-              onValueChange={(v) => v && setViewMode(v as "diff" | "side-by-side")}
-              variant="outline"
-              size="sm"
-            >
-              <ToggleGroupItem value="diff">Inline diff</ToggleGroupItem>
-              <ToggleGroupItem value="side-by-side">Side by side</ToggleGroupItem>
-            </ToggleGroup>
-          )}
-        </div>
-
-        {isPending ? (
-          <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" /> Claude is rewriting…
-          </div>
-        ) : error ? (
-          <p className="text-xs italic text-destructive">{error}</p>
-        ) : rewrite ? (
-          <>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <h3 className="text-[10px] tracking-wider text-muted-foreground uppercase">
-                  Original
-                </h3>
-                <p className="mt-2 font-serif text-base leading-relaxed whitespace-pre-wrap text-ink-deep/70">
-                  {plainText(original)}
-                </p>
-              </div>
-              <div>
-                <h3 className="text-[10px] tracking-wider text-ink-bleed uppercase">Nudge</h3>
-                <p className="mt-2 font-serif text-base leading-relaxed whitespace-pre-wrap text-ink-deep">
-                  {rewrite.rewrite}
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={onReject}>
-                <X className="size-4" /> Keep original
-              </Button>
-              <Button size="sm" onClick={() => onAccept(rewrite.rewrite)}>
-                <Check className="size-4" /> Use the nudge
-              </Button>
-            </div>
-          </>
-        ) : null}
+        {isPending && (
+          <p className="text-[11px] italic text-muted-foreground">Claude is rewriting…</p>
+        )}
+        {error && <p className="text-[11px] italic text-destructive">{error}</p>}
       </CardContent>
     </Card>
   );

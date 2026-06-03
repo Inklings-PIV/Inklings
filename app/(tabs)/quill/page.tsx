@@ -28,6 +28,7 @@ import {
 } from "@/lib/quill/diff";
 import { type FingerprintMetric, toFingerprint } from "@/lib/quill/fingerprint";
 import { splitParagraphs } from "@/lib/quill/paragraphs";
+import { computeWritingStats, type WritingStats } from "@/lib/quill/stats";
 import { cn } from "@/lib/utils";
 import {
   deleteCloudDraft,
@@ -92,6 +93,12 @@ export default function QuillPage() {
   const [fingerprint, setFingerprint] = useState<FingerprintMetric[] | null>(null);
   // Corpus authors closest to the draft's fingerprint (style-level, S4).
   const [neighbours, setNeighbours] = useState<StyleNeighbour[]>([]);
+
+  // Live writing stats (F1) — cheap, derived from the draft's plain text.
+  const stats = useMemo(
+    () => computeWritingStats(draft.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ")),
+    [draft],
+  );
 
   // Hydrate from localStorage on mount. If cloud-save was on, also pull
   // the server-side draft and prefer it when present (cross-device case).
@@ -313,6 +320,7 @@ export default function QuillPage() {
               />
             </CardContent>
           </Card>
+          {stats.words > 0 && <WritingStatsBar stats={stats} />}
         </div>
 
         <aside className="flex flex-col gap-4">
@@ -478,6 +486,30 @@ function HueBand({ segments }: { segments: BandSegment[] }) {
 
 function truncate(s: string): string {
   return s.length > 52 ? `${s.slice(0, 52).trimEnd()}…` : s;
+}
+
+/**
+ * Live writing stats under the editor (F1) — a quiet status strip giving the
+ * writer size and pace at a glance. Numbers are tabular so they don't jitter
+ * as digits change while typing.
+ */
+function WritingStatsBar({ stats }: { stats: WritingStats }) {
+  const items = [
+    { label: stats.words === 1 ? "word" : "words", value: stats.words.toLocaleString() },
+    { label: stats.sentences === 1 ? "sentence" : "sentences", value: String(stats.sentences) },
+    { label: "min read", value: `~${stats.readingMinutes}` },
+    { label: "avg words/sentence", value: stats.avgSentenceWords.toFixed(1) },
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-muted-foreground">
+      {items.map((item) => (
+        <span key={item.label} className="inline-flex items-baseline gap-1">
+          <span className="tabular-nums text-ink-deep/70">{item.value}</span>
+          {item.label}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 /**

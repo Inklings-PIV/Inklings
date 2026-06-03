@@ -48,6 +48,7 @@ export default function QuillPage() {
   const [rewrite, setRewrite] = useState<TargetRewrite | null>(null);
   const [rewriteError, setRewriteError] = useState<string | null>(null);
   const [isRewriting, startRewrite] = useTransition();
+  const [highlightPending, setHighlightPending] = useState(false);
 
   // Diff state — computed from the current draft and the active rewrite.
   // When rewrite is null we pass empty strings; useDiff handles that gracefully.
@@ -218,11 +219,14 @@ export default function QuillPage() {
                   onApply={() => acceptRewrite(diff.resolvedText())}
                   onAcceptAll={() => acceptRewrite(rewrite.rewrite)}
                   onReject={rejectRewrite}
+                  onHighlightEnter={() => setHighlightPending(true)}
+                  onHighlightLeave={() => setHighlightPending(false)}
                 />
                 <DiffText
                   segments={diff.segments}
                   states={diff.states}
                   setHunkState={diff.setHunkState}
+                  highlightPending={highlightPending}
                 />
               </div>
             ) : (

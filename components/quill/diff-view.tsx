@@ -14,10 +14,12 @@ export function DiffText({
   segments,
   states,
   setHunkState,
+  highlightPending = false,
 }: {
   segments: DiffSegment[];
   states: Record<string, HunkState>;
   setHunkState: (id: string, next: HunkState) => void;
+  highlightPending?: boolean;
 }) {
   return (
     <div className="min-h-[400px] font-serif text-base leading-relaxed text-ink-deep">
@@ -30,6 +32,7 @@ export function DiffText({
             key={seg.id}
             segment={seg}
             state={states[seg.id] ?? "pending"}
+            highlightPending={highlightPending}
             onAccept={() => setHunkState(seg.id, "accepted")}
             onReject={() => setHunkState(seg.id, "rejected")}
             onReset={() => setHunkState(seg.id, "pending")}
@@ -50,12 +53,16 @@ export function DiffActions({
   onApply,
   onAcceptAll,
   onReject,
+  onHighlightEnter,
+  onHighlightLeave,
 }: {
   resolvedCount: number;
   totalChanges: number;
   onApply: () => void;
   onAcceptAll: () => void;
   onReject: () => void;
+  onHighlightEnter?: () => void;
+  onHighlightLeave?: () => void;
 }) {
   if (totalChanges === 0) {
     return (
@@ -70,7 +77,12 @@ export function DiffActions({
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <span className="text-[11px] tabular-nums text-muted-foreground">
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: hover-only highlight; no click/keyboard action needed */}
+      <span
+        className="cursor-default text-[11px] tabular-nums text-muted-foreground"
+        onMouseEnter={onHighlightEnter}
+        onMouseLeave={onHighlightLeave}
+      >
         {resolvedCount} of {totalChanges} {totalChanges === 1 ? "change" : "changes"} resolved
         <span className="ml-1 opacity-60">· changes shown inline above</span>
       </span>
@@ -102,12 +114,14 @@ export function DiffActions({
 function HunkSpan({
   segment,
   state,
+  highlightPending,
   onAccept,
   onReject,
   onReset,
 }: {
   segment: ChangedSegment;
   state: HunkState;
+  highlightPending: boolean;
   onAccept: () => void;
   onReject: () => void;
   onReset: () => void;
@@ -144,7 +158,13 @@ function HunkSpan({
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: mouse-only tooltip reveal; keyboard users interact via the buttons inside
     <span
-      className="relative inline-block align-baseline"
+      className={cn(
+        "relative inline-block align-baseline transition-all duration-150",
+        state !== "pending" && !isOpen && "opacity-60",
+        state === "pending" &&
+          highlightPending &&
+          "rounded-sm bg-ink-bleed/15 ring-1 ring-ink-bleed/35",
+      )}
       onMouseEnter={handleOpen}
       onMouseLeave={handleClose}
     >

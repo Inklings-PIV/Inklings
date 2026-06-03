@@ -25,7 +25,7 @@ import {
   Undo2,
   WandSparkles,
 } from "lucide-react";
-import { useState } from "react";
+import { type KeyboardEvent, useState } from "react";
 import { toast } from "sonner";
 import {
   ContextMenu,
@@ -212,6 +212,15 @@ export function Editor({
   const canHue = hasSelection && !!onDeriveHue;
   const canRewrite = hasSelection && !!onRewriteSelection;
 
+  // Cmd/Ctrl+Enter reads the hue of the current selection without leaving the
+  // keyboard. Inert when there's no selection or no handler.
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canHue) {
+      e.preventDefault();
+      readHue();
+    }
+  };
+
   return (
     <div className={cn("flex flex-col gap-3", className)}>
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -221,6 +230,7 @@ export function Editor({
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
+            onKeyDown={handleKeyDown}
             className={cn(
               "relative",
               focusMode && [
@@ -259,6 +269,9 @@ export function Editor({
           <ContextMenuSeparator />
           <ContextMenuItem disabled={!canHue} onSelect={readHue}>
             <Palette className="size-4" /> Read the hue
+            <span className="ml-auto pl-6 text-[10px] tracking-wider text-muted-foreground">
+              ⌘↵
+            </span>
           </ContextMenuItem>
           <ContextMenuSub>
             <ContextMenuSubTrigger disabled={!canRewrite}>

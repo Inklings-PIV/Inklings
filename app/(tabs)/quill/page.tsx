@@ -3,9 +3,11 @@
 import {
   AlignLeft,
   Check,
+  ClipboardCopy,
   Cloud,
   CloudOff,
   Columns2,
+  Download,
   Feather,
   Loader2,
   Sparkles,
@@ -14,6 +16,7 @@ import {
   X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { toast } from "sonner";
 import { Editor } from "@/components/quill/editor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -27,6 +30,7 @@ import {
   toDiffTokens,
 } from "@/lib/quill/diff";
 import { type FingerprintMetric, toFingerprint } from "@/lib/quill/fingerprint";
+import { htmlToMarkdown } from "@/lib/quill/markdown";
 import { splitParagraphs } from "@/lib/quill/paragraphs";
 import { computeWritingStats, type WritingStats } from "@/lib/quill/stats";
 import { cn } from "@/lib/utils";
@@ -99,6 +103,8 @@ export default function QuillPage() {
     () => computeWritingStats(draft.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ")),
     [draft],
   );
+  // Markdown export of the draft (F4).
+  const markdown = useMemo(() => htmlToMarkdown(draft), [draft]);
 
   // Hydrate from localStorage on mount. If cloud-save was on, also pull
   // the server-side draft and prefer it when present (cross-device case).
@@ -288,17 +294,19 @@ export default function QuillPage() {
             Write, and watch the hue of your prose surface. Target a colour to receive nudges.
           </p>
         </div>
-        <ToggleGroup
-          type="single"
-          value={mode}
-          onValueChange={(v) => v && setMode(v as QuillMode)}
-          variant="outline"
-          size="sm"
-          className="shrink-0"
-        >
-          <ToggleGroupItem value="readout">Readout</ToggleGroupItem>
-          <ToggleGroupItem value="target">Target</ToggleGroupItem>
-        </ToggleGroup>
+        <div className="flex shrink-0 items-center gap-2">
+          {stats.words > 0 && <ExportControls markdown={markdown} />}
+          <ToggleGroup
+            type="single"
+            value={mode}
+            onValueChange={(v) => v && setMode(v as QuillMode)}
+            variant="outline"
+            size="sm"
+          >
+            <ToggleGroupItem value="readout">Readout</ToggleGroupItem>
+            <ToggleGroupItem value="target">Target</ToggleGroupItem>
+          </ToggleGroup>
+        </div>
       </header>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_280px]">
@@ -486,6 +494,42 @@ function HueBand({ segments }: { segments: BandSegment[] }) {
 
 function truncate(s: string): string {
   return s.length > 52 ? `${s.slice(0, 52).trimEnd()}…` : s;
+}
+
+/**
+ * Export the draft as Markdown (F4) — copy to clipboard or download a .md file.
+ * The conversion is pure; this just wires the two delivery actions with toasts.
+ */
+function ExportControls({ markdown }: { markdown: string }) {
+  const copy = () => {
+    navigator.clipboard?.writeText(markdown);
+    toast.success("Copied as Markdown");
+  };
+  const download = () => {
+    const blob = new Blob([markdown], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "inkling-draft.md";
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success("Downloaded inkling-draft.md");
+  };
+  return (
+    <div className="flex items-center gap-1">
+      <Button size="sm" variant="outline" onClick={copy} title="Copy the draft as Markdown">
+        <ClipboardCopy className="size-3.5" /> Copy .md
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={download}
+        title="Download the draft as a .md file"
+      >
+        <Download className="size-3.5" />
+      </Button>
+    </div>
+  );
 }
 
 /**

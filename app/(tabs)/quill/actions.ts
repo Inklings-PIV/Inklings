@@ -1,7 +1,7 @@
 "use server";
 
 import { anthropic } from "@ai-sdk/anthropic";
-import { generateObject } from "ai";
+import { generateObject, generateText } from "ai";
 import { and, desc, eq } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
@@ -241,6 +241,37 @@ export async function suggestRewrite(input: {
     nudges: object.nudges,
     rewrite: rewriteFromDiff(object.diff).trim(),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Selection rewrite — powers the editor's right-click "Rewrite" presets. Unlike
+// suggestRewrite (whole draft, structured diff), this rewrites a short selected
+// span and returns plain prose to drop straight back in place.
+// ---------------------------------------------------------------------------
+
+const SELECTION_REWRITE_PROMPT = `You are a careful prose editor. Rewrite the given passage toward the target while preserving its meaning, tense, and point of view, and keeping roughly the same length. Change only word choice, rhythm, and imagery — add no new facts.
+
+Return ONLY the rewritten passage. No quotes, no preamble, no commentary.`;
+
+const SELECTION_MIN_WORDS = 3;
+
+/**
+ * Rewrites a selected passage toward a free-form target (e.g. a right-click
+ * preset like "tighter and leaner"). Returns plain text, or null when the
+ * selection is too short or the target is empty.
+ */
+export async function rewriteSelection(text: string, target: string): Promise<string | null> {
+  const passage = text.trim();
+  const aim = target.trim();
+  if (countWords(passage) < SELECTION_MIN_WORDS || aim.length === 0) return null;
+
+  const { text: out } = await generateText({
+    model: anthropic("claude-sonnet-4-6"),
+    system: SELECTION_REWRITE_PROMPT,
+    prompt: `Target: ${aim}\n\nPassage:\n${passage}`,
+    maxRetries: 2,
+  });
+  return out.trim();
 }
 
 // ---------------------------------------------------------------------------

@@ -36,6 +36,7 @@ import {
   deriveTextColour,
   loadCloudDraft,
   nearestAuthors,
+  rewriteSelection,
   type StyleNeighbour,
   saveCloudDraft,
   suggestRewrite,
@@ -307,6 +308,8 @@ export default function QuillPage() {
                 initialContent={draft}
                 placeholder="Write a paragraph and watch the ink reveal itself…"
                 onChange={setDraft}
+                onDeriveHue={deriveTextColour}
+                onRewriteSelection={rewriteSelection}
               />
             </CardContent>
           </Card>

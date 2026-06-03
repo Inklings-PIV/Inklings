@@ -9,16 +9,42 @@ import {
 import StarterKit from "@tiptap/starter-kit";
 import {
   Bold,
+  Copy,
   Heading1,
   Heading2,
   Italic,
   List,
   ListOrdered,
+  Palette,
   Quote,
   Redo2,
   Undo2,
+  WandSparkles,
 } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuLabel,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
+import { hueFromHSL } from "@/lib/colour/placeholder";
+import { NUDGE_PRESETS } from "@/lib/quill/nudge-presets";
 import { cn } from "@/lib/utils";
+
+/** HSL + justification returned for a selected passage's hue. */
+export type SelectionColour = {
+  hue: number;
+  saturation: number;
+  lightness: number;
+  justification: string;
+};
 
 type EditorProps = {
   /** Initial HTML to seed the editor with. */
@@ -28,6 +54,10 @@ type EditorProps = {
   /** Visible placeholder when the editor is empty. */
   placeholder?: string;
   className?: string;
+  /** Right-click "Read the hue" — derive a colour for the selected passage. */
+  onDeriveHue?: (text: string) => Promise<SelectionColour | null>;
+  /** Right-click "Rewrite" presets — rewrite the selection toward a target. */
+  onRewriteSelection?: (text: string, target: string) => Promise<string | null>;
 };
 
 /**
@@ -39,10 +69,24 @@ type EditorProps = {
  * decision (local-only by default vs server-stored). The page can pass
  * `onChange` to handle the saved text however it wants.
  */
-export function Editor({ initialContent = "", onChange, placeholder, className }: EditorProps) {
+export function Editor({
+  initialContent = "",
+  onChange,
+  placeholder,
+  className,
+  onDeriveHue,
+  onRewriteSelection,
+}: EditorProps) {
+  // Track selection emptiness so the right-click menu can disable
+  // selection-only actions; updated on every selection change.
+  const [hasSelection, setHasSelection] = useState(false);
+
   const editor = useEditor({
     extensions: [StarterKit],
     content: initialContent,
+    onSelectionUpdate: ({ editor: ed }) => {
+      setHasSelection(!ed.state.selection.empty);
+    },
     // immediatelyRender: false keeps SSR-safe (no hydration mismatch);
     // the editor mounts on the client.
     immediatelyRender: false,
@@ -71,20 +115,128 @@ export function Editor({ initialContent = "", onChange, placeholder, className }
     },
   });
 
+  // Current non-empty selection as {from, to, text}, or null at a bare caret.
+  const selectionText = (): { from: number; to: number; text: string } | null => {
+    if (!editor) return null;
+    const { from, to, empty } = editor.state.selection;
+    if (empty) return null;
+    const text = editor.state.doc.textBetween(from, to, "\n", " ").trim();
+    return text ? { from, to, text } : null;
+  };
+
+  const readHue = async () => {
+    const sel = selectionText();
+    if (!sel || !onDeriveHue) return;
+    const id = toast.loading("Reading the hue…");
+    try {
+      const colour = await onDeriveHue(sel.text);
+      if (!colour) {
+        toast.error("Selection too short to read a hue", { id });
+        return;
+      }
+      const css = hueFromHSL(colour.hue, colour.saturation, colour.lightness).css;
+      toast.success(colour.justification, {
+        id,
+        icon: (
+          <span
+            aria-hidden="true"
+            className="inline-block size-3 rounded-full"
+            style={{ backgroundColor: css }}
+          />
+        ),
+      });
+    } catch {
+      toast.error("Couldn't read the hue", { id });
+    }
+  };
+
+  const applyPreset = (target: string, label: string) => {
+    const sel = selectionText();
+    if (!sel || !onRewriteSelection || !editor) return;
+    const { from, to, text } = sel;
+    toast.promise(
+      (async () => {
+        const out = await onRewriteSelection(text, target);
+        if (!out) throw new Error("Selection too short to rewrite");
+        editor.chain().focus().insertContentAt({ from, to }, out).run();
+        return out;
+      })(),
+      {
+        loading: `Rewriting — ${label}…`,
+        success: "Selection rewritten",
+        error: (e) => (e as Error).message,
+      },
+    );
+  };
+
+  const copySelection = () => {
+    const sel = selectionText();
+    if (!sel) return;
+    navigator.clipboard?.writeText(sel.text);
+    toast.success("Copied");
+  };
+
+  const canHue = hasSelection && !!onDeriveHue;
+  const canRewrite = hasSelection && !!onRewriteSelection;
+
   return (
     <div className={cn("flex flex-col gap-3", className)}>
       {editor && <EditorToolbar editor={editor} />}
-      <div className="relative">
-        <EditorContent editor={editor} />
-        {placeholder && editor?.isEmpty && (
-          <p
-            aria-hidden="true"
-            className="pointer-events-none absolute top-0 left-0 font-serif text-lg italic text-muted-foreground"
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div className="relative">
+            <EditorContent editor={editor} />
+            {placeholder && editor?.isEmpty && (
+              <p
+                aria-hidden="true"
+                className="pointer-events-none absolute top-0 left-0 font-serif text-lg italic text-muted-foreground"
+              >
+                {placeholder}
+              </p>
+            )}
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuLabel>Format</ContextMenuLabel>
+          <ContextMenuItem onSelect={() => editor?.chain().focus().toggleBold().run()}>
+            <Bold className="size-4" /> Bold
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => editor?.chain().focus().toggleItalic().run()}>
+            <Italic className="size-4" /> Italic
+          </ContextMenuItem>
+          <ContextMenuItem
+            onSelect={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
           >
-            {placeholder}
-          </p>
-        )}
-      </div>
+            <Heading2 className="size-4" /> Heading
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => editor?.chain().focus().toggleBlockquote().run()}>
+            <Quote className="size-4" /> Quote
+          </ContextMenuItem>
+          <ContextMenuSeparator />
+          <ContextMenuItem disabled={!canHue} onSelect={readHue}>
+            <Palette className="size-4" /> Read the hue
+          </ContextMenuItem>
+          <ContextMenuSub>
+            <ContextMenuSubTrigger disabled={!canRewrite}>
+              <WandSparkles className="size-4" /> Rewrite selection
+            </ContextMenuSubTrigger>
+            <ContextMenuSubContent>
+              {NUDGE_PRESETS.map((preset) => (
+                <ContextMenuItem
+                  key={preset.key}
+                  onSelect={() => applyPreset(preset.target, preset.label)}
+                >
+                  {preset.label}
+                </ContextMenuItem>
+              ))}
+            </ContextMenuSubContent>
+          </ContextMenuSub>
+          <ContextMenuSeparator />
+          <ContextMenuItem disabled={!hasSelection} onSelect={copySelection}>
+            <Copy className="size-4" /> Copy
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
     </div>
   );
 }

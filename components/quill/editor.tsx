@@ -1,7 +1,10 @@
 "use client";
 
+import { Plugin } from "@tiptap/pm/state";
+import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import {
   EditorContent,
+  Extension,
   type Editor as TiptapEditor,
   useEditor,
   useEditorState,
@@ -10,6 +13,7 @@ import StarterKit from "@tiptap/starter-kit";
 import {
   Bold,
   Copy,
+  Eye,
   Heading1,
   Heading2,
   Italic,
@@ -60,10 +64,37 @@ type EditorProps = {
   onRewriteSelection?: (text: string, target: string) => Promise<string | null>;
 };
 
+// Marks the top-level block holding the caret with `quill-focus-active`, so
+// focus mode can dim everything else via CSS. Always installed — it's inert
+// until the wrapper opts into the dimming classes.
+const FocusActiveBlock = Extension.create({
+  name: "focusActiveBlock",
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        props: {
+          decorations(state) {
+            const { doc, selection } = state;
+            const head = selection.head;
+            const decos: Decoration[] = [];
+            doc.forEach((node, offset) => {
+              const end = offset + node.nodeSize;
+              if (head >= offset && head <= end) {
+                decos.push(Decoration.node(offset, end, { class: "quill-focus-active" }));
+              }
+            });
+            return DecorationSet.create(doc, decos);
+          },
+        },
+      }),
+    ];
+  },
+});
+
 /**
  * TipTap editor wired with StarterKit (bold/italic/headings/lists/quote
- * keyboard shortcuts). Bare-bones — no toolbar; readers can use Cmd+B,
- * Cmd+I etc. A formatting bar is a follow-up.
+ * keyboard shortcuts), a right-click context menu, and an optional focus mode
+ * that dims every paragraph but the one being written.
  *
  * Persistence isn't wired here — that's blocked on the #45 Quill privacy
  * decision (local-only by default vs server-stored). The page can pass
@@ -80,9 +111,11 @@ export function Editor({
   // Track selection emptiness so the right-click menu can disable
   // selection-only actions; updated on every selection change.
   const [hasSelection, setHasSelection] = useState(false);
+  // Focus mode dims every block but the one holding the caret.
+  const [focusMode, setFocusMode] = useState(false);
 
   const editor = useEditor({
-    extensions: [StarterKit],
+    extensions: [StarterKit, FocusActiveBlock],
     content: initialContent,
     onSelectionUpdate: ({ editor: ed }) => {
       setHasSelection(!ed.state.selection.empty);
@@ -181,10 +214,21 @@ export function Editor({
 
   return (
     <div className={cn("flex flex-col gap-3", className)}>
-      {editor && <EditorToolbar editor={editor} />}
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        {editor && <EditorToolbar editor={editor} />}
+        <FocusToggle active={focusMode} onToggle={() => setFocusMode((v) => !v)} />
+      </div>
       <ContextMenu>
         <ContextMenuTrigger asChild>
-          <div className="relative">
+          <div
+            className={cn(
+              "relative",
+              focusMode && [
+                "[&_.ProseMirror>*]:opacity-35 [&_.ProseMirror>*]:transition-opacity [&_.ProseMirror>*]:duration-300",
+                "[&_.quill-focus-active]:!opacity-100",
+              ],
+            )}
+          >
             <EditorContent editor={editor} />
             {placeholder && editor?.isEmpty && (
               <p
@@ -379,4 +423,24 @@ function ToolbarButton({
 
 function ToolbarDivider() {
   return <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-border" />;
+}
+
+function FocusToggle({ active, onToggle }: { active: boolean; onToggle: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      title="Focus mode — dim everything but the paragraph you're writing"
+      onClick={onToggle}
+      className={cn(
+        "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs transition-colors",
+        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+        active
+          ? "border-ink-deep bg-ink-deep text-ink-paper"
+          : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
+      )}
+    >
+      <Eye className="size-3.5" /> Focus
+    </button>
+  );
 }

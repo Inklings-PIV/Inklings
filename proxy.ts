@@ -12,8 +12,6 @@ import { getIronSession } from "iron-session";
 import { type NextRequest, NextResponse } from "next/server";
 import { type ScribeSession, scribeSessionOptions } from "@/lib/auth/scribe";
 
-const COOKIE_NAME = "inklings_scribe";
-
 // Next metadata routes (file conventions: opengraph-image, twitter-image,
 // icon, apple-icon, sitemap, robots) are hit by share-preview crawlers
 // that don't carry cookies. Looping them through the set-cookie redirect
@@ -32,12 +30,19 @@ export async function proxy(request: NextRequest) {
   if (METADATA_SUFFIXES.some((s) => pathname === s || pathname.endsWith(s))) {
     return NextResponse.next();
   }
-  if (request.cookies.has(COOKIE_NAME)) {
+
+  // Decrypt the incoming cookie rather than just checking it exists: a cookie
+  // signed with an old SESSION_SECRET (e.g. after rotating .env) is present but
+  // won't decrypt, leaving an empty session that would 500 ensureScribe. Treat
+  // "no valid token" the same as "no cookie" and re-mint.
+  const probe = NextResponse.next();
+  const current = await getIronSession<ScribeSession>(request, probe, scribeSessionOptions());
+  if (current.token) {
     return NextResponse.next();
   }
 
-  // First visit — set the cookie via iron-session and redirect so the
-  // browser carries it on the next hop.
+  // First visit (or stale/undecryptable cookie) — set a fresh cookie via
+  // iron-session and redirect so the browser carries it on the next hop.
   const response = NextResponse.redirect(request.url, 307);
   const session = await getIronSession<ScribeSession>(request, response, scribeSessionOptions());
   session.token = crypto.randomUUID();

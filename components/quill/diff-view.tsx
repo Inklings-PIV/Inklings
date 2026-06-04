@@ -10,6 +10,57 @@ import type { ChangedSegment, DiffSegment, HunkState } from "./use-diff";
 // DiffText — the inline annotated paragraph, rendered in the top editor card
 // ---------------------------------------------------------------------------
 
+// Segments from diffWords can contain \n\n (paragraph breaks) or \n (line
+// breaks) in their text values. We split the flat segment stream into
+// paragraph groups so the diff view renders with the same <p my-3> structure
+// as the Tiptap editor — no whitespace-pre-wrap hack needed.
+
+type InlineItem =
+  | { kind: "text"; value: string; key: string }
+  | { kind: "hunk"; segment: ChangedSegment; key: string }
+  | { kind: "br"; key: string };
+
+function buildParagraphGroups(segments: DiffSegment[]): { key: string; items: InlineItem[] }[] {
+  const groups: { key: string; items: InlineItem[] }[] = [];
+  let current: InlineItem[] = [];
+  let groupKey = "";
+
+  const flush = () => {
+    if (current.length > 0) {
+      groups.push({ key: groupKey, items: current });
+      current = [];
+    }
+  };
+
+  for (const seg of segments) {
+    if (seg.type !== "unchanged") {
+      if (!groupKey) groupKey = seg.id;
+      current.push({ kind: "hunk", segment: seg as ChangedSegment, key: seg.id });
+      continue;
+    }
+
+    for (const [ci, chunk] of seg.value.split(/\n\n/).entries()) {
+      if (ci > 0) {
+        flush();
+        groupKey = `${seg.id}-p${ci}`;
+      } else if (!groupKey) {
+        groupKey = seg.id;
+      }
+      for (const [li, line] of chunk.split(/\n/).entries()) {
+        if (li > 0) {
+          current.push({ kind: "br", key: `${seg.id}-${ci}-br${li}` });
+        }
+        if (line) {
+          current.push({ kind: "text", value: line, key: `${seg.id}-${ci}-t${li}` });
+        }
+      }
+    }
+  }
+  flush();
+
+  return groups;
+}
+
 export function DiffText({
   segments,
   states,
@@ -21,24 +72,28 @@ export function DiffText({
   setHunkState: (id: string, next: HunkState) => void;
   highlightPending?: boolean;
 }) {
+  const paragraphs = buildParagraphGroups(segments);
   return (
-    <div className="min-h-[400px] whitespace-pre-wrap font-serif text-base leading-relaxed text-ink-deep">
-      {segments.map((seg) => {
-        if (seg.type === "unchanged") {
-          return <span key={seg.id}>{seg.value}</span>;
-        }
-        return (
-          <HunkSpan
-            key={seg.id}
-            segment={seg}
-            state={states[seg.id] ?? "pending"}
-            highlightPending={highlightPending}
-            onAccept={() => setHunkState(seg.id, "accepted")}
-            onReject={() => setHunkState(seg.id, "rejected")}
-            onReset={() => setHunkState(seg.id, "pending")}
-          />
-        );
-      })}
+    <div className="min-h-[400px] w-full font-serif text-lg leading-relaxed text-ink-deep">
+      {paragraphs.map((para) => (
+        <p key={para.key} className="my-3 first:mt-0">
+          {para.items.map((item) => {
+            if (item.kind === "br") return <br key={item.key} />;
+            if (item.kind === "text") return <span key={item.key}>{item.value}</span>;
+            return (
+              <HunkSpan
+                key={item.key}
+                segment={item.segment}
+                state={states[item.segment.id] ?? "pending"}
+                highlightPending={highlightPending}
+                onAccept={() => setHunkState(item.segment.id, "accepted")}
+                onReject={() => setHunkState(item.segment.id, "rejected")}
+                onReset={() => setHunkState(item.segment.id, "pending")}
+              />
+            );
+          })}
+        </p>
+      ))}
     </div>
   );
 }

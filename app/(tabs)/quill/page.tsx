@@ -227,10 +227,7 @@ export default function QuillPage() {
           />
           <CardContent className="p-6 sm:p-8">
             {mode === "target" && rewrite ? (
-              <div className="flex flex-col gap-4">
-                <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
-                  Suggested rewrite
-                </h2>
+              <div className="flex flex-col gap-3">
                 <DiffActions
                   resolvedCount={diff.resolvedCount}
                   totalChanges={diff.totalChanges}
@@ -240,22 +237,28 @@ export default function QuillPage() {
                   onHighlightEnter={() => setHighlightPending(true)}
                   onHighlightLeave={() => setHighlightPending(false)}
                 />
-                {committedSelection?.beforeText && (
-                  <p className="font-serif text-base leading-relaxed whitespace-pre-wrap text-ink-deep/40 select-none">
-                    {committedSelection.beforeText}
+                {committedSelection?.beforeText?.split("\n\n").map((para) => (
+                  <p
+                    key={para}
+                    className="my-3 first:mt-0 font-serif text-lg leading-relaxed text-ink-deep/40 select-none"
+                  >
+                    {para}
                   </p>
-                )}
+                ))}
                 <DiffText
                   segments={diff.segments}
                   states={diff.states}
                   setHunkState={diff.setHunkState}
                   highlightPending={highlightPending}
                 />
-                {committedSelection?.afterText && (
-                  <p className="font-serif text-base leading-relaxed whitespace-pre-wrap text-ink-deep/40 select-none">
-                    {committedSelection.afterText}
+                {committedSelection?.afterText?.split("\n\n").map((para) => (
+                  <p
+                    key={para}
+                    className="my-3 first:mt-0 font-serif text-lg leading-relaxed text-ink-deep/40 select-none"
+                  >
+                    {para}
                   </p>
-                )}
+                ))}
               </div>
             ) : (
               <Editor

@@ -91,24 +91,40 @@ Make changes at the level of word choice, sentence rhythm, image-density, and co
 
 Return ONLY the rewritten prose. No quotes around it, no "Here's the rewrite:" preamble, no trailing notes.`;
 
+const INTENSITY_INSTRUCTIONS: Record<number, string> = {
+  1: "Whisper — change at most one word every 2–3 sentences. Only the most natural synonym swap. The text must feel untouched.",
+  2: "Subtle — change 1–2 words per sentence at most. No structural changes whatsoever.",
+  3: "Moderate — vary word choices throughout and occasionally adjust a sentence's rhythm. Structures mostly intact.",
+  4: "Bold — restructure individual sentences; use fresher vocabulary throughout.",
+  5: "Full — rewrite the prose substantially with new rhythms, structures, and vocabulary, while preserving meaning and intent.",
+};
+
 /**
  * Asks Claude to rewrite the user's draft toward a free-form target descriptor.
  * Returns just the rewritten text — the client diffs it against the original
  * and lets the user accept or reject.
+ *
+ * @param intensity 1–5 controlling how aggressively to change the prose.
+ *   Defaults to 3 (Moderate). 1 is a near-invisible whisper; 5 is a
+ *   substantial transformation that still preserves meaning.
  */
 export async function suggestRewrite(input: {
   text: string;
   target: string;
+  intensity?: number;
 }): Promise<TargetRewrite | null> {
   const text = stripHtml(input.text).trim();
   const target = input.target.trim();
   if (countWords(text) < MIN_WORDS) return null;
   if (target.length === 0) return null;
 
+  const intensity = Math.min(5, Math.max(1, Math.round(input.intensity ?? 3)));
+  const intensityLine = `Intensity: ${intensity}/5 — ${INTENSITY_INSTRUCTIONS[intensity]}`;
+
   const { text: rewrite } = await generateText({
     model: anthropic("claude-sonnet-4-6"),
     system: REWRITE_SYSTEM_PROMPT,
-    prompt: `Target: ${target}\n\nOriginal:\n${text}`,
+    prompt: `${intensityLine}\nTarget: ${target}\n\nOriginal:\n${text}`,
     maxRetries: 2,
   });
   return { rewrite: rewrite.trim() };

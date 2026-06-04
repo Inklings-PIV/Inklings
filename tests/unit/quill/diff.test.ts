@@ -73,7 +73,11 @@ describe("toDiffTokens / countChanges", () => {
       { text: "q", op: "add" },
     ];
     expect(countChanges(two)).toBe(2);
-    expect(toDiffTokens(two).filter((t) => t.kind === "change").map((t) => t.index)).toEqual([0, 1]);
+    expect(
+      toDiffTokens(two)
+        .filter((t) => t.kind === "change")
+        .map((t) => t.index),
+    ).toEqual([0, 1]);
   });
 });
 

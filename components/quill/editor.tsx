@@ -25,7 +25,7 @@ import {
   Undo2,
   WandSparkles,
 } from "lucide-react";
-import { type KeyboardEvent, useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   ContextMenu,
@@ -113,6 +113,9 @@ export function Editor({
   const [hasSelection, setHasSelection] = useState(false);
   // Focus mode dims every block but the one holding the caret.
   const [focusMode, setFocusMode] = useState(false);
+  // Holds the latest "read the hue" handler so the editor's keymap (captured
+  // once on mount) can call the current closure.
+  const readHueRef = useRef<() => void>(() => undefined);
 
   const editor = useEditor({
     extensions: [StarterKit, FocusActiveBlock],
@@ -124,6 +127,16 @@ export function Editor({
     // the editor mounts on the client.
     immediatelyRender: false,
     editorProps: {
+      // Cmd/Ctrl+Enter reads the hue of the current selection from the
+      // keyboard. Handled on the editor itself (not a wrapper div) so it only
+      // fires when the editor is focused and stays accessible.
+      handleKeyDown(_view, event) {
+        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+          readHueRef.current();
+          return true;
+        }
+        return false;
+      },
       attributes: {
         class: [
           "min-h-[400px] w-full font-serif text-lg leading-relaxed text-ink-deep focus:outline-none",
@@ -212,14 +225,8 @@ export function Editor({
   const canHue = hasSelection && !!onDeriveHue;
   const canRewrite = hasSelection && !!onRewriteSelection;
 
-  // Cmd/Ctrl+Enter reads the hue of the current selection without leaving the
-  // keyboard. Inert when there's no selection or no handler.
-  const handleKeyDown = (e: KeyboardEvent) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && canHue) {
-      e.preventDefault();
-      readHue();
-    }
-  };
+  // Keep the keymap pointed at the current readHue closure.
+  readHueRef.current = readHue;
 
   return (
     <div className={cn("flex flex-col gap-3", className)}>
@@ -230,7 +237,6 @@ export function Editor({
       <ContextMenu>
         <ContextMenuTrigger asChild>
           <div
-            onKeyDown={handleKeyDown}
             className={cn(
               "relative",
               focusMode && [

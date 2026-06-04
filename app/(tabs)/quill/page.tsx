@@ -240,12 +240,22 @@ export default function QuillPage() {
                   onHighlightEnter={() => setHighlightPending(true)}
                   onHighlightLeave={() => setHighlightPending(false)}
                 />
+                {committedSelection?.beforeText && (
+                  <p className="font-serif text-base leading-relaxed whitespace-pre-wrap text-ink-deep/40 select-none">
+                    {committedSelection.beforeText}
+                  </p>
+                )}
                 <DiffText
                   segments={diff.segments}
                   states={diff.states}
                   setHunkState={diff.setHunkState}
                   highlightPending={highlightPending}
                 />
+                {committedSelection?.afterText && (
+                  <p className="font-serif text-base leading-relaxed whitespace-pre-wrap text-ink-deep/40 select-none">
+                    {committedSelection.afterText}
+                  </p>
+                )}
               </div>
             ) : (
               <Editor

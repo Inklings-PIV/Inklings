@@ -21,7 +21,15 @@ import {
 import { useImperativeHandle } from "react";
 import { cn } from "@/lib/utils";
 
-export type SelectionRange = { text: string; from: number; to: number };
+export type SelectionRange = {
+  text: string;
+  from: number;
+  to: number;
+  /** Text in the document before the selection — populated by getSelection(), not onSelectionChange. */
+  beforeText?: string;
+  /** Text in the document after the selection — populated by getSelection(), not onSelectionChange. */
+  afterText?: string;
+};
 
 export type EditorHandle = {
   getSelection: () => SelectionRange | null;
@@ -106,7 +114,14 @@ export function Editor({
       if (!editor) return null;
       const { from, to } = editor.state.selection;
       if (from === to) return null;
-      return { text: editor.state.doc.textBetween(from, to, " "), from, to };
+      const { doc } = editor.state;
+      return {
+        text: doc.textBetween(from, to, " "),
+        from,
+        to,
+        beforeText: doc.textBetween(0, from, "\n\n").trimStart(),
+        afterText: doc.textBetween(to, doc.content.size, "\n\n").trimEnd(),
+      };
     },
     replaceRange: (from: number, to: number, html: string) => {
       editor?.chain().setTextSelection({ from, to }).insertContent(html).run();

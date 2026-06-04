@@ -41,6 +41,8 @@ type CanvasShellProps = {
   detail: ReactNode;
   caption: string;
   dots?: CanvasDot[];
+  /** An extra, highlighted "you are here" dot (e.g. the writer's draft, #10). */
+  marker?: CanvasDot | null;
   onSelectDot?: (id: string | null) => void;
 };
 
@@ -49,6 +51,7 @@ export function CanvasShell({
   detail,
   caption,
   dots = [],
+  marker = null,
   onSelectDot,
 }: CanvasShellProps) {
   const hasDots = dots.length > 0;
@@ -102,6 +105,7 @@ export function CanvasShell({
               <div className="absolute inset-0">
                 <InkwellCanvas
                   dots={dots}
+                  marker={marker}
                   viewState={viewState}
                   onViewStateChange={handleControllerChange}
                   onSelect={onSelectDot}

@@ -15,6 +15,10 @@ const SCALE = 200;
 
 const DEFAULT_RGB: [number, number, number] = [40, 50, 80];
 
+// The draft marker (#10) — a warm amber so "you" reads instantly against the
+// corpus's mostly cool blots, independent of the hue-source toggle.
+const MARKER_RGB: [number, number, number] = [198, 134, 40];
+
 export const MIN_ZOOM = -3;
 export const MAX_ZOOM = 8;
 
@@ -105,13 +109,15 @@ const FALLBACK_ICON: DeckIcon = buildIcon(BLOT_SHAPES[0] ?? "M0,0 Z");
 
 type Props = {
   dots: CanvasDot[];
+  /** A highlighted "you are here" dot drawn on top of the corpus (#10). */
+  marker?: CanvasDot | null;
   viewState: OrthographicViewState;
   onViewStateChange: (vs: OrthographicViewState) => void;
   /** Called with a blot's id on click, or null when the background is clicked. */
   onSelect?: (id: string | null) => void;
 };
 
-export function InkwellCanvas({ dots, viewState, onViewStateChange, onSelect }: Props) {
+export function InkwellCanvas({ dots, marker, viewState, onViewStateChange, onSelect }: Props) {
   const { blotSize, blotOpacity, labelOpacity } = zoomDriven(scalarZoom(viewState.zoom));
 
   const blotLayer = new IconLayer<CanvasDot>({
@@ -160,13 +166,65 @@ export function InkwellCanvas({ dots, viewState, onViewStateChange, onSelect }: 
     },
   });
 
+  // Draft marker (#10) — a soft halo, the amber dot, and an always-visible
+  // label, drawn on top of the corpus so "you are here" never hides among the
+  // blots at any zoom. Non-pickable: clicks fall through to the books beneath.
+  const markerData = marker ? [marker] : [];
+  const markerLayers = marker
+    ? [
+        new IconLayer<CanvasDot>({
+          id: "draft-halo",
+          data: markerData,
+          pickable: false,
+          opacity: 0.3,
+          sizeUnits: "pixels",
+          getPosition: (d) => [d.x * SCALE, d.y * SCALE, 0],
+          getIcon: () => FALLBACK_ICON,
+          getSize: blotSize * 1.85,
+          sizeMinPixels: 42,
+          getColor: () => [...MARKER_RGB, 255],
+        }),
+        new IconLayer<CanvasDot>({
+          id: "draft-marker",
+          data: markerData,
+          pickable: false,
+          sizeUnits: "pixels",
+          getPosition: (d) => [d.x * SCALE, d.y * SCALE, 0],
+          getIcon: () => FALLBACK_ICON,
+          getSize: blotSize,
+          sizeMinPixels: 24,
+          getColor: () => [...MARKER_RGB, 255],
+        }),
+        new TextLayer<CanvasDot>({
+          id: "draft-label",
+          data: markerData,
+          pickable: false,
+          sizeUnits: "pixels",
+          fontFamily: 'Georgia, "Times New Roman", serif',
+          fontWeight: 600,
+          getPosition: (d) => [d.x * SCALE, d.y * SCALE, 0],
+          getText: (d) => d.title,
+          getSize: 12,
+          getColor: [...MARKER_RGB, 255],
+          getPixelOffset: [0, -Math.round(blotSize * 0.7)],
+          getTextAnchor: "middle",
+          getAlignmentBaseline: "bottom",
+          background: true,
+          backgroundPadding: [5, 3],
+          getBackgroundColor: [250, 248, 244, 235],
+          getBorderColor: [...MARKER_RGB, 90],
+          getBorderWidth: 1,
+        }),
+      ]
+    : [];
+
   return (
     <DeckGL
       views={new OrthographicView({ id: "ortho" })}
       viewState={viewState}
       onViewStateChange={({ viewState: next }) => onViewStateChange(next as OrthographicViewState)}
       controller={true}
-      layers={[blotLayer, labelLayer]}
+      layers={[blotLayer, labelLayer, ...markerLayers]}
       style={{ background: "transparent" }}
       onClick={(info) => {
         const picked = (info.object as CanvasDot | undefined)?.id ?? null;

@@ -1,8 +1,10 @@
 "use client";
 
-import { Check, Cloud, CloudOff, Loader2, Sparkles, X } from "lucide-react";
+import { Cloud, CloudOff, Loader2, Sparkles, X } from "lucide-react";
 import { useEffect, useRef, useState, useTransition } from "react";
+import { DiffActions, DiffText } from "@/components/quill/diff-view";
 import { Editor, type EditorHandle, type SelectionRange } from "@/components/quill/editor";
+import { useDiff } from "@/components/quill/use-diff";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -53,6 +55,14 @@ export default function QuillPage() {
   const [rewrite, setRewrite] = useState<TargetRewrite | null>(null);
   const [rewriteError, setRewriteError] = useState<string | null>(null);
   const [isRewriting, startRewrite] = useTransition();
+  const [highlightPending, setHighlightPending] = useState(false);
+
+  // Diff state — computed from the current draft and the active rewrite.
+  // When rewrite is null we pass empty strings; useDiff handles that gracefully.
+  const diff = useDiff(
+    rewrite ? (committedSelection?.text ?? plainText(draft)) : "",
+    rewrite?.rewrite ?? "",
+  );
   // Bumping this remounts the Editor with new initialContent — TipTap
   // doesn't expose a reactive `value` prop and remount is the least
   // invasive way to replace the buffer when the user accepts a rewrite
@@ -160,9 +170,8 @@ export default function QuillPage() {
     });
   };
 
-  const acceptRewrite = () => {
-    if (!rewrite) return;
-    const html = rewrite.rewrite
+  const acceptRewrite = (resolvedText: string) => {
+    const html = resolvedText
       .split(/\n\s*\n+/)
       .map((p) => p.trim())
       .filter(Boolean)
@@ -217,14 +226,37 @@ export default function QuillPage() {
             className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-ink-bleed to-transparent opacity-60"
           />
           <CardContent className="p-6 sm:p-8">
-            <Editor
-              key={editorKey}
-              ref={editorRef}
-              initialContent={draft}
-              placeholder="Write a paragraph and watch the ink reveal itself…"
-              onChange={setDraft}
-              onSelectionChange={(sel) => setLiveSelection(sel?.text ?? null)}
-            />
+            {mode === "target" && rewrite ? (
+              <div className="flex flex-col gap-4">
+                <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
+                  Suggested rewrite
+                </h2>
+                <DiffActions
+                  resolvedCount={diff.resolvedCount}
+                  totalChanges={diff.totalChanges}
+                  onApply={() => acceptRewrite(diff.resolvedText())}
+                  onAcceptAll={() => acceptRewrite(rewrite.rewrite)}
+                  onReject={rejectRewrite}
+                  onHighlightEnter={() => setHighlightPending(true)}
+                  onHighlightLeave={() => setHighlightPending(false)}
+                />
+                <DiffText
+                  segments={diff.segments}
+                  states={diff.states}
+                  setHunkState={diff.setHunkState}
+                  highlightPending={highlightPending}
+                />
+              </div>
+            ) : (
+              <Editor
+                key={editorKey}
+                ref={editorRef}
+                initialContent={draft}
+                placeholder="Write a paragraph and watch the ink reveal itself…"
+                onChange={setDraft}
+                onSelectionChange={(sel) => setLiveSelection(sel?.text ?? null)}
+              />
+            )}
           </CardContent>
         </Card>
 
@@ -252,21 +284,11 @@ export default function QuillPage() {
               hasRewrite={rewrite !== null}
               selectionText={liveSelection}
               onClearSelection={() => setLiveSelection(null)}
+              error={rewriteError}
             />
           )}
         </aside>
       </div>
-
-      {mode === "target" && (rewrite || rewriteError || isRewriting) && (
-        <RewritePanel
-          original={committedSelection?.text ?? draft}
-          rewrite={rewrite}
-          isPending={isRewriting}
-          error={rewriteError}
-          onAccept={acceptRewrite}
-          onReject={rejectRewrite}
-        />
-      )}
     </div>
   );
 }
@@ -350,6 +372,7 @@ function TargetPicker({
   hasRewrite,
   selectionText,
   onClearSelection,
+  error,
 }: {
   target: string;
   onTargetChange: (s: string) => void;
@@ -361,6 +384,7 @@ function TargetPicker({
   hasRewrite: boolean;
   selectionText: string | null;
   onClearSelection: () => void;
+  error: string | null;
 }) {
   const effectiveWordCount = selectionText ? countWords(selectionText) : wordCount;
   const canAsk = effectiveWordCount >= 3 && target.trim().length > 0 && !isPending;
@@ -432,74 +456,10 @@ function TargetPicker({
           )}
           {buttonLabel}
         </Button>
-      </CardContent>
-    </Card>
-  );
-}
-
-function RewritePanel({
-  original,
-  rewrite,
-  isPending,
-  error,
-  onAccept,
-  onReject,
-}: {
-  original: string;
-  rewrite: TargetRewrite | null;
-  isPending: boolean;
-  error: string | null;
-  onAccept: () => void;
-  onReject: () => void;
-}) {
-  return (
-    <Card className="mt-6 bg-card/60">
-      <CardContent className="flex flex-col gap-4 p-6">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
-            Suggested rewrite
-          </h2>
-          {!isPending && rewrite && (
-            <span className="text-[11px] italic text-muted-foreground">
-              Accept replaces your draft. Reject keeps it.
-            </span>
-          )}
-        </div>
-
-        {isPending ? (
-          <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" /> Claude is rewriting…
-          </div>
-        ) : error ? (
-          <p className="text-xs italic text-destructive">{error}</p>
-        ) : rewrite ? (
-          <>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <h3 className="text-[10px] tracking-wider text-muted-foreground uppercase">
-                  Original
-                </h3>
-                <p className="mt-2 font-serif text-base leading-relaxed whitespace-pre-wrap text-ink-deep/70">
-                  {plainText(original)}
-                </p>
-              </div>
-              <div>
-                <h3 className="text-[10px] tracking-wider text-ink-bleed uppercase">Nudge</h3>
-                <p className="mt-2 font-serif text-base leading-relaxed whitespace-pre-wrap text-ink-deep">
-                  {rewrite.rewrite}
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={onReject}>
-                <X className="size-4" /> Keep original
-              </Button>
-              <Button size="sm" onClick={onAccept}>
-                <Check className="size-4" /> Use the nudge
-              </Button>
-            </div>
-          </>
-        ) : null}
+        {isPending && (
+          <p className="text-[11px] italic text-muted-foreground">Claude is rewriting…</p>
+        )}
+        {error && <p className="text-[11px] italic text-destructive">{error}</p>}
       </CardContent>
     </Card>
   );

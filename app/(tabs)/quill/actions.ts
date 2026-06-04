@@ -9,6 +9,7 @@ import { ensureScribe } from "@/lib/auth/scribe";
 import { getDb, schema } from "@/lib/db";
 import { rewriteFromDiff, type TargetRewrite } from "@/lib/quill/diff";
 import { fingerprintDistance } from "@/lib/quill/fingerprint";
+import { clampForModel, MAX_BAND_PARAGRAPHS } from "@/lib/quill/limits";
 import { type ClassicalFeatures, extractClassical } from "@/lib/stylometry/classical";
 
 export type { TargetRewrite } from "@/lib/quill/diff";
@@ -57,7 +58,7 @@ export async function deriveTextColour(rawText: string): Promise<TextColour | nu
     model: anthropic("claude-sonnet-4-6"),
     schema: ResponseSchema,
     system: SYSTEM_PROMPT,
-    prompt: text,
+    prompt: clampForModel(text),
     maxRetries: 2,
   });
   return object;
@@ -71,7 +72,9 @@ export async function deriveTextColour(rawText: string): Promise<TextColour | nu
  * already have cached, so a typing burst re-derives at most the edited block.
  */
 export async function deriveParagraphHues(paragraphs: string[]): Promise<(TextColour | null)[]> {
-  return Promise.all(paragraphs.map((p) => deriveTextColour(p)));
+  // Cap the fan-out so a very long draft can't trigger an unbounded burst of
+  // model calls; paragraphs past the limit stay neutral in the band.
+  return Promise.all(paragraphs.slice(0, MAX_BAND_PARAGRAPHS).map((p) => deriveTextColour(p)));
 }
 
 /**
@@ -232,7 +235,7 @@ export async function suggestRewrite(input: {
     model: anthropic("claude-sonnet-4-6"),
     schema: RewriteResponseSchema,
     system: REWRITE_SYSTEM_PROMPT,
-    prompt: `Target: ${target}\n\nOriginal:\n${text}`,
+    prompt: `Target: ${target}\n\nOriginal:\n${clampForModel(text)}`,
     maxRetries: 2,
   });
 
@@ -268,7 +271,7 @@ export async function rewriteSelection(text: string, target: string): Promise<st
   const { text: out } = await generateText({
     model: anthropic("claude-sonnet-4-6"),
     system: SELECTION_REWRITE_PROMPT,
-    prompt: `Target: ${aim}\n\nPassage:\n${passage}`,
+    prompt: `Target: ${aim}\n\nPassage:\n${clampForModel(passage)}`,
     maxRetries: 2,
   });
   return out.trim();

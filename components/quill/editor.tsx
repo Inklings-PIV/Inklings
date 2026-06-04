@@ -116,7 +116,7 @@ export function Editor({
       if (from === to) return null;
       const { doc } = editor.state;
       return {
-        text: doc.textBetween(from, to, " "),
+        text: doc.textBetween(from, to, "\n\n"),
         from,
         to,
         beforeText: doc.textBetween(0, from, "\n\n").trimStart(),

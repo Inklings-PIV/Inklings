@@ -22,7 +22,7 @@ export function DiffText({
   highlightPending?: boolean;
 }) {
   return (
-    <div className="min-h-[400px] font-serif text-base leading-relaxed text-ink-deep">
+    <div className="min-h-[400px] whitespace-pre-wrap font-serif text-base leading-relaxed text-ink-deep">
       {segments.map((seg) => {
         if (seg.type === "unchanged") {
           return <span key={seg.id}>{seg.value}</span>;

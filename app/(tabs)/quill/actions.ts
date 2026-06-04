@@ -63,9 +63,12 @@ export async function deriveTextColour(rawText: string): Promise<TextColour | nu
 
 function stripHtml(s: string): string {
   return s
-    .replace(/<[^>]+>/g, " ")
+    .replace(/<\/?(p|div|h[1-6]|li|br)[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ")
-    .replace(/\s+/g, " ");
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function countWords(s: string): number {

@@ -18,16 +18,27 @@ import {
   Redo2,
   Undo2,
 } from "lucide-react";
+import { useImperativeHandle } from "react";
 import { cn } from "@/lib/utils";
+
+export type SelectionRange = { text: string; from: number; to: number };
+
+export type EditorHandle = {
+  getSelection: () => SelectionRange | null;
+  replaceRange: (from: number, to: number, html: string) => void;
+};
 
 type EditorProps = {
   /** Initial HTML to seed the editor with. */
   initialContent?: string;
   /** Called with the editor's HTML on every change. */
   onChange?: (html: string) => void;
+  /** Called whenever the selection changes — null when cursor only. */
+  onSelectionChange?: (sel: SelectionRange | null) => void;
   /** Visible placeholder when the editor is empty. */
   placeholder?: string;
   className?: string;
+  ref?: React.Ref<EditorHandle>;
 };
 
 /**
@@ -39,7 +50,14 @@ type EditorProps = {
  * decision (local-only by default vs server-stored). The page can pass
  * `onChange` to handle the saved text however it wants.
  */
-export function Editor({ initialContent = "", onChange, placeholder, className }: EditorProps) {
+export function Editor({
+  initialContent = "",
+  onChange,
+  onSelectionChange,
+  placeholder,
+  className,
+  ref,
+}: EditorProps) {
   const editor = useEditor({
     extensions: [StarterKit],
     content: initialContent,
@@ -69,7 +87,31 @@ export function Editor({ initialContent = "", onChange, placeholder, className }
     onUpdate: ({ editor: ed }) => {
       onChange?.(ed.getHTML());
     },
+    onSelectionUpdate: ({ editor: ed }) => {
+      const { from, to } = ed.state.selection;
+      if (from === to) {
+        onSelectionChange?.(null);
+      } else {
+        onSelectionChange?.({
+          text: ed.state.doc.textBetween(from, to, " "),
+          from,
+          to,
+        });
+      }
+    },
   });
+
+  useImperativeHandle(ref, () => ({
+    getSelection: () => {
+      if (!editor) return null;
+      const { from, to } = editor.state.selection;
+      if (from === to) return null;
+      return { text: editor.state.doc.textBetween(from, to, " "), from, to };
+    },
+    replaceRange: (from: number, to: number, html: string) => {
+      editor?.chain().setTextSelection({ from, to }).insertContent(html).run();
+    },
+  }));
 
   return (
     <div className={cn("flex flex-col gap-3", className)}>

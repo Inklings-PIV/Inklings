@@ -1,8 +1,8 @@
 "use client";
 
 import { Check, Cloud, CloudOff, Loader2, Sparkles, X } from "lucide-react";
-import { useEffect, useState, useTransition } from "react";
-import { Editor } from "@/components/quill/editor";
+import { useEffect, useRef, useState, useTransition } from "react";
+import { Editor, type EditorHandle, type SelectionRange } from "@/components/quill/editor";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -40,6 +40,12 @@ export default function QuillPage() {
   // runs — otherwise the first render would wipe a saved draft with
   // the empty default and immediately delete the cloud row.
   const [hydrated, setHydrated] = useState(false);
+
+  const editorRef = useRef<EditorHandle>(null);
+  // Live selection text drives the sidebar indicator; committed selection is
+  // frozen at request-time and used to splice the rewrite back in on accept.
+  const [liveSelection, setLiveSelection] = useState<string | null>(null);
+  const [committedSelection, setCommittedSelection] = useState<SelectionRange | null>(null);
 
   // Target mode state.
   const [target, setTarget] = useState("");
@@ -134,11 +140,14 @@ export default function QuillPage() {
   }, [draft]);
 
   const requestRewrite = () => {
+    const sel = editorRef.current?.getSelection() ?? null;
+    setCommittedSelection(sel);
     setRewriteError(null);
     setRewrite(null);
     startRewrite(async () => {
       try {
-        const result = await suggestRewrite({ text: draft, target });
+        const text = sel?.text ?? draft;
+        const result = await suggestRewrite({ text, target });
         if (!result) {
           setRewriteError("Write at least 8 words and enter a target before asking for a rewrite.");
           return;
@@ -152,22 +161,28 @@ export default function QuillPage() {
 
   const acceptRewrite = () => {
     if (!rewrite) return;
-    // Wrap each non-empty line in <p>…</p> so TipTap renders paragraphs
-    // properly when it remounts. Claude returns plain text with newlines.
     const html = rewrite.rewrite
       .split(/\n\s*\n+/)
       .map((p) => p.trim())
       .filter(Boolean)
       .map((p) => `<p>${escapeHtml(p)}</p>`)
       .join("");
-    setDraft(html);
+    if (committedSelection) {
+      editorRef.current?.replaceRange(committedSelection.from, committedSelection.to, html);
+    } else {
+      setDraft(html);
+      setEditorKey((k) => k + 1);
+    }
     setRewrite(null);
-    setEditorKey((k) => k + 1);
+    setCommittedSelection(null);
+    setLiveSelection(null);
   };
 
   const rejectRewrite = () => {
     setRewrite(null);
     setRewriteError(null);
+    setCommittedSelection(null);
+    setLiveSelection(null);
   };
 
   return (
@@ -203,9 +218,11 @@ export default function QuillPage() {
           <CardContent className="p-6 sm:p-8">
             <Editor
               key={editorKey}
+              ref={editorRef}
               initialContent={draft}
               placeholder="Write a paragraph and watch the ink reveal itself…"
               onChange={setDraft}
+              onSelectionChange={(sel) => setLiveSelection(sel?.text ?? null)}
             />
           </CardContent>
         </Card>
@@ -230,6 +247,8 @@ export default function QuillPage() {
               onRequest={requestRewrite}
               isPending={isRewriting}
               hasRewrite={rewrite !== null}
+              selectionText={liveSelection}
+              onClearSelection={() => setLiveSelection(null)}
             />
           )}
         </aside>
@@ -237,7 +256,7 @@ export default function QuillPage() {
 
       {mode === "target" && (rewrite || rewriteError || isRewriting) && (
         <RewritePanel
-          original={draft}
+          original={committedSelection?.text ?? draft}
           rewrite={rewrite}
           isPending={isRewriting}
           error={rewriteError}
@@ -316,6 +335,8 @@ function TargetPicker({
   onRequest,
   isPending,
   hasRewrite,
+  selectionText,
+  onClearSelection,
 }: {
   target: string;
   onTargetChange: (s: string) => void;
@@ -323,8 +344,16 @@ function TargetPicker({
   onRequest: () => void;
   isPending: boolean;
   hasRewrite: boolean;
+  selectionText: string | null;
+  onClearSelection: () => void;
 }) {
-  const canAsk = wordCount >= 8 && target.trim().length > 0 && !isPending;
+  const effectiveWordCount = selectionText ? countWords(selectionText) : wordCount;
+  const canAsk = effectiveWordCount >= 3 && target.trim().length > 0 && !isPending;
+  const buttonLabel = selectionText
+    ? "Nudge selection"
+    : hasRewrite
+      ? "Try another nudge"
+      : "Suggest a nudge";
   return (
     <Card>
       <CardContent className="flex flex-col gap-3 p-5">
@@ -342,13 +371,29 @@ function TargetPicker({
           Describe how you want the prose to feel — Claude will rewrite toward it. Colour names,
           authors' voices, or moods all work.
         </p>
+        {selectionText && (
+          <div className="flex items-center gap-1 rounded-md bg-ink-bleed/10 px-2 py-1 text-[11px] text-ink-bleed">
+            <span className="min-w-0 flex-1 truncate italic">
+              &ldquo;{selectionText.length > 48 ? `${selectionText.slice(0, 48)}…` : selectionText}
+              &rdquo;
+            </span>
+            <button
+              type="button"
+              aria-label="Clear selection"
+              onClick={onClearSelection}
+              className="shrink-0 rounded p-0.5 hover:bg-ink-bleed/20 transition-colors"
+            >
+              <X className="size-3" />
+            </button>
+          </div>
+        )}
         <Button size="sm" variant="outline" onClick={onRequest} disabled={!canAsk}>
           {isPending ? (
             <Loader2 className="size-4 animate-spin" />
           ) : (
             <Sparkles className="size-4" />
           )}
-          {hasRewrite ? "Try another nudge" : "Suggest a nudge"}
+          {buttonLabel}
         </Button>
       </CardContent>
     </Card>

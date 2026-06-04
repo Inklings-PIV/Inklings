@@ -9,8 +9,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { hueFromHSL } from "@/lib/colour/placeholder";
+import { driftToTarget } from "@/lib/quill/colour-distance";
 import { type FingerprintMetric, toFingerprint } from "@/lib/quill/fingerprint";
 import { htmlToMarkdown } from "@/lib/quill/markdown";
+import { nameToHsl } from "@/lib/quill/named-colours";
 import { splitParagraphs } from "@/lib/quill/paragraphs";
 import { computeWritingStats, type WritingStats } from "@/lib/quill/stats";
 import { cn } from "@/lib/utils";
@@ -18,6 +20,7 @@ import {
   deleteCloudDraft,
   deriveDraftStylometry,
   deriveParagraphHues,
+  deriveTargetColour,
   deriveTextColour,
   loadCloudDraft,
   nearestAuthors,
@@ -57,6 +60,8 @@ export default function QuillPage() {
 
   // Target mode state.
   const [target, setTarget] = useState("");
+  // The target descriptor resolved to a colour, for the drift meter (#5).
+  const [targetColour, setTargetColour] = useState<TextColour | null>(null);
   const [rewrite, setRewrite] = useState<TargetRewrite | null>(null);
   const [rewriteError, setRewriteError] = useState<string | null>(null);
   const [isRewriting, startRewrite] = useTransition();
@@ -262,6 +267,36 @@ export default function QuillPage() {
     if (!bandVisible) setHighlight(null);
   }, [bandVisible]);
 
+  // Resolve the target descriptor to a colour for the drift meter (#5). Common
+  // colour/mood words map locally and for free; anything else the model derives
+  // once, debounced so a burst of typing in the target field is a single call.
+  useEffect(() => {
+    if (mode !== "target") return;
+    const aim = target.trim();
+    if (!aim) {
+      setTargetColour(null);
+      return;
+    }
+    const named = nameToHsl(aim);
+    if (named) {
+      setTargetColour({ ...named, justification: aim });
+      return;
+    }
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        const colour = await deriveTargetColour(aim);
+        if (!cancelled) setTargetColour(colour);
+      } catch {
+        // Keep the last resolved target colour on a transient failure.
+      }
+    }, 600);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [target, mode]);
+
   const requestRewrite = () => {
     setRewriteError(null);
     setRewrite(null);
@@ -379,6 +414,7 @@ export default function QuillPage() {
               hasRewrite={rewrite !== null}
             />
           )}
+          {mode === "target" && <DriftMeter readout={readout} target={targetColour} />}
         </aside>
       </div>
 
@@ -690,6 +726,78 @@ function StyleFingerprint({ metrics }: { metrics: FingerprintMetric[] }) {
             </li>
           ))}
         </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Drift-to-target meter (#5) — a live bar showing how close the draft's hue has
+ * drifted toward the target's. Both sit on the same HSL scale, so the gap is
+ * meaningful; the bar fills as the writer edits toward the target, turning the
+ * abstract "style space" into direct, playful feedback. Shown only in target
+ * mode, once a target colour has resolved.
+ */
+function DriftMeter({
+  readout,
+  target,
+}: {
+  readout: TextColour | null;
+  target: TextColour | null;
+}) {
+  if (!target) return null;
+  const proximity = readout ? driftToTarget(readout, target) : 0;
+  const pct = Math.round(proximity * 100);
+  const targetCss = hueFromHSL(target.hue, target.saturation, target.lightness).css;
+  const draftCss = readout
+    ? hueFromHSL(readout.hue, readout.saturation, readout.lightness).css
+    : "var(--muted)";
+
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-2.5 p-5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
+            Drift to target
+          </h2>
+          <span className="text-[11px] tabular-nums text-muted-foreground">
+            {readout ? `${pct}%` : "—"}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span
+            aria-hidden="true"
+            className="size-3 shrink-0 rounded-full border border-border"
+            style={{ backgroundColor: draftCss }}
+            title="your current hue"
+          />
+          <div
+            className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-valuenow={readout ? pct : 0}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`Drift toward ${target.justification}`}
+          >
+            <div
+              className="h-full rounded-full transition-[width] duration-500 ease-out"
+              style={{ width: `${Math.max(2, proximity * 100)}%`, backgroundColor: targetCss }}
+            />
+          </div>
+          <span
+            aria-hidden="true"
+            className="size-3 shrink-0 rounded-full border border-border"
+            style={{ backgroundColor: targetCss }}
+            title="target hue"
+          />
+        </div>
+        <p className="text-[11px] italic leading-snug text-muted-foreground">
+          {readout
+            ? pct >= 90
+              ? "You're there — the ink matches your target."
+              : `${pct}% to “${target.justification}”. Keep nudging.`
+            : "Write a few words and the meter will find your target."}
+        </p>
       </CardContent>
     </Card>
   );

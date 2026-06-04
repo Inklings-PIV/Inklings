@@ -65,6 +65,28 @@ export async function deriveTextColour(rawText: string): Promise<TextColour | nu
 }
 
 /**
+ * Maps a short target descriptor — a colour name, mood, or author's voice
+ * ("warm, melancholy", "Hemingway-like") — to its HSL, for the "drift to
+ * target" meter (#5). Same synaesthetic mapping as {@link deriveTextColour},
+ * but without the word floor: targets are deliberately terse. The page resolves
+ * common colour words locally first (named-colours) and only calls this for
+ * descriptors the lexicon doesn't cover, so it fires at most once per target.
+ */
+export async function deriveTargetColour(target: string): Promise<TextColour | null> {
+  const aim = target.trim();
+  if (aim.length === 0) return null;
+
+  const { object } = await generateObject({
+    model: anthropic("claude-sonnet-4-6"),
+    schema: ResponseSchema,
+    system: SYSTEM_PROMPT,
+    prompt: clampForModel(aim),
+    maxRetries: 2,
+  });
+  return object;
+}
+
+/**
  * Per-paragraph hues for the EmoArc band (B5). Derives a colour for each
  * paragraph in parallel so the writer sees the stylistic arc across the text,
  * not just one global swatch. Paragraphs too short to read return null (the

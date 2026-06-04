@@ -1,9 +1,18 @@
 "use client";
 
-import { ClipboardCopy, Cloud, CloudOff, Download, Loader2, Sparkles } from "lucide-react";
+import {
+  ClipboardCopy,
+  Cloud,
+  CloudOff,
+  Download,
+  Lightbulb,
+  Loader2,
+  Sparkles,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Editor, type EditorHandle } from "@/components/quill/editor";
+import { HueExplainer } from "@/components/quill/hue-explainer";
 import { RewritePanel } from "@/components/quill/rewrite-panel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -22,6 +31,8 @@ import {
   deriveParagraphHues,
   deriveTargetColour,
   deriveTextColour,
+  explainHue,
+  type HueSegment,
   loadCloudDraft,
   nearestAuthors,
   rewriteSelection,
@@ -48,6 +59,12 @@ export default function QuillPage() {
   const [draft, setDraft] = useState("");
   const [readout, setReadout] = useState<TextColour | null>(null);
   const [isPending, startReadout] = useTransition();
+
+  // Counterfactual hue explanation (#2) — "Why this colour?" reveals which words
+  // drive the hue. Off by default; derived (and paid for) only while it's open.
+  const [explain, setExplain] = useState(false);
+  const [explanation, setExplanation] = useState<HueSegment[] | null>(null);
+  const [explainPending, setExplainPending] = useState(false);
 
   // Cloud-save opt-in (#71). Both pieces of state are mirrored to
   // localStorage so the preference + the draft survive refreshes.
@@ -180,6 +197,28 @@ export default function QuillPage() {
       clearTimeout(handle);
     };
   }, [draft]);
+
+  // Debounced counterfactual explanation (#2) — only while the panel is open and
+  // in readout mode, so we pay for it on demand. Same 700 ms window; latest wins.
+  useEffect(() => {
+    if (mode !== "readout" || !explain) return;
+    let cancelled = false;
+    setExplainPending(true);
+    const handle = setTimeout(async () => {
+      try {
+        const segments = await explainHue(draft);
+        if (!cancelled) setExplanation(segments);
+      } catch {
+        // Transient model/network error — keep the last explanation.
+      } finally {
+        if (!cancelled) setExplainPending(false);
+      }
+    }, 700);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [draft, mode, explain]);
 
   // Debounced stylometric fingerprint — same 700 ms window as the hue readout.
   useEffect(() => {
@@ -388,6 +427,9 @@ export default function QuillPage() {
             </CardContent>
           </Card>
           {stats.words > 0 && <WritingStatsBar stats={stats} />}
+          {mode === "readout" && explain && (
+            <HueExplainer segments={explanation} tint={readout} isPending={explainPending} />
+          )}
         </div>
 
         <aside className="flex flex-col gap-4">
@@ -396,6 +438,8 @@ export default function QuillPage() {
             wordCount={countWords(draft)}
             readout={readout}
             isPending={isPending}
+            explain={explain}
+            onToggleExplain={() => setExplain((v) => !v)}
           />
           {fingerprint && <StyleFingerprint metrics={fingerprint} />}
           {neighbours.length > 0 && <NeighbourAuthors neighbours={neighbours} />}
@@ -446,11 +490,15 @@ function HueReadout({
   wordCount,
   readout,
   isPending,
+  explain,
+  onToggleExplain,
 }: {
   mode: QuillMode;
   wordCount: number;
   readout: TextColour | null;
   isPending: boolean;
+  explain: boolean;
+  onToggleExplain: () => void;
 }) {
   const swatchCss = readout
     ? hueFromHSL(readout.hue, readout.saturation, readout.lightness).css
@@ -485,6 +533,23 @@ function HueReadout({
           <p className="text-[11px] tabular-nums text-muted-foreground">
             {wordCount} {wordCount === 1 ? "word" : "words"}
           </p>
+        )}
+        {mode === "readout" && readout && (
+          <button
+            type="button"
+            aria-pressed={explain}
+            onClick={onToggleExplain}
+            className={cn(
+              "inline-flex h-7 items-center gap-1.5 self-start rounded-md border px-2 text-[11px] transition-colors",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+              explain
+                ? "border-ink-deep bg-ink-deep text-ink-paper"
+                : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            <Lightbulb className="size-3.5" />
+            {explain ? "Hide why" : "Why this colour?"}
+          </button>
         )}
       </CardContent>
     </Card>

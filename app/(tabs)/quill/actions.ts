@@ -8,6 +8,7 @@ import { z } from "zod";
 import { ensureScribe } from "@/lib/auth/scribe";
 import { getDb, schema } from "@/lib/db";
 import { rewriteFromDiff, type TargetRewrite } from "@/lib/quill/diff";
+import { type HueSegment, tileInfluences } from "@/lib/quill/explain";
 import { fingerprintDistance } from "@/lib/quill/fingerprint";
 import { clampForModel, MAX_BAND_PARAGRAPHS } from "@/lib/quill/limits";
 import { type ClassicalFeatures, extractClassical } from "@/lib/stylometry/classical";
@@ -84,6 +85,53 @@ export async function deriveTargetColour(target: string): Promise<TextColour | n
     maxRetries: 2,
   });
   return object;
+}
+
+const EXPLAIN_SYSTEM_PROMPT = `You earlier mapped this prose to a single colour. Now explain that colour: pick the words and short phrases that MOST drive it — the ones that, if removed or changed, would shift the hue.
+
+For each, return:
+- "text": the exact substring, copied verbatim from the prose (same case, punctuation and spacing). A few words at most.
+- "weight": a number from -1 to 1. Positive = defines or intensifies the colour; negative = pulls against it (a note cutting across the dominant feel). Use the full range.
+- "reason": 2–6 words on why, e.g. "menacing adjectives", "warm domestic image". No period.
+
+Return the 3–8 strongest. Don't cover every word — only what actually moves the colour. Quote substrings exactly so they can be located in the text.`;
+
+const ExplainResponseSchema = z.object({
+  influences: z
+    .array(
+      z.object({
+        text: z.string().min(1).max(120),
+        weight: z.number().min(-1).max(1),
+        reason: z.string().min(2).max(80),
+      }),
+    )
+    .max(12),
+});
+
+export type { HueSegment } from "@/lib/quill/explain";
+
+/**
+ * Counterfactual explanation of the draft's hue (#2): the words and phrases that
+ * most drive (or fight) the colour, tiled back over the analysed text so the
+ * client can shade an inline heatmap and show each phrase's reason. Same cost
+ * profile and word floor as {@link deriveTextColour}; the page debounces it
+ * behind a "Why this colour?" toggle. The model only quotes the influential
+ * phrases — {@link tileInfluences} reconstructs the full text, so a loose quote
+ * degrades to "phrase dropped", never a corrupted overlay.
+ */
+export async function explainHue(rawText: string): Promise<HueSegment[] | null> {
+  const text = stripHtml(rawText).trim();
+  if (countWords(text) < MIN_WORDS) return null;
+
+  const clamped = clampForModel(text);
+  const { object } = await generateObject({
+    model: anthropic("claude-sonnet-4-6"),
+    schema: ExplainResponseSchema,
+    system: EXPLAIN_SYSTEM_PROMPT,
+    prompt: clamped,
+    maxRetries: 2,
+  });
+  return tileInfluences(clamped, object.influences);
 }
 
 /**

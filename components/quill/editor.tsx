@@ -1,6 +1,6 @@
 "use client";
 
-import { Plugin } from "@tiptap/pm/state";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import {
   EditorContent,
@@ -25,7 +25,7 @@ import {
   Undo2,
   WandSparkles,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   ContextMenu,
@@ -39,6 +39,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { hueFromHSL } from "@/lib/colour/placeholder";
+import { textblockRanges } from "@/lib/quill/blocks";
 import { NUDGE_PRESETS } from "@/lib/quill/nudge-presets";
 import { cn } from "@/lib/utils";
 
@@ -62,6 +63,19 @@ type EditorProps = {
   onDeriveHue?: (text: string) => Promise<SelectionColour | null>;
   /** Right-click "Rewrite" presets — rewrite the selection toward a target. */
   onRewriteSelection?: (text: string, target: string) => Promise<string | null>;
+  /**
+   * EmoArc band → editor link: the hue-band segment currently hovered. The
+   * matching block is tinted in its own colour and scrolled into view. `tint`
+   * is a CSS colour (the segment's hue) used for the wash; null falls back to
+   * the ink accent. Pass null to clear the highlight.
+   */
+  highlightBlock?: { index: number; tint?: string | null } | null;
+};
+
+/** Imperative handle for the Quill editor, exposed via `ref`. */
+export type EditorHandle = {
+  /** Select the block at hue-band segment `index` and scroll it into view. */
+  focusBlock: (index: number) => void;
 };
 
 // Marks the top-level block holding the caret with `quill-focus-active`, so
@@ -91,6 +105,47 @@ const FocusActiveBlock = Extension.create({
   },
 });
 
+/** Which block the EmoArc band is pointing at, plus the wash colour to use. */
+type EmoArcState = { index: number; tint: string | null } | null;
+const emoArcKey = new PluginKey<EmoArcState>("emoArcHighlight");
+
+// Tints + outlines the block the EmoArc hue band is hovering, turning the band
+// into a navigation control over the prose. The target index lives in plugin
+// state (pushed in via a meta-only transaction from React) rather than the
+// selection, so it tracks the band — not the caret — and a meta-only
+// transaction has no doc change, so it won't loop through onUpdate.
+const EmoArcHighlight = Extension.create({
+  name: "emoArcHighlight",
+  addProseMirrorPlugins() {
+    return [
+      new Plugin<EmoArcState>({
+        key: emoArcKey,
+        state: {
+          init: () => null,
+          apply(tr, value) {
+            const meta = tr.getMeta(emoArcKey) as EmoArcState | undefined;
+            return meta === undefined ? value : meta;
+          },
+        },
+        props: {
+          decorations(state) {
+            const focus = emoArcKey.getState(state);
+            if (!focus) return null;
+            const range = textblockRanges(state.doc)[focus.index];
+            if (!range) return null;
+            return DecorationSet.create(state.doc, [
+              Decoration.node(range.from - 1, range.to + 1, {
+                class: "quill-emoarc-active",
+                ...(focus.tint ? { style: `--emoarc-tint:${focus.tint}` } : {}),
+              }),
+            ]);
+          },
+        },
+      }),
+    ];
+  },
+});
+
 /**
  * TipTap editor wired with StarterKit (bold/italic/headings/lists/quote
  * keyboard shortcuts), a right-click context menu, and an optional focus mode
@@ -100,14 +155,18 @@ const FocusActiveBlock = Extension.create({
  * decision (local-only by default vs server-stored). The page can pass
  * `onChange` to handle the saved text however it wants.
  */
-export function Editor({
-  initialContent = "",
-  onChange,
-  placeholder,
-  className,
-  onDeriveHue,
-  onRewriteSelection,
-}: EditorProps) {
+export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
+  {
+    initialContent = "",
+    onChange,
+    placeholder,
+    className,
+    onDeriveHue,
+    onRewriteSelection,
+    highlightBlock,
+  },
+  ref,
+) {
   // Track selection emptiness so the right-click menu can disable
   // selection-only actions; updated on every selection change.
   const [hasSelection, setHasSelection] = useState(false);
@@ -118,7 +177,7 @@ export function Editor({
   const readHueRef = useRef<() => void>(() => undefined);
 
   const editor = useEditor({
-    extensions: [StarterKit, FocusActiveBlock],
+    extensions: [StarterKit, FocusActiveBlock, EmoArcHighlight],
     content: initialContent,
     onSelectionUpdate: ({ editor: ed }) => {
       setHasSelection(!ed.state.selection.empty);
@@ -225,6 +284,43 @@ export function Editor({
   const canHue = hasSelection && !!onDeriveHue;
   const canRewrite = hasSelection && !!onRewriteSelection;
 
+  // Drive the EmoArc highlight from the band's hovered segment. Split into
+  // primitives so the effect only fires when the target block (or its tint)
+  // actually changes, not on every parent re-render.
+  const highlightIndex = highlightBlock?.index ?? null;
+  const highlightTint = highlightBlock?.tint ?? null;
+  useEffect(() => {
+    if (!editor) return;
+    const focus = highlightIndex == null ? null : { index: highlightIndex, tint: highlightTint };
+    // Meta-only transaction: updates the decoration without touching the doc.
+    editor.view.dispatch(editor.state.tr.setMeta(emoArcKey, focus));
+    if (!focus) return;
+    const range = textblockRanges(editor.state.doc)[focus.index];
+    if (!range) return;
+    const at = editor.view.domAtPos(range.from).node;
+    const el = at instanceof HTMLElement ? at : at.parentElement;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    el?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "nearest" });
+  }, [editor, highlightIndex, highlightTint]);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      focusBlock(index) {
+        if (!editor) return;
+        const range = textblockRanges(editor.state.doc)[index];
+        if (!range) return;
+        editor
+          .chain()
+          .focus()
+          .setTextSelection({ from: range.from, to: range.to })
+          .scrollIntoView()
+          .run();
+      },
+    }),
+    [editor],
+  );
+
   // Keep the keymap pointed at the current readHue closure.
   readHueRef.current = readHue;
 
@@ -302,7 +398,7 @@ export function Editor({
       </ContextMenu>
     </div>
   );
-}
+});
 
 /**
  * Formatting toolbar above the editor. Uses `useEditorState` so it only

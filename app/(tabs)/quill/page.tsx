@@ -3,7 +3,7 @@
 import { ClipboardCopy, Cloud, CloudOff, Download, Loader2, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { Editor } from "@/components/quill/editor";
+import { Editor, type EditorHandle } from "@/components/quill/editor";
 import { RewritePanel } from "@/components/quill/rewrite-panel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -71,6 +71,11 @@ export default function QuillPage() {
   // the whole draft in Readout mode.
   const hueCacheRef = useRef<Record<string, TextColour | null>>({});
   const [band, setBand] = useState<BandSegment[]>([]);
+  // EmoArc band → editor link (#1). Hovering a band segment highlights its
+  // paragraph in the editor (tinted in that segment's own hue); clicking one
+  // jumps to it. The editor handle lets the click select the block imperatively.
+  const editorRef = useRef<EditorHandle>(null);
+  const [highlight, setHighlight] = useState<{ index: number; tint: string | null } | null>(null);
 
   // Live stylometric fingerprint of the draft (style-level). Cheap CPU-only
   // derivation, so we can recompute on the same cadence as the hue readout.
@@ -249,6 +254,14 @@ export default function QuillPage() {
     };
   }, [draft, mode]);
 
+  // Clear the EmoArc highlight whenever the band isn't on screen (mode switch,
+  // or the draft dropped below two paragraphs) — the band's own mouse-leave
+  // can't fire once it has unmounted, so a stale highlight would otherwise stick.
+  const bandVisible = mode === "readout" && band.length >= 2;
+  useEffect(() => {
+    if (!bandVisible) setHighlight(null);
+  }, [bandVisible]);
+
   const requestRewrite = () => {
     setRewriteError(null);
     setRewrite(null);
@@ -314,7 +327,13 @@ export default function QuillPage() {
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_280px]">
         <div className="flex flex-col gap-4">
-          {mode === "readout" && band.length >= 2 && <HueBand segments={band} />}
+          {bandVisible && (
+            <HueBand
+              segments={band}
+              onHover={(index, tint) => setHighlight(index == null ? null : { index, tint })}
+              onActivate={(index) => editorRef.current?.focusBlock(index)}
+            />
+          )}
           <Card className="relative overflow-hidden bg-card/60">
             <div
               aria-hidden="true"
@@ -323,11 +342,13 @@ export default function QuillPage() {
             <CardContent className="p-6 sm:p-8">
               <Editor
                 key={editorKey}
+                ref={editorRef}
                 initialContent={draft}
                 placeholder="Write a paragraph and watch the ink reveal itself…"
                 onChange={setDraft}
                 onDeriveHue={deriveTextColour}
                 onRewriteSelection={rewriteSelection}
+                highlightBlock={highlight}
               />
             </CardContent>
           </Card>
@@ -441,9 +462,29 @@ function HueReadout({
  * segment dims the rest and surfaces that paragraph's reading below — the band
  * is an index into the text, not just decoration.
  */
-function HueBand({ segments }: { segments: BandSegment[] }) {
+function HueBand({
+  segments,
+  onHover,
+  onActivate,
+}: {
+  segments: BandSegment[];
+  /** Hovered/focused segment index + its hue (null on leave) — drives the
+   *  editor highlight. */
+  onHover?: (index: number | null, tint: string | null) => void;
+  /** Clicked/activated segment index — jumps the editor to that paragraph. */
+  onActivate?: (index: number) => void;
+}) {
   const [hovered, setHovered] = useState<number | null>(null);
   const active = hovered != null ? segments[hovered] : null;
+
+  const enter = (index: number, tint: string | null) => {
+    setHovered(index);
+    onHover?.(index, tint);
+  };
+  const leave = () => {
+    setHovered(null);
+    onHover?.(null, null);
+  };
 
   return (
     <Card className="bg-card/60">
@@ -463,14 +504,16 @@ function HueBand({ segments }: { segments: BandSegment[] }) {
               <button
                 type="button"
                 key={seg.id}
-                onMouseEnter={() => setHovered(i)}
-                onMouseLeave={() => setHovered(null)}
-                onFocus={() => setHovered(i)}
-                onBlur={() => setHovered(null)}
+                onMouseEnter={() => enter(i, css ?? null)}
+                onMouseLeave={leave}
+                onFocus={() => enter(i, css ?? null)}
+                onBlur={leave}
+                onClick={() => onActivate?.(i)}
+                title="Jump to this paragraph"
                 aria-label={
                   seg.colour
-                    ? `Paragraph ${i + 1}: ${seg.colour.justification}`
-                    : `Paragraph ${i + 1}: too short to read`
+                    ? `Paragraph ${i + 1}: ${seg.colour.justification}. Jump to it.`
+                    : `Paragraph ${i + 1}: too short to read. Jump to it.`
                 }
                 className={cn(
                   "h-full flex-1 rounded-[2px] transition-all duration-200 ease-out",

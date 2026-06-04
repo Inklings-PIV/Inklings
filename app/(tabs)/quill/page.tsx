@@ -157,8 +157,12 @@ export default function QuillPage() {
     let cancelled = false;
     const handle = setTimeout(() => {
       startReadout(async () => {
-        const result = await deriveTextColour(draft);
-        if (!cancelled) setReadout(result);
+        try {
+          const result = await deriveTextColour(draft);
+          if (!cancelled) setReadout(result);
+        } catch {
+          // Transient model/network error — keep the last hue rather than crash.
+        }
       });
     }, 700);
     return () => {
@@ -171,8 +175,12 @@ export default function QuillPage() {
   useEffect(() => {
     let cancelled = false;
     const handle = setTimeout(async () => {
-      const features = await deriveDraftStylometry(draft);
-      if (!cancelled) setFingerprint(features ? toFingerprint(features) : null);
+      try {
+        const features = await deriveDraftStylometry(draft);
+        if (!cancelled) setFingerprint(features ? toFingerprint(features) : null);
+      } catch {
+        // Tolerate a failed derivation — leave the previous fingerprint.
+      }
     }, 700);
     return () => {
       cancelled = true;
@@ -185,8 +193,12 @@ export default function QuillPage() {
   useEffect(() => {
     let cancelled = false;
     const handle = setTimeout(async () => {
-      const matches = await nearestAuthors(draft);
-      if (!cancelled) setNeighbours(matches);
+      try {
+        const matches = await nearestAuthors(draft);
+        if (!cancelled) setNeighbours(matches);
+      } catch {
+        // Corpus read failed — keep whatever neighbours were last shown.
+      }
     }, 1500);
     return () => {
       cancelled = true;
@@ -210,14 +222,25 @@ export default function QuillPage() {
       const cache = hueCacheRef.current;
       const missing = paras.filter((p) => !(p in cache));
       if (missing.length > 0) {
-        const hues = await deriveParagraphHues(missing);
-        missing.forEach((p, i) => {
-          cache[p] = hues[i] ?? null;
-        });
+        try {
+          const hues = await deriveParagraphHues(missing);
+          missing.forEach((p, i) => {
+            cache[p] = hues[i] ?? null;
+          });
+        } catch {
+          // Band derivation failed — render what's cached, skip the rest.
+        }
       }
       if (cancelled) return;
+      // Prune the cache to the paragraphs currently on screen so it can't grow
+      // without bound over a long editing session.
+      hueCacheRef.current = Object.fromEntries(paras.map((p) => [p, cache[p] ?? null]));
       setBand(
-        paras.map((p, i) => ({ id: `${i}:${p.slice(0, 16)}`, text: p, colour: cache[p] ?? null })),
+        paras.map((p, i) => ({
+          id: `${i}:${p.slice(0, 16)}`,
+          text: p,
+          colour: hueCacheRef.current[p] ?? null,
+        })),
       );
     }, 800);
     return () => {

@@ -9,14 +9,16 @@ import {
   Lightbulb,
   Loader2,
   Sparkles,
+  X,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { ArcChart } from "@/components/quill/arc-chart";
-import { Editor, type EditorHandle } from "@/components/quill/editor";
+import { DiffActions, DiffText } from "@/components/quill/diff-view";
+import { Editor, type EditorHandle, type SelectionRange } from "@/components/quill/editor";
 import { HueExplainer } from "@/components/quill/hue-explainer";
-import { RewritePanel } from "@/components/quill/rewrite-panel";
 import { TargetWidgets } from "@/components/quill/target-widgets";
+import { useDiff } from "@/components/quill/use-diff";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -28,7 +30,6 @@ import { htmlToMarkdown } from "@/lib/quill/markdown";
 import { nameToHsl } from "@/lib/quill/named-colours";
 import { splitParagraphs } from "@/lib/quill/paragraphs";
 import { computeWritingStats, type WritingStats } from "@/lib/quill/stats";
-import { VARIANT_LENSES, variantTarget } from "@/lib/quill/variants";
 import { type WidgetSelection, widgetsToTarget } from "@/lib/quill/widgets";
 import { cn } from "@/lib/utils";
 import {
@@ -89,18 +90,25 @@ export default function QuillPage() {
   const [widgetSelection, setWidgetSelection] = useState<WidgetSelection>({});
   // The target descriptor resolved to a colour, for the drift meter (#5).
   const [targetColour, setTargetColour] = useState<TextColour | null>(null);
-  // Variant fan (idea #4): one target, three intensities (light/balanced/
-  // bold), fetched in parallel so the writer compares takes instead of
-  // accepting the first answer. `rewrite` is the variant currently in view.
-  const [variants, setVariants] = useState<(TargetRewrite | null)[] | null>(null);
-  const [variantIndex, setVariantIndex] = useState(0);
-  const rewrite = variants?.[variantIndex] ?? null;
-  const hasAnyVariant = variants?.some((v) => v != null) ?? false;
+  // Intensity slider (1–5) replaces the 3-variant fan.
+  const [intensity, setIntensity] = useState(3);
+  // Single rewrite result — inline diff replaces the modal RewritePanel.
+  const [rewrite, setRewrite] = useState<TargetRewrite | null>(null);
   const [rewriteError, setRewriteError] = useState<string | null>(null);
   const [isRewriting, startRewrite] = useTransition();
-  // Pre-rewrite snapshots (idea #4, history half). Accepting a rewrite
-  // remounts the editor and wipes TipTap's undo stack — this is the way back.
+  const [highlightPending, setHighlightPending] = useState(false);
+  // Pre-rewrite snapshots. Accepting a rewrite remounts the editor and wipes
+  // TipTap's undo stack — this is the way back.
   const [versions, setVersions] = useState<DraftVersion[]>([]);
+  // Live selection text drives the sidebar indicator; committed selection is
+  // frozen at request-time and used to splice the rewrite back in on accept.
+  const [liveSelection, setLiveSelection] = useState<string | null>(null);
+  const [committedSelection, setCommittedSelection] = useState<SelectionRange | null>(null);
+  // Diff state — computed from the active rewrite vs the committed text.
+  const diff = useDiff(
+    rewrite ? (committedSelection?.text ?? plainText(draft)) : "",
+    rewrite?.rewrite ?? "",
+  );
   // Bumping this remounts the Editor with new initialContent — TipTap
   // doesn't expose a reactive `value` prop and remount is the least
   // invasive way to replace the buffer when the user accepts a rewrite
@@ -384,40 +392,25 @@ export default function QuillPage() {
   }, [composedTarget, mode]);
 
   const requestRewrite = () => {
+    const sel = editorRef.current?.getSelection() ?? null;
+    setCommittedSelection(sel);
     setRewriteError(null);
-    setVariants(null);
+    setRewrite(null);
     startRewrite(async () => {
       try {
-        // One call per lens, in parallel. Bounded fan-out: exactly three,
-        // each clamped by clampForModel inside the action.
-        const results = await Promise.all(
-          VARIANT_LENSES.map((lens) => {
-            const target = variantTarget(lens.key, composedTarget);
-            return target
-              ? suggestRewrite({ text: draft, target }).catch(() => null)
-              : Promise.resolve(null);
-          }),
-        );
-        if (!results.some((r) => r != null)) {
+        const text = sel?.text ?? draft;
+        const result = await suggestRewrite({ text, target: composedTarget, intensity });
+        if (!result) {
           setRewriteError("Write at least 8 words and enter a target before asking for a rewrite.");
           return;
         }
-        setVariants(results);
-        setVariantIndex(
-          Math.max(
-            0,
-            results.findIndex((r) => r != null),
-          ),
-        );
+        setRewrite(result);
       } catch (err) {
         setRewriteError((err as Error).message);
       }
     });
   };
 
-  // Receives the text the writer chose to apply — either the full rewrite or
-  // only the changes they accepted (B4 ownership). Wrap each non-empty line in
-  // <p>…</p> so TipTap renders paragraphs properly when it remounts.
   const acceptRewrite = (text: string) => {
     const html = text
       .split(/\n\s*\n+/)
@@ -430,26 +423,33 @@ export default function QuillPage() {
     setVersions((stack) =>
       pushVersion(stack, { html: draft, sourceTarget: composedTarget, takenAt: Date.now() }),
     );
-    setDraft(html);
-    setVariants(null);
-    setEditorKey((k) => k + 1);
+    if (committedSelection) {
+      editorRef.current?.replaceRange(committedSelection.from, committedSelection.to, html);
+    } else {
+      setDraft(html);
+      setEditorKey((k) => k + 1);
+    }
+    setRewrite(null);
+    setCommittedSelection(null);
+    setLiveSelection(null);
   };
 
   const restoreVersion = (version: DraftVersion) => {
     // The current draft becomes a version too, so a restore is reversible.
-    // Empty sourceTarget → the list renders it as a plain "snapshot".
     setVersions((stack) =>
       pushVersion(stack, { html: draft, sourceTarget: "", takenAt: Date.now() }),
     );
     setDraft(version.html);
-    setVariants(null);
+    setRewrite(null);
     setRewriteError(null);
     setEditorKey((k) => k + 1);
   };
 
   const rejectRewrite = () => {
-    setVariants(null);
+    setRewrite(null);
     setRewriteError(null);
+    setCommittedSelection(null);
+    setLiveSelection(null);
   };
 
   return (
@@ -493,16 +493,53 @@ export default function QuillPage() {
               className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-ink-bleed to-transparent opacity-60"
             />
             <CardContent className="p-6 sm:p-8">
-              <Editor
-                key={editorKey}
-                ref={editorRef}
-                initialContent={draft}
-                placeholder="Write a paragraph and watch the ink reveal itself…"
-                onChange={setDraft}
-                onDeriveHue={deriveTextColour}
-                onRewriteSelection={rewriteSelection}
-                highlightBlock={highlight}
-              />
+              {mode === "target" && rewrite ? (
+                <div className="flex flex-col gap-3">
+                  <DiffActions
+                    resolvedCount={diff.resolvedCount}
+                    totalChanges={diff.totalChanges}
+                    onApply={() => acceptRewrite(diff.resolvedText())}
+                    onAcceptAll={() => acceptRewrite(rewrite.rewrite)}
+                    onReject={rejectRewrite}
+                    onHighlightEnter={() => setHighlightPending(true)}
+                    onHighlightLeave={() => setHighlightPending(false)}
+                  />
+                  {committedSelection?.beforeText?.split("\n\n").map((para) => (
+                    <p
+                      key={para}
+                      className="my-3 first:mt-0 font-serif text-lg leading-relaxed text-ink-deep/40 select-none"
+                    >
+                      {para}
+                    </p>
+                  ))}
+                  <DiffText
+                    segments={diff.segments}
+                    states={diff.states}
+                    setHunkState={diff.setHunkState}
+                    highlightPending={highlightPending}
+                  />
+                  {committedSelection?.afterText?.split("\n\n").map((para) => (
+                    <p
+                      key={para}
+                      className="my-3 first:mt-0 font-serif text-lg leading-relaxed text-ink-deep/40 select-none"
+                    >
+                      {para}
+                    </p>
+                  ))}
+                </div>
+              ) : (
+                <Editor
+                  key={editorKey}
+                  ref={editorRef}
+                  initialContent={draft}
+                  placeholder="Write a paragraph and watch the ink reveal itself…"
+                  onChange={setDraft}
+                  onDeriveHue={deriveTextColour}
+                  onRewriteSelection={rewriteSelection}
+                  onSelectionChange={(sel) => setLiveSelection(sel?.text ?? null)}
+                  highlightBlock={highlight}
+                />
+              )}
             </CardContent>
           </Card>
           {stats.words > 0 && <WritingStatsBar stats={stats} />}
@@ -545,54 +582,20 @@ export default function QuillPage() {
                 setWidgetSelection((prev) => ({ ...prev, [key]: value }))
               }
               composedTarget={composedTarget}
+              intensity={intensity}
+              onIntensityChange={setIntensity}
               wordCount={countWords(draft)}
               onRequest={requestRewrite}
               isPending={isRewriting}
-              hasRewrite={hasAnyVariant}
+              hasRewrite={rewrite !== null}
+              selectionText={liveSelection}
+              onClearSelection={() => setLiveSelection(null)}
+              error={rewriteError}
             />
           )}
           {mode === "target" && <DriftMeter readout={readout} target={targetColour} />}
         </aside>
       </div>
-
-      {mode === "target" && (hasAnyVariant || rewriteError || isRewriting) && (
-        <div className="flex flex-col gap-2">
-          {hasAnyVariant && (
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                Takes
-              </span>
-              <ToggleGroup
-                type="single"
-                value={String(variantIndex)}
-                onValueChange={(v) => v && setVariantIndex(Number(v))}
-                variant="outline"
-                size="sm"
-                aria-label="Rewrite variants"
-              >
-                {VARIANT_LENSES.map((lens, i) => (
-                  <ToggleGroupItem
-                    key={lens.key}
-                    value={String(i)}
-                    disabled={variants?.[i] == null}
-                    title={lens.hint}
-                    className="h-7 px-2.5 text-xs"
-                  >
-                    {lens.label}
-                  </ToggleGroupItem>
-                ))}
-              </ToggleGroup>
-            </div>
-          )}
-          <RewritePanel
-            rewrite={rewrite}
-            isPending={isRewriting}
-            error={rewriteError}
-            onAccept={acceptRewrite}
-            onReject={rejectRewrite}
-          />
-        </div>
-      )}
     </div>
   );
 }
@@ -605,6 +608,16 @@ function countWords(html: string): number {
     .replace(/&nbsp;/g, " ")
     .split(/\s+/)
     .filter(Boolean).length;
+}
+
+function plainText(html: string): string {
+  return html
+    .replace(/<\/?(p|div|h[1-6]|li|br)[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function HueReadout({
@@ -752,8 +765,8 @@ function HueBand({
         <p className="min-h-4 text-[11px] italic leading-snug text-muted-foreground transition-opacity duration-200">
           {active
             ? active.colour
-              ? `“${truncate(active.text)}” — ${active.colour.justification}`
-              : `“${truncate(active.text)}” — too short to read`
+              ? `"${truncate(active.text)}" — ${active.colour.justification}`
+              : `"${truncate(active.text)}" — too short to read`
             : "Hover the arc to read each paragraph’s hue."}
         </p>
       </CardContent>
@@ -982,7 +995,7 @@ function DriftMeter({
           {readout
             ? pct >= 90
               ? "You're there — the ink matches your target."
-              : `${pct}% to “${target.justification}”. Keep nudging.`
+              : `${pct}% to "${target.justification}". Keep nudging.`
             : "Write a few words and the meter will find your target."}
         </p>
       </CardContent>
@@ -990,29 +1003,52 @@ function DriftMeter({
   );
 }
 
+const INTENSITY_LABELS: Record<number, string> = {
+  1: "Whisper",
+  2: "Subtle",
+  3: "Moderate",
+  4: "Bold",
+  5: "Full",
+};
+
 function TargetPicker({
   target,
   onTargetChange,
   selection,
   onWidgetChange,
   composedTarget,
+  intensity,
+  onIntensityChange,
   wordCount,
   onRequest,
   isPending,
   hasRewrite,
+  selectionText,
+  onClearSelection,
+  error,
 }: {
   target: string;
   onTargetChange: (s: string) => void;
   selection: WidgetSelection;
   onWidgetChange: (key: string, value: string | null) => void;
-  /** Widgets + free text composed into the string the rewriter will see. */
   composedTarget: string;
+  intensity: number;
+  onIntensityChange: (n: number) => void;
   wordCount: number;
   onRequest: () => void;
   isPending: boolean;
   hasRewrite: boolean;
+  selectionText: string | null;
+  onClearSelection: () => void;
+  error: string | null;
 }) {
-  const canAsk = wordCount >= 8 && composedTarget.trim().length > 0 && !isPending;
+  const effectiveWordCount = selectionText ? countWords(selectionText) : wordCount;
+  const canAsk = effectiveWordCount >= 3 && composedTarget.trim().length > 0 && !isPending;
+  const buttonLabel = selectionText
+    ? "Nudge selection"
+    : hasRewrite
+      ? "Try another nudge"
+      : "Suggest a nudge";
   return (
     <Card>
       <CardContent className="flex flex-col gap-3 p-5">
@@ -1041,23 +1077,65 @@ function TargetPicker({
             Pick facets, write your own brief, or both — Claude rewrites toward the combination.
           </p>
         )}
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-baseline justify-between">
+            <span className="text-xs uppercase tracking-wider text-muted-foreground">
+              intensity
+            </span>
+            <span className="text-xs text-ink-bleed">{INTENSITY_LABELS[intensity]}</span>
+          </div>
+          <input
+            type="range"
+            min={1}
+            max={5}
+            step={1}
+            value={intensity}
+            onChange={(e) => onIntensityChange(Number(e.target.value))}
+            className="w-full accent-ink-bleed"
+            aria-label="Rewrite intensity"
+          />
+          <div className="flex justify-between text-[10px] text-muted-foreground">
+            <span>Whisper</span>
+            <span>Full</span>
+          </div>
+        </div>
+        {selectionText && (
+          <div className="flex items-center gap-1 rounded-md bg-ink-bleed/10 px-2 py-1 text-[11px] text-ink-bleed">
+            <span className="min-w-0 flex-1 truncate italic">
+              &ldquo;{selectionText.length > 48 ? `${selectionText.slice(0, 48)}…` : selectionText}
+              &rdquo;
+            </span>
+            <button
+              type="button"
+              aria-label="Clear selection"
+              onClick={onClearSelection}
+              className="shrink-0 rounded p-0.5 hover:bg-ink-bleed/20 transition-colors"
+            >
+              <X className="size-3" />
+            </button>
+          </div>
+        )}
         <Button size="sm" variant="outline" onClick={onRequest} disabled={!canAsk}>
           {isPending ? (
             <Loader2 className="size-4 animate-spin" />
           ) : (
             <Sparkles className="size-4" />
           )}
-          {hasRewrite ? "Try another nudge" : "Suggest a nudge"}
+          {buttonLabel}
         </Button>
+        {isPending && (
+          <p className="text-[11px] italic text-muted-foreground">Claude is rewriting…</p>
+        )}
+        {error && <p className="text-[11px] italic text-destructive">{error}</p>}
       </CardContent>
     </Card>
   );
 }
 
 /**
- * Pre-rewrite snapshots (idea #4). Every accepted rewrite (and every restore)
- * banks the draft it replaced; one click brings it back — restores snapshot
- * the current draft first, so going back is itself reversible.
+ * Pre-rewrite snapshots. Every accepted rewrite (and every restore) banks the
+ * draft it replaced; one click brings it back — restores snapshot the current
+ * draft first, so going back is itself reversible.
  */
 function VersionHistory({
   versions,
@@ -1086,7 +1164,7 @@ function VersionHistory({
                 )}
               >
                 <span className="truncate text-ink-deep">
-                  {version.sourceTarget ? `toward “${version.sourceTarget}”` : "snapshot"}
+                  {version.sourceTarget ? `toward "${version.sourceTarget}"` : "snapshot"}
                 </span>
                 <span className="shrink-0 tabular-nums text-muted-foreground">
                   {new Date(version.takenAt).toLocaleTimeString([], {

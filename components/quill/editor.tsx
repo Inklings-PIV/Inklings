@@ -52,11 +52,23 @@ export type SelectionColour = {
   justification: string;
 };
 
+export type SelectionRange = {
+  text: string;
+  from: number;
+  to: number;
+  /** Text in the document before the selection — populated by getSelection(), not onSelectionChange. */
+  beforeText?: string;
+  /** Text in the document after the selection — populated by getSelection(), not onSelectionChange. */
+  afterText?: string;
+};
+
 type EditorProps = {
   /** Initial HTML to seed the editor with. */
   initialContent?: string;
   /** Called with the editor's HTML on every change. */
   onChange?: (html: string) => void;
+  /** Called whenever the selection changes — null when cursor only. */
+  onSelectionChange?: (sel: SelectionRange | null) => void;
   /** Visible placeholder when the editor is empty. */
   placeholder?: string;
   className?: string;
@@ -77,6 +89,10 @@ type EditorProps = {
 export type EditorHandle = {
   /** Select the block at hue-band segment `index` and scroll it into view. */
   focusBlock: (index: number) => void;
+  /** Return the current selection with position info and surrounding context. */
+  getSelection: () => SelectionRange | null;
+  /** Replace the range [from, to] in the document with new HTML. */
+  replaceRange: (from: number, to: number, html: string) => void;
 };
 
 // Marks the top-level block holding the caret with `quill-focus-active`, so
@@ -160,6 +176,7 @@ export function Editor({
   ref,
   initialContent = "",
   onChange,
+  onSelectionChange,
   placeholder,
   className,
   onDeriveHue,
@@ -174,12 +191,21 @@ export function Editor({
   // Holds the latest "read the hue" handler so the editor's keymap (captured
   // once on mount) can call the current closure.
   const readHueRef = useRef<() => void>(() => undefined);
-
   const editor = useEditor({
     extensions: [StarterKit, FocusActiveBlock, EmoArcHighlight],
     content: initialContent,
     onSelectionUpdate: ({ editor: ed }) => {
-      setHasSelection(!ed.state.selection.empty);
+      const { from, to, empty } = ed.state.selection;
+      setHasSelection(!empty);
+      if (from === to) {
+        onSelectionChange?.(null);
+      } else {
+        onSelectionChange?.({
+          text: ed.state.doc.textBetween(from, to, " "),
+          from,
+          to,
+        });
+      }
     },
     // immediatelyRender: false keeps SSR-safe (no hydration mismatch);
     // the editor mounts on the client.
@@ -315,6 +341,22 @@ export function Editor({
           .setTextSelection({ from: range.from, to: range.to })
           .scrollIntoView()
           .run();
+      },
+      getSelection() {
+        if (!editor) return null;
+        const { from, to } = editor.state.selection;
+        if (from === to) return null;
+        const { doc } = editor.state;
+        return {
+          text: doc.textBetween(from, to, "\n\n"),
+          from,
+          to,
+          beforeText: doc.textBetween(0, from, "\n\n").trimStart(),
+          afterText: doc.textBetween(to, doc.content.size, "\n\n").trimEnd(),
+        };
+      },
+      replaceRange(from: number, to: number, html: string) {
+        editor?.chain().setTextSelection({ from, to }).insertContent(html).run();
       },
     }),
     [editor],

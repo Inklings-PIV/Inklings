@@ -259,9 +259,12 @@ export async function nearestAuthors(rawText: string, limit = 5): Promise<StyleN
 
 function stripHtml(s: string): string {
   return s
-    .replace(/<[^>]+>/g, " ")
+    .replace(/<\/?(p|div|h[1-6]|li|br)[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ")
-    .replace(/\s+/g, " ");
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function countWords(s: string): number {
@@ -285,7 +288,7 @@ Rewrite the draft so it FEELS like the target while preserving:
 
 Make changes at the level of word choice, sentence rhythm, image-density, and connective tissue. Don't add new facts, characters, or events. Don't moralise.
 
-Return your answer as an aligned diff plus a short list of named nudges:
+Return your answer as an aligned diff:
 
 - "diff": an ordered list of text segments that, read together, spell out BOTH the
   original and the rewrite. Each segment has "op":
@@ -297,11 +300,7 @@ Return your answer as an aligned diff plus a short list of named nudges:
   and put a remove immediately before its replacement add. Preserve all
   whitespace inside segments so the views read naturally. Concatenating every
   non-"remove" segment MUST equal the rewritten prose; concatenating every
-  non-"add" segment MUST equal the original prose exactly.
-
-- "nudges": 1–4 named changes you made toward the target, each a short "label"
-  (2–4 words, e.g. "Softened intensity", "Grounded imagery") and a one-line
-  "reason" describing what it did. No periods required.`;
+  non-"add" segment MUST equal the original prose exactly.`;
 
 const RewriteResponseSchema = z.object({
   diff: z
@@ -312,44 +311,48 @@ const RewriteResponseSchema = z.object({
       }),
     )
     .min(1),
-  nudges: z
-    .array(
-      z.object({
-        label: z.string().min(2).max(40),
-        reason: z.string().min(3).max(160),
-      }),
-    )
-    .min(1)
-    .max(4),
 });
+
+const INTENSITY_INSTRUCTIONS: Record<number, string> = {
+  1: "Whisper — change at most one word every 2–3 sentences. Only the most natural synonym swap. The text must feel untouched.",
+  2: "Subtle — change 1–2 words per sentence at most. No structural changes whatsoever.",
+  3: "Moderate — vary word choices throughout and occasionally adjust a sentence's rhythm. Structures mostly intact.",
+  4: "Bold — restructure individual sentences; use fresher vocabulary throughout.",
+  5: "Full — rewrite the prose substantially with new rhythms, structures, and vocabulary, while preserving meaning and intent.",
+};
 
 /**
  * Asks Claude to rewrite the user's draft toward a free-form target descriptor.
- * Returns a structured, explainable rewrite — an aligned word-level diff plus a
- * list of named nudges — so the client can show green/pink highlighting and a
- * "Nudges Applied" panel (pitch p7) instead of an opaque text swap. The full
- * rewrite text is reconstructed from the diff, keeping all three views in sync.
+ * Returns a structured rewrite — an aligned word-level diff — so the client can
+ * show green/pink highlighting and per-hunk accept/reject.
+ *
+ * @param intensity 1–5 controlling how aggressively to change the prose.
+ *   Defaults to 3 (Moderate). 1 is a near-invisible whisper; 5 is a
+ *   substantial transformation that still preserves meaning.
  */
 export async function suggestRewrite(input: {
   text: string;
   target: string;
+  intensity?: number;
 }): Promise<TargetRewrite | null> {
   const text = stripHtml(input.text).trim();
   const target = input.target.trim();
   if (countWords(text) < MIN_WORDS) return null;
   if (target.length === 0) return null;
 
+  const intensity = Math.min(5, Math.max(1, Math.round(input.intensity ?? 3)));
+  const intensityLine = `Intensity: ${intensity}/5 — ${INTENSITY_INSTRUCTIONS[intensity]}`;
+
   const { object } = await generateObject({
     model: anthropic("claude-sonnet-4-6"),
     schema: RewriteResponseSchema,
     system: REWRITE_SYSTEM_PROMPT,
-    prompt: `Target: ${target}\n\nOriginal:\n${clampForModel(text)}`,
+    prompt: `${intensityLine}\nTarget: ${target}\n\nOriginal:\n${clampForModel(text)}`,
     maxRetries: 2,
   });
 
   return {
     diff: object.diff,
-    nudges: object.nudges,
     rewrite: rewriteFromDiff(object.diff).trim(),
   };
 }

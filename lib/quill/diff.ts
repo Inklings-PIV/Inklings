@@ -18,20 +18,10 @@ export type RewriteSegment = {
   op: "same" | "add" | "remove";
 };
 
-/** A named, human-readable change the rewrite made toward the target — the
- *  "Nudges Applied" cards in the pitch. Composable + inspectable per PromptCanvas. */
-export type RewriteNudge = {
-  /** Short title, e.g. "Softened intensity". */
-  label: string;
-  /** One-line explanation of what the nudge did. */
-  reason: string;
-};
-
 export type TargetRewrite = {
   /** Full rewritten prose, reconstructed from the diff (`add` + `same`). */
   rewrite: string;
   diff: RewriteSegment[];
-  nudges: RewriteNudge[];
 };
 
 /** Reconstruct the rewritten text: everything except removed spans. */

@@ -1,4 +1,12 @@
 import { type HSLOverride, hueFor } from "@/lib/colour/placeholder";
+import {
+  circularHueDistance,
+  circularMeanHue,
+  describeHue,
+  signedHueDelta,
+  softnessBucket,
+  sourceDisagreement,
+} from "@/lib/colour/uncertainty";
 import type { ClassicalFeatures } from "@/lib/stylometry/classical";
 
 // 28 of the most common English function words — every book's bar over these
@@ -124,6 +132,102 @@ function titleFor(label: string, override: HSLOverride | null | undefined): stri
   return override?.justification
     ? `${label} · ${override.justification}`
     : `${label} · ${PLACEHOLDER_REASON}`;
+}
+
+type NamedSource = { label: string; hsl: HSLOverride };
+
+/**
+ * How far apart the independent hue derivations land — a hue strip centred on
+ * the sources' circular mean (so 358° and 2° sit next to each other, not at
+ * opposite ends) with one marker per derived method, plus a one-line read.
+ * Renders an honest "nothing to compare" note below two derived sources.
+ */
+export function HueAgreement({
+  algorithmic,
+  llm,
+  crowd,
+}: {
+  algorithmic?: HSLOverride | null;
+  llm?: HSLOverride | null;
+  crowd?: HSLOverride | null;
+}) {
+  const sources: NamedSource[] = (
+    [
+      ["Algo", algorithmic],
+      ["LLM", llm],
+      ["Crowd", crowd],
+    ] as const
+  ).flatMap(([label, hsl]) => (hsl ? [{ label, hsl }] : []));
+
+  const [first, second] = sources;
+  if (!first || !second) {
+    return (
+      <p className="text-xs italic leading-snug text-muted-foreground">
+        Only one independent derivation so far — nothing to compare yet.
+      </p>
+    );
+  }
+
+  const hues = sources.map((s) => s.hsl.hue);
+  const disagreement = sourceDisagreement(hues.map((hue) => ({ hue }))) ?? 0;
+  const meanDelta = Math.round(disagreement * 180);
+  const centre = circularMeanHue(hues) ?? 0;
+  const bucket = softnessBucket(disagreement);
+
+  // Name the farthest-apart pair — with two sources that's just the pair.
+  let pairA = first;
+  let pairB = second;
+  let widest = -1;
+  for (const a of sources) {
+    for (const b of sources) {
+      if (a === b) continue;
+      const d = circularHueDistance(a.hsl.hue, b.hsl.hue);
+      if (d > widest) {
+        widest = d;
+        pairA = a;
+        pairB = b;
+      }
+    }
+  }
+
+  const line =
+    bucket === 0
+      ? `Methods agree closely (Δ${meanDelta}°).`
+      : `${bucket === 1 ? "Methods lean apart" : "Methods contest this hue"} (Δ${meanDelta}°) — ${pairA.label} reads ${describeHue(pairA.hsl.hue)}, ${pairB.label} ${describeHue(pairB.hsl.hue)}.`;
+
+  // Hue scale spanning ±90° around the circular mean; fixed S/L for legibility.
+  const gradient = Array.from({ length: 7 }, (_, i) => {
+    const h = (((centre - 90 + i * 30) % 360) + 360) % 360;
+    return `hsl(${Math.round(h)} 65% 60%) ${Math.round((i / 6) * 100)}%`;
+  }).join(", ");
+
+  return (
+    <div>
+      <div
+        className="relative h-2 rounded-full border border-border/60"
+        style={{ background: `linear-gradient(to right, ${gradient})` }}
+        role="img"
+        aria-label={line}
+        title="Hue scale centred on the sources' mean — one marker per method"
+      >
+        {sources.map((s) => {
+          const pos = Math.min(0.95, Math.max(0.05, 0.5 + signedHueDelta(centre, s.hsl.hue) / 180));
+          return (
+            <span
+              key={s.label}
+              title={`${s.label} · ${Math.round(s.hsl.hue)}°`}
+              className="absolute top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-background shadow-sm"
+              style={{
+                left: `${pos * 100}%`,
+                backgroundColor: `hsl(${s.hsl.hue} ${s.hsl.saturation}% ${s.hsl.lightness}%)`,
+              }}
+            />
+          );
+        })}
+      </div>
+      <p className="mt-2 text-xs leading-snug text-muted-foreground">{line}</p>
+    </div>
+  );
 }
 
 /** Per-book bar chart of function-word frequencies — a "fingerprint". */

@@ -34,6 +34,11 @@ export type CanvasDot = {
   subtitle: string;
   /** RGB tuple in 0–255. If omitted, dot uses the default ink colour. */
   color?: [number, number, number];
+  /**
+   * Source-disagreement bucket (lib/colour/uncertainty.ts): 0 sharp ink
+   * (methods agree) · 1 loose · 2 diffuse (methods contest the hue).
+   */
+  softness?: 0 | 1 | 2;
 };
 
 type CanvasShellProps = {

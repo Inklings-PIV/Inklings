@@ -2,7 +2,7 @@
 
 import { ArrowRight, X } from "lucide-react";
 import Link from "next/link";
-import { FingerprintBars, SourceHues } from "@/components/blots/widgets";
+import { FingerprintBars, HueAgreement, SourceHues } from "@/components/blots/widgets";
 import { Button } from "@/components/ui/button";
 import { type HSLOverride, type HueSource, hueFor } from "@/lib/colour/placeholder";
 import type { ClassicalFeatures } from "@/lib/stylometry/classical";
@@ -120,6 +120,13 @@ export function BlotDetail({ blot, neighbours, source, onClose, onSelectNeighbou
             </>
           )}
         </p>
+      </div>
+
+      <div>
+        <div className="text-[10px] tracking-widest text-muted-foreground uppercase">Agreement</div>
+        <div className="mt-2">
+          <HueAgreement algorithmic={blot.algorithmic} llm={blot.llm} crowd={blot.crowd} />
+        </div>
       </div>
 
       <div>

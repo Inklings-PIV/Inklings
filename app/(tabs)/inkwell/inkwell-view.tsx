@@ -7,6 +7,7 @@ import { BlotDetail, type NeighbourBlot } from "@/components/inkwell/blot-detail
 import { MethodologyDialog } from "@/components/inkwell/methodology-dialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { type HSLOverride, type HueSource, hueFor } from "@/lib/colour/placeholder";
+import { softnessBucket, sourceDisagreement } from "@/lib/colour/uncertainty";
 import { layoutGuide } from "@/lib/inkwell/layout-guide";
 import { weightedCentroid } from "@/lib/layout/centroid";
 import { fingerprintDistance } from "@/lib/quill/fingerprint";
@@ -99,6 +100,11 @@ export function InkwellView({
         subtitle: b.authorName,
         // Real HSL when this source has a derived value; otherwise placeholder.
         color: hueFor(b.bookId, source, overrideFor(b, source)).rgb,
+        // Independent derivations only — blended is their average and would
+        // dilute the disagreement signal it encodes.
+        softness: softnessBucket(
+          sourceDisagreement([b.algorithmic, b.llm, b.crowd].filter((c) => c != null)),
+        ),
       },
     ];
   });

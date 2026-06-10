@@ -5,28 +5,36 @@ import {
   Cloud,
   CloudOff,
   Download,
+  History,
   Lightbulb,
   Loader2,
   Sparkles,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
+import { ArcChart } from "@/components/quill/arc-chart";
 import { Editor, type EditorHandle } from "@/components/quill/editor";
 import { HueExplainer } from "@/components/quill/hue-explainer";
 import { RewritePanel } from "@/components/quill/rewrite-panel";
+import { TargetWidgets } from "@/components/quill/target-widgets";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { hueFromHSL } from "@/lib/colour/placeholder";
 import { driftToTarget } from "@/lib/quill/colour-distance";
 import { type FingerprintMetric, toFingerprint } from "@/lib/quill/fingerprint";
+import { type DraftVersion, pushVersion } from "@/lib/quill/history";
 import { htmlToMarkdown } from "@/lib/quill/markdown";
 import { nameToHsl } from "@/lib/quill/named-colours";
 import { splitParagraphs } from "@/lib/quill/paragraphs";
 import { computeWritingStats, type WritingStats } from "@/lib/quill/stats";
+import { VARIANT_LENSES, variantTarget } from "@/lib/quill/variants";
+import { type WidgetSelection, widgetsToTarget } from "@/lib/quill/widgets";
 import { cn } from "@/lib/utils";
 import {
+  type DraftArc,
   deleteCloudDraft,
+  deriveDraftArc,
   deriveDraftStylometry,
   deriveParagraphHues,
   deriveTargetColour,
@@ -75,13 +83,24 @@ export default function QuillPage() {
   // the empty default and immediately delete the cloud row.
   const [hydrated, setHydrated] = useState(false);
 
-  // Target mode state.
+  // Target mode state. The free-text note plus the widget facets compose
+  // into one target string (PromptCanvas, idea #3) — backend unchanged.
   const [target, setTarget] = useState("");
+  const [widgetSelection, setWidgetSelection] = useState<WidgetSelection>({});
   // The target descriptor resolved to a colour, for the drift meter (#5).
   const [targetColour, setTargetColour] = useState<TextColour | null>(null);
-  const [rewrite, setRewrite] = useState<TargetRewrite | null>(null);
+  // Variant fan (idea #4): one target, three intensities (light/balanced/
+  // bold), fetched in parallel so the writer compares takes instead of
+  // accepting the first answer. `rewrite` is the variant currently in view.
+  const [variants, setVariants] = useState<(TargetRewrite | null)[] | null>(null);
+  const [variantIndex, setVariantIndex] = useState(0);
+  const rewrite = variants?.[variantIndex] ?? null;
+  const hasAnyVariant = variants?.some((v) => v != null) ?? false;
   const [rewriteError, setRewriteError] = useState<string | null>(null);
   const [isRewriting, startRewrite] = useTransition();
+  // Pre-rewrite snapshots (idea #4, history half). Accepting a rewrite
+  // remounts the editor and wipes TipTap's undo stack — this is the way back.
+  const [versions, setVersions] = useState<DraftVersion[]>([]);
   // Bumping this remounts the Editor with new initialContent — TipTap
   // doesn't expose a reactive `value` prop and remount is the least
   // invasive way to replace the buffer when the user accepts a rewrite
@@ -102,8 +121,18 @@ export default function QuillPage() {
   // Live stylometric fingerprint of the draft (style-level). Cheap CPU-only
   // derivation, so we can recompute on the same cadence as the hue readout.
   const [fingerprint, setFingerprint] = useState<FingerprintMetric[] | null>(null);
+  // Emotional arc of the draft (research idea C) — lexicon valence per
+  // sentence, matched to Reagan et al.'s six Gutenberg story shapes.
+  const [arc, setArc] = useState<DraftArc | null>(null);
   // Corpus authors closest to the draft's fingerprint (style-level, S4).
   const [neighbours, setNeighbours] = useState<StyleNeighbour[]>([]);
+
+  // Active widgets + free-text note, composed in declaration order. "" when
+  // neither is set — every consumer treats that as "no target yet".
+  const composedTarget = useMemo(
+    () => widgetsToTarget(widgetSelection, target),
+    [widgetSelection, target],
+  );
 
   // Live writing stats (F1) — cheap, derived from the draft's plain text.
   const stats = useMemo(
@@ -237,6 +266,24 @@ export default function QuillPage() {
     };
   }, [draft]);
 
+  // Debounced emotional arc — same cadence as the fingerprint; CPU-only
+  // lexicon work, no model call. Null (draft too short / no shape) hides it.
+  useEffect(() => {
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        const result = await deriveDraftArc(draft);
+        if (!cancelled) setArc(result);
+      } catch {
+        // Tolerate a failed derivation — keep the previous arc.
+      }
+    }, 700);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [draft]);
+
   // Debounced nearest-author match — longer 1500 ms window since it reads the
   // corpus. Empty (too short, or no corpus loaded) hides the card.
   useEffect(() => {
@@ -311,7 +358,7 @@ export default function QuillPage() {
   // once, debounced so a burst of typing in the target field is a single call.
   useEffect(() => {
     if (mode !== "target") return;
-    const aim = target.trim();
+    const aim = composedTarget.trim();
     if (!aim) {
       setTargetColour(null);
       return;
@@ -334,19 +381,34 @@ export default function QuillPage() {
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [target, mode]);
+  }, [composedTarget, mode]);
 
   const requestRewrite = () => {
     setRewriteError(null);
-    setRewrite(null);
+    setVariants(null);
     startRewrite(async () => {
       try {
-        const result = await suggestRewrite({ text: draft, target });
-        if (!result) {
+        // One call per lens, in parallel. Bounded fan-out: exactly three,
+        // each clamped by clampForModel inside the action.
+        const results = await Promise.all(
+          VARIANT_LENSES.map((lens) => {
+            const target = variantTarget(lens.key, composedTarget);
+            return target
+              ? suggestRewrite({ text: draft, target }).catch(() => null)
+              : Promise.resolve(null);
+          }),
+        );
+        if (!results.some((r) => r != null)) {
           setRewriteError("Write at least 8 words and enter a target before asking for a rewrite.");
           return;
         }
-        setRewrite(result);
+        setVariants(results);
+        setVariantIndex(
+          Math.max(
+            0,
+            results.findIndex((r) => r != null),
+          ),
+        );
       } catch (err) {
         setRewriteError((err as Error).message);
       }
@@ -359,17 +421,34 @@ export default function QuillPage() {
   const acceptRewrite = (text: string) => {
     const html = text
       .split(/\n\s*\n+/)
-      .map((p) => p.trim())
-      .filter(Boolean)
-      .map((p) => `<p>${escapeHtml(p)}</p>`)
+      .flatMap((p) => {
+        const trimmed = p.trim();
+        return trimmed ? [`<p>${escapeHtml(trimmed)}</p>`] : [];
+      })
       .join("");
+    // Snapshot the draft being replaced — the remount below wipes TipTap undo.
+    setVersions((stack) =>
+      pushVersion(stack, { html: draft, sourceTarget: composedTarget, takenAt: Date.now() }),
+    );
     setDraft(html);
-    setRewrite(null);
+    setVariants(null);
+    setEditorKey((k) => k + 1);
+  };
+
+  const restoreVersion = (version: DraftVersion) => {
+    // The current draft becomes a version too, so a restore is reversible.
+    // Empty sourceTarget → the list renders it as a plain "snapshot".
+    setVersions((stack) =>
+      pushVersion(stack, { html: draft, sourceTarget: "", takenAt: Date.now() }),
+    );
+    setDraft(version.html);
+    setVariants(null);
+    setRewriteError(null);
     setEditorKey((k) => k + 1);
   };
 
   const rejectRewrite = () => {
-    setRewrite(null);
+    setVariants(null);
     setRewriteError(null);
   };
 
@@ -442,34 +521,77 @@ export default function QuillPage() {
             onToggleExplain={() => setExplain((v) => !v)}
           />
           {fingerprint && <StyleFingerprint metrics={fingerprint} />}
+          {arc && (
+            <ArcChart
+              arc={arc}
+              onHover={(paragraphIndex) =>
+                setHighlight(paragraphIndex == null ? null : { index: paragraphIndex, tint: null })
+              }
+            />
+          )}
           {neighbours.length > 0 && <NeighbourAuthors neighbours={neighbours} />}
           <SaveSettings
             cloudSave={cloudSave}
             cloudSavedAt={cloudSavedAt}
             onToggle={toggleCloudSave}
           />
+          {versions.length > 0 && <VersionHistory versions={versions} onRestore={restoreVersion} />}
           {mode === "target" && (
             <TargetPicker
               target={target}
               onTargetChange={setTarget}
+              selection={widgetSelection}
+              onWidgetChange={(key, value) =>
+                setWidgetSelection((prev) => ({ ...prev, [key]: value }))
+              }
+              composedTarget={composedTarget}
               wordCount={countWords(draft)}
               onRequest={requestRewrite}
               isPending={isRewriting}
-              hasRewrite={rewrite !== null}
+              hasRewrite={hasAnyVariant}
             />
           )}
           {mode === "target" && <DriftMeter readout={readout} target={targetColour} />}
         </aside>
       </div>
 
-      {mode === "target" && (rewrite || rewriteError || isRewriting) && (
-        <RewritePanel
-          rewrite={rewrite}
-          isPending={isRewriting}
-          error={rewriteError}
-          onAccept={acceptRewrite}
-          onReject={rejectRewrite}
-        />
+      {mode === "target" && (hasAnyVariant || rewriteError || isRewriting) && (
+        <div className="flex flex-col gap-2">
+          {hasAnyVariant && (
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                Takes
+              </span>
+              <ToggleGroup
+                type="single"
+                value={String(variantIndex)}
+                onValueChange={(v) => v && setVariantIndex(Number(v))}
+                variant="outline"
+                size="sm"
+                aria-label="Rewrite variants"
+              >
+                {VARIANT_LENSES.map((lens, i) => (
+                  <ToggleGroupItem
+                    key={lens.key}
+                    value={String(i)}
+                    disabled={variants?.[i] == null}
+                    title={lens.hint}
+                    className="h-7 px-2.5 text-xs"
+                  >
+                    {lens.label}
+                  </ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+            </div>
+          )}
+          <RewritePanel
+            rewrite={rewrite}
+            isPending={isRewriting}
+            error={rewriteError}
+            onAccept={acceptRewrite}
+            onReject={rejectRewrite}
+          />
+        </div>
       )}
     </div>
   );
@@ -709,12 +831,12 @@ function WritingStatsBar({ stats }: { stats: WritingStats }) {
  * the match back to the colour language; a closeness bar (inverse of distance)
  * shows how near each one sits without exposing a raw metric.
  */
-function NeighbourAuthors({ neighbours }: { neighbours: StyleNeighbour[] }) {
-  // Map distance (0 = identical, ~1+ = far across five 0..1 axes) to a 0..1
-  // closeness for the bar. Clamp so the nearest never reads as a full bar
-  // unless it's an exact match.
-  const closeness = (d: number) => Math.max(0, 1 - d);
+// Map distance (0 = identical, ~1+ = far across five 0..1 axes) to a 0..1
+// closeness for the bar. Clamp so the nearest never reads as a full bar
+// unless it's an exact match.
+const closeness = (d: number) => Math.max(0, 1 - d);
 
+function NeighbourAuthors({ neighbours }: { neighbours: StyleNeighbour[] }) {
   return (
     <Card>
       <CardContent className="flex flex-col gap-2.5 p-5">
@@ -871,6 +993,9 @@ function DriftMeter({
 function TargetPicker({
   target,
   onTargetChange,
+  selection,
+  onWidgetChange,
+  composedTarget,
   wordCount,
   onRequest,
   isPending,
@@ -878,17 +1003,27 @@ function TargetPicker({
 }: {
   target: string;
   onTargetChange: (s: string) => void;
+  selection: WidgetSelection;
+  onWidgetChange: (key: string, value: string | null) => void;
+  /** Widgets + free text composed into the string the rewriter will see. */
+  composedTarget: string;
   wordCount: number;
   onRequest: () => void;
   isPending: boolean;
   hasRewrite: boolean;
 }) {
-  const canAsk = wordCount >= 8 && target.trim().length > 0 && !isPending;
+  const canAsk = wordCount >= 8 && composedTarget.trim().length > 0 && !isPending;
   return (
     <Card>
       <CardContent className="flex flex-col gap-3 p-5">
-        <label className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1.5">
           <span className="text-xs uppercase tracking-wider text-muted-foreground">target</span>
+          <TargetWidgets selection={selection} onChange={onWidgetChange} />
+        </div>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            In your own words (optional)
+          </span>
           <input
             type="text"
             value={target}
@@ -897,10 +1032,15 @@ function TargetPicker({
             className="h-9 rounded-md border border-border bg-card px-3 text-sm placeholder:text-muted-foreground focus:ring-2 focus:ring-ring/40 focus:outline-none"
           />
         </label>
-        <p className="text-[11px] italic leading-snug text-muted-foreground">
-          Describe how you want the prose to feel — Claude will rewrite toward it. Colour names,
-          authors' voices, or moods all work.
-        </p>
+        {composedTarget ? (
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            Aiming for: <span className="italic">{composedTarget}</span>
+          </p>
+        ) : (
+          <p className="text-[11px] italic leading-snug text-muted-foreground">
+            Pick facets, write your own brief, or both — Claude rewrites toward the combination.
+          </p>
+        )}
         <Button size="sm" variant="outline" onClick={onRequest} disabled={!canAsk}>
           {isPending ? (
             <Loader2 className="size-4 animate-spin" />
@@ -909,6 +1049,58 @@ function TargetPicker({
           )}
           {hasRewrite ? "Try another nudge" : "Suggest a nudge"}
         </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Pre-rewrite snapshots (idea #4). Every accepted rewrite (and every restore)
+ * banks the draft it replaced; one click brings it back — restores snapshot
+ * the current draft first, so going back is itself reversible.
+ */
+function VersionHistory({
+  versions,
+  onRestore,
+}: {
+  versions: DraftVersion[];
+  onRestore: (version: DraftVersion) => void;
+}) {
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-2.5 p-5">
+        <h2 className="flex items-center gap-1.5 text-[10px] tracking-widest text-muted-foreground uppercase">
+          <History aria-hidden="true" className="size-3.5" /> Versions
+        </h2>
+        <ul className="flex flex-col gap-1.5">
+          {versions.map((version) => (
+            <li key={`${version.takenAt}:${version.html.length}`}>
+              <button
+                type="button"
+                onClick={() => onRestore(version)}
+                title="Restore this draft (the current draft is kept as a version)"
+                className={cn(
+                  "flex w-full items-baseline justify-between gap-2 rounded-sm px-1 py-0.5 text-left text-xs",
+                  "transition-colors hover:bg-muted/60 hover:text-ink-deep",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                )}
+              >
+                <span className="truncate text-ink-deep">
+                  {version.sourceTarget ? `toward “${version.sourceTarget}”` : "snapshot"}
+                </span>
+                <span className="shrink-0 tabular-nums text-muted-foreground">
+                  {new Date(version.takenAt).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+        <p className="text-[11px] italic leading-snug text-muted-foreground">
+          Drafts replaced by a rewrite land here — click one to bring it back.
+        </p>
       </CardContent>
     </Card>
   );

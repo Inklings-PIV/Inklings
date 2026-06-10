@@ -7,11 +7,14 @@ import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { ensureScribe } from "@/lib/auth/scribe";
 import { getDb, schema } from "@/lib/db";
+import { classifyArc, MIN_ARC_SENTENCES, movingAverage } from "@/lib/quill/arc";
 import { rewriteFromDiff, type TargetRewrite } from "@/lib/quill/diff";
 import { type HueSegment, tileInfluences } from "@/lib/quill/explain";
 import { fingerprintDistance } from "@/lib/quill/fingerprint";
 import { clampForModel, MAX_BAND_PARAGRAPHS } from "@/lib/quill/limits";
+import { splitParagraphs } from "@/lib/quill/paragraphs";
 import { type ClassicalFeatures, extractClassical } from "@/lib/stylometry/classical";
+import { paragraphValences } from "@/lib/stylometry/valence";
 
 export type { TargetRewrite } from "@/lib/quill/diff";
 
@@ -145,6 +148,41 @@ export async function deriveParagraphHues(paragraphs: string[]): Promise<(TextCo
   // Cap the fan-out so a very long draft can't trigger an unbounded burst of
   // model calls; paragraphs past the limit stay neutral in the band.
   return Promise.all(paragraphs.slice(0, MAX_BAND_PARAGRAPHS).map((p) => deriveTextColour(p)));
+}
+
+export type DraftArc = {
+  /** Smoothed per-sentence valence in reading order, with its paragraph. */
+  points: { v: number; paragraphIndex: number }[];
+  /** Nearest of Reagan et al.'s six canonical arcs, or null when ambiguous. */
+  match: { key: string; label: string; r: number } | null;
+};
+
+/**
+ * The emotional arc of the draft (research idea C) — per-sentence lexicon
+ * valence smoothed into a "story shape" and matched against the six canonical
+ * arcs Reagan et al. found in the Gutenberg corpus. Pure CPU (wink lexicon),
+ * no LLM, no network. Returns null below {@link MIN_ARC_SENTENCES} sentences —
+ * a short draft has no shape to speak of.
+ */
+export async function deriveDraftArc(rawText: string): Promise<DraftArc | null> {
+  const paragraphs = splitParagraphs(rawText);
+  if (paragraphs.length === 0) return null;
+  const valences = paragraphValences(paragraphs);
+  if (valences.length < MIN_ARC_SENTENCES) return null;
+
+  // Window scales with length so long drafts smooth more, short ones less.
+  const window = Math.max(3, Math.round(valences.length / 8));
+  const smoothed = movingAverage(
+    valences.map((p) => p.valence),
+    window,
+  );
+  return {
+    points: smoothed.map((v, i) => ({
+      v,
+      paragraphIndex: valences[i]?.paragraphIndex ?? 0,
+    })),
+    match: classifyArc(smoothed),
+  };
 }
 
 /**

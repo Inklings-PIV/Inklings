@@ -9,6 +9,7 @@ import {
   useEditor,
   useEditorState,
 } from "@tiptap/react";
+import { BubbleMenu } from "@tiptap/react/menus";
 import StarterKit from "@tiptap/starter-kit";
 import {
   Bold,
@@ -25,7 +26,7 @@ import {
   Undo2,
   WandSparkles,
 } from "lucide-react";
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { type Ref, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { toast } from "sonner";
 import {
   ContextMenu,
@@ -155,18 +156,16 @@ const EmoArcHighlight = Extension.create({
  * decision (local-only by default vs server-stored). The page can pass
  * `onChange` to handle the saved text however it wants.
  */
-export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
-  {
-    initialContent = "",
-    onChange,
-    placeholder,
-    className,
-    onDeriveHue,
-    onRewriteSelection,
-    highlightBlock,
-  },
+export function Editor({
   ref,
-) {
+  initialContent = "",
+  onChange,
+  placeholder,
+  className,
+  onDeriveHue,
+  onRewriteSelection,
+  highlightBlock,
+}: EditorProps & { ref?: Ref<EditorHandle> }) {
   // Track selection emptiness so the right-click menu can disable
   // selection-only actions; updated on every selection change.
   const [hasSelection, setHasSelection] = useState(false);
@@ -342,6 +341,25 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
             )}
           >
             <EditorContent editor={editor} />
+            {editor && (
+              <BubbleMenu
+                editor={editor}
+                options={{ placement: "top", offset: 8 }}
+                shouldShow={({ state }) => {
+                  const { from, to, empty } = state.selection;
+                  if (empty) return false;
+                  return state.doc.textBetween(from, to, "\n", " ").trim().length > 0;
+                }}
+              >
+                <BubbleBar
+                  editor={editor}
+                  canHue={canHue}
+                  canRewrite={canRewrite}
+                  onReadHue={readHue}
+                  onPreset={applyPreset}
+                />
+              </BubbleMenu>
+            )}
             {placeholder && editor?.isEmpty && (
               <p
                 aria-hidden="true"
@@ -398,7 +416,98 @@ export const Editor = forwardRef<EditorHandle, EditorProps>(function Editor(
       </ContextMenu>
     </div>
   );
-});
+}
+
+// The three nudges promoted into the bubble — the full set stays one
+// right-click away. Varied axes (length, imagery, temperature) so the bubble
+// covers distinct moves rather than three flavours of the same edit.
+const BUBBLE_PRESET_KEYS = ["tighten", "vivid", "warmer"] as const;
+
+/**
+ * Floating quick-actions over a text selection (Medium/Notion-style) — the
+ * same handlers as the right-click menu, one click closer and discoverable.
+ * Enter animates scale 0.95→1 + fade (150 ms, strong ease-out, origin-aware);
+ * reduced-motion falls back to the fade alone.
+ */
+function BubbleBar({
+  editor,
+  canHue,
+  canRewrite,
+  onReadHue,
+  onPreset,
+}: {
+  editor: TiptapEditor;
+  canHue: boolean;
+  canRewrite: boolean;
+  onReadHue: () => void;
+  onPreset: (target: string, label: string) => void;
+}) {
+  const state = useEditorState({
+    editor,
+    selector: (ctx) => ({
+      isBold: ctx.editor?.isActive("bold") ?? false,
+      isItalic: ctx.editor?.isActive("italic") ?? false,
+    }),
+  });
+  const presets = NUDGE_PRESETS.filter((p) =>
+    (BUBBLE_PRESET_KEYS as readonly string[]).includes(p.key),
+  );
+
+  return (
+    <div
+      role="toolbar"
+      aria-label="Selection actions"
+      className={cn(
+        "flex items-center gap-0.5 rounded-lg border border-border bg-popover p-1 shadow-md",
+        "origin-bottom transition-[opacity,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]",
+        "starting:scale-95 starting:opacity-0 motion-reduce:transition-opacity",
+      )}
+    >
+      <ToolbarButton
+        label="Bold (Cmd+B)"
+        active={state.isBold}
+        onClick={() => editor.chain().focus().toggleBold().run()}
+      >
+        <Bold className="size-4" />
+      </ToolbarButton>
+      <ToolbarButton
+        label="Italic (Cmd+I)"
+        active={state.isItalic}
+        onClick={() => editor.chain().focus().toggleItalic().run()}
+      >
+        <Italic className="size-4" />
+      </ToolbarButton>
+      {canHue && (
+        <>
+          <ToolbarDivider />
+          <ToolbarButton label="Read the hue (Cmd+Enter)" active={false} onClick={onReadHue}>
+            <Palette className="size-4" />
+          </ToolbarButton>
+        </>
+      )}
+      {canRewrite && (
+        <>
+          <ToolbarDivider />
+          {presets.map((preset) => (
+            <button
+              key={preset.key}
+              type="button"
+              title={`Rewrite — ${preset.target}`}
+              onClick={() => onPreset(preset.target, preset.label)}
+              className={cn(
+                "inline-flex h-7 items-center rounded px-1.5 text-xs transition-colors",
+                "text-muted-foreground hover:bg-accent hover:text-foreground",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+              )}
+            >
+              {preset.label}
+            </button>
+          ))}
+        </>
+      )}
+    </div>
+  );
+}
 
 /**
  * Formatting toolbar above the editor. Uses `useEditorState` so it only

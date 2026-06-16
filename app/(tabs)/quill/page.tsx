@@ -8,6 +8,7 @@ import {
   History,
   Lightbulb,
   Loader2,
+  Plus,
   Sparkles,
   X,
 } from "lucide-react";
@@ -52,8 +53,10 @@ import {
 } from "./actions";
 
 type BandSegment = { id: string; text: string; colour: TextColour | null };
+type Doc = { id: string; title: string; text: string; updatedAt: number };
 
-const LOCAL_DRAFT_KEY = "inklings-quill-draft";
+const DOCS_KEY = "inklings-quill-docs";
+const ACTIVE_DOC_KEY = "inklings-quill-active";
 const CLOUD_PREF_KEY = "inklings-quill-cloud-save";
 const CLOUD_SAVE_DEBOUNCE_MS = 2000;
 const PANEL_PRESET_KEY = "inklings-quill-panel-preset";
@@ -86,7 +89,14 @@ export default function QuillPage() {
   // Local-first per the #45 privacy decision — the draft lives in
   // localStorage by default and only round-trips to the server when the
   // writer opts in via the SaveSettings toggle below.
-  const [draft, setDraft] = useState("");
+  const [docs, setDocs] = useState<Doc[]>([]);
+  const [activeDocId, setActiveDocId] = useState<string | null>(null);
+  const draft = docs.find((d) => d.id === activeDocId)?.text ?? "";
+  const setDraft = (text: string) => {
+    setDocs((prev) =>
+      prev.map((d) => (d.id === activeDocId ? { ...d, text, updatedAt: Date.now() } : d)),
+    );
+  };
   const [readout, setReadout] = useState<TextColour | null>(null);
   const [isPending, startReadout] = useTransition();
 
@@ -183,26 +193,64 @@ export default function QuillPage() {
   // the server-side draft and prefer it when present (cross-device case).
   useEffect(() => {
     try {
-      const localDraft = window.localStorage.getItem(LOCAL_DRAFT_KEY) ?? "";
       const cloudPref = window.localStorage.getItem(CLOUD_PREF_KEY) === "true";
       const savedPreset = (window.localStorage.getItem(PANEL_PRESET_KEY) ??
         "essentials") as PanelPreset;
       const savedCustom = JSON.parse(
         window.localStorage.getItem(PANEL_CUSTOM_KEY) ?? JSON.stringify(DEFAULT_CUSTOM_PANELS),
       ) as string[];
-      setDraft(localDraft);
       setCloudSave(cloudPref);
       setPanelPreset(savedPreset);
       setCustomPanels(new Set(savedCustom));
-      if (localDraft) setEditorKey((k) => k + 1);
+
+      const savedDocs = window.localStorage.getItem(DOCS_KEY);
+      const oldDraft = window.localStorage.getItem("inklings-quill-draft");
+      const savedActive = window.localStorage.getItem(ACTIVE_DOC_KEY);
+
+      let initialDocs: Doc[];
+      let initialActiveId: string;
+
+      if (savedDocs) {
+        initialDocs = JSON.parse(savedDocs) as Doc[];
+        if (initialDocs.length === 0) {
+          const doc: Doc = { id: crypto.randomUUID(), title: "Untitled", text: "", updatedAt: Date.now() };
+          initialDocs = [doc];
+        }
+        initialActiveId =
+          savedActive && initialDocs.some((d) => d.id === savedActive)
+            ? savedActive
+            : (initialDocs.at(0)?.id ?? "");
+      } else if (oldDraft) {
+        // Migrate single-draft key to multi-doc format.
+        const doc: Doc = { id: crypto.randomUUID(), title: "Untitled", text: oldDraft, updatedAt: Date.now() };
+        initialDocs = [doc];
+        initialActiveId = doc.id;
+        window.localStorage.removeItem("inklings-quill-draft");
+      } else {
+        const doc: Doc = { id: crypto.randomUUID(), title: "Untitled", text: "", updatedAt: Date.now() };
+        initialDocs = [doc];
+        initialActiveId = doc.id;
+      }
+
+      setDocs(initialDocs);
+      setActiveDocId(initialActiveId);
+      const activeDraft = initialDocs.find((d) => d.id === initialActiveId)?.text ?? "";
+      if (activeDraft) setEditorKey((k) => k + 1);
       setHydrated(true);
+
       if (cloudPref) {
         loadCloudDraft().then((cloud) => {
-          if (cloud?.text && cloud.text !== localDraft) {
-            setDraft(cloud.text);
-            setCloudSavedAt(cloud.updatedAt);
-            setEditorKey((k) => k + 1);
-          }
+          if (!cloud?.text || cloud.text === activeDraft) return;
+          const { text: cloudText, updatedAt: cloudUpdatedAt } = cloud;
+          setDocs((prev) =>
+            prev.map((d) =>
+              d.id === initialActiveId
+                ? { ...d, text: cloudText, updatedAt: cloudUpdatedAt.getTime() }
+                : d,
+            ),
+          );
+          setCloudSavedAt(cloudUpdatedAt);
+          setEditorKey((k) => k + 1);
         });
       }
     } catch {
@@ -210,16 +258,24 @@ export default function QuillPage() {
     }
   }, []);
 
-  // Mirror every draft change to localStorage — implicit, no UI signal
-  // needed since this is the privacy default.
+  // Mirror docs + active doc to localStorage on every change.
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || docs.length === 0) return;
     try {
-      window.localStorage.setItem(LOCAL_DRAFT_KEY, draft);
+      window.localStorage.setItem(DOCS_KEY, JSON.stringify(docs));
     } catch {
       // Storage can throw in private mode / quota-full; we tolerate it.
     }
-  }, [draft, hydrated]);
+  }, [docs, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated || !activeDocId) return;
+    try {
+      window.localStorage.setItem(ACTIVE_DOC_KEY, activeDocId);
+    } catch {
+      // Storage can throw in private mode / quota-full; we tolerate it.
+    }
+  }, [activeDocId, hydrated]);
 
   // Debounced cloud autosave when the toggle is on. The 2 s wait keeps a
   // burst of typing from firing dozens of writes.
@@ -269,6 +325,65 @@ export default function QuillPage() {
         window.localStorage.setItem(PANEL_CUSTOM_KEY, JSON.stringify([...next]));
       } catch {
         // Storage can throw in private mode / quota-full; we tolerate it.
+      }
+      return next;
+    });
+  };
+
+  const createDoc = () => {
+    const doc: Doc = { id: crypto.randomUUID(), title: "Untitled", text: "", updatedAt: Date.now() };
+    setDocs((prev) => [...prev, doc]);
+    setActiveDocId(doc.id);
+    setEditorKey((k) => k + 1);
+    setRewrite(null);
+    setRewriteError(null);
+    setCommittedSelection(null);
+    setLiveSelection(null);
+    setExplain(false);
+  };
+
+  const switchDoc = (id: string) => {
+    if (id === activeDocId) return;
+    setActiveDocId(id);
+    setEditorKey((k) => k + 1);
+    setRewrite(null);
+    setRewriteError(null);
+    setCommittedSelection(null);
+    setLiveSelection(null);
+    setExplain(false);
+    setReadout(null);
+    setFingerprint(null);
+    setArc(null);
+    setNeighbours([]);
+    setBand([]);
+  };
+
+  const renameDoc = (id: string, title: string) => {
+    setDocs((prev) => prev.map((d) => (d.id === id ? { ...d, title } : d)));
+  };
+
+  const deleteDoc = (id: string) => {
+    setDocs((prev) => {
+      const filtered = prev.filter((d) => d.id !== id);
+      const next =
+        filtered.length > 0
+          ? filtered
+          : [{ id: crypto.randomUUID(), title: "Untitled", text: "", updatedAt: Date.now() }];
+      if (id === activeDocId) {
+        const newActive = next[0];
+        if (!newActive) return next;
+        setActiveDocId(newActive.id);
+        setEditorKey((k) => k + 1);
+        setRewrite(null);
+        setRewriteError(null);
+        setCommittedSelection(null);
+        setLiveSelection(null);
+        setExplain(false);
+        setReadout(null);
+        setFingerprint(null);
+        setArc(null);
+        setNeighbours([]);
+        setBand([]);
       }
       return next;
     });
@@ -512,7 +627,7 @@ export default function QuillPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
+    <div className="mx-auto w-full max-w-[1456px] px-4 py-6 sm:px-6 sm:py-8">
       <header className="flex flex-wrap items-start justify-between gap-3 sm:items-end sm:gap-4">
         <div className="min-w-0">
           <h1 className="font-display text-2xl tracking-tight text-ink-deep sm:text-3xl">
@@ -525,7 +640,15 @@ export default function QuillPage() {
         {stats.words > 0 && <ExportControls markdown={markdown} />}
       </header>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_280px]">
+      <div className="mt-6 grid gap-6 lg:grid-cols-[160px_1fr_280px]">
+        <DocList
+          docs={docs}
+          activeId={activeDocId ?? ""}
+          onCreate={createDoc}
+          onSwitch={switchDoc}
+          onRename={renameDoc}
+          onDelete={deleteDoc}
+        />
         <div className="flex flex-col gap-4">
           {bandVisible && (
             <HueBand
@@ -539,7 +662,15 @@ export default function QuillPage() {
               aria-hidden="true"
               className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-ink-bleed to-transparent opacity-60"
             />
-            <CardContent className="p-6 sm:p-8">
+            <CardContent className="px-6 pb-6 pt-3 sm:px-8 sm:pb-8 sm:pt-4">
+              <input
+                type="text"
+                value={docs.find((d) => d.id === activeDocId)?.title ?? ""}
+                onChange={(e) => activeDocId && renameDoc(activeDocId, e.target.value)}
+                placeholder="Untitled"
+                className="mb-4 w-full bg-transparent font-serif text-2xl font-semibold text-ink-deep placeholder:text-muted-foreground/40 focus:outline-none"
+                aria-label="Document title"
+              />
               {targetActive && rewrite ? (
                 <div className="flex flex-col gap-3">
                   <DiffActions
@@ -821,6 +952,108 @@ function HueReadout({
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function DocList({
+  docs,
+  activeId,
+  onCreate,
+  onSwitch,
+  onRename,
+  onDelete,
+}: {
+  docs: Doc[];
+  activeId: string;
+  onCreate: () => void;
+  onSwitch: (id: string) => void;
+  onRename: (id: string, title: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+
+  const commitRename = (id: string) => {
+    onRename(id, editTitle.trim() || "Untitled");
+    setEditingId(null);
+  };
+
+  return (
+    <div className="flex flex-col gap-1 pt-0.5">
+      <div className="flex items-center justify-between px-1 pb-1">
+        <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+          Documents
+        </span>
+        <button
+          type="button"
+          onClick={onCreate}
+          title="New document"
+          className={cn(
+            "inline-flex size-5 items-center justify-center rounded transition-colors",
+            "text-muted-foreground hover:bg-accent hover:text-foreground",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+          )}
+        >
+          <Plus className="size-3.5" />
+        </button>
+      </div>
+      <ul className="flex flex-col gap-0.5">
+        {docs.map((doc) => (
+          <li key={doc.id} className="group flex items-center gap-1">
+            {editingId === doc.id ? (
+              <input
+                autoFocus
+                value={editTitle}
+                onChange={(e) => setEditTitle(e.target.value)}
+                onBlur={() => commitRename(doc.id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === "Escape") commitRename(doc.id);
+                }}
+                className={cn(
+                  "min-w-0 flex-1 rounded border border-ring/40 bg-card px-1.5 py-0.5 text-xs",
+                  "focus:outline-none focus:ring-1 focus:ring-ring/60",
+                )}
+              />
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => onSwitch(doc.id)}
+                  onDoubleClick={() => {
+                    setEditingId(doc.id);
+                    setEditTitle(doc.title);
+                  }}
+                  title={`${doc.title} — double-click to rename`}
+                  className={cn(
+                    "min-w-0 flex-1 truncate rounded px-1.5 py-1 text-left text-xs transition-colors",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                    doc.id === activeId
+                      ? "bg-ink-bleed/10 font-medium text-ink-bleed"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                >
+                  {doc.title}
+                </button>
+                {docs.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => onDelete(doc.id)}
+                    title="Delete document"
+                    className={cn(
+                      "inline-flex size-5 shrink-0 items-center justify-center rounded transition-colors",
+                      "text-transparent group-hover:text-muted-foreground hover:bg-accent hover:!text-foreground",
+                      "focus-visible:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                    )}
+                  >
+                    <X className="size-3" />
+                  </button>
+                )}
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

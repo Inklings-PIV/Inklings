@@ -2,20 +2,27 @@
 
 import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject, generateText } from "ai";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { ensureScribe } from "@/lib/auth/scribe";
 import { getDb, schema } from "@/lib/db";
+import { classifyArc, MIN_ARC_SENTENCES, movingAverage } from "@/lib/quill/arc";
+import { rewriteFromDiff, type TargetRewrite } from "@/lib/quill/diff";
+import { type HueSegment, tileInfluences } from "@/lib/quill/explain";
+import { fingerprintDistance } from "@/lib/quill/fingerprint";
+import { clampForModel, MAX_BAND_PARAGRAPHS } from "@/lib/quill/limits";
+import { splitParagraphs } from "@/lib/quill/paragraphs";
+import { type ClassicalFeatures, extractClassical } from "@/lib/stylometry/classical";
+import { paragraphValences } from "@/lib/stylometry/valence";
+
+export type { TargetRewrite } from "@/lib/quill/diff";
 
 export type TextColour = {
   hue: number;
   saturation: number;
   lightness: number;
   justification: string;
-};
-
-export type TargetRewrite = {
-  rewrite: string;
 };
 
 const ResponseSchema = z.object({
@@ -55,17 +62,209 @@ export async function deriveTextColour(rawText: string): Promise<TextColour | nu
     model: anthropic("claude-sonnet-4-6"),
     schema: ResponseSchema,
     system: SYSTEM_PROMPT,
-    prompt: text,
+    prompt: clampForModel(text),
     maxRetries: 2,
   });
   return object;
 }
 
+/**
+ * Maps a short target descriptor — a colour name, mood, or author's voice
+ * ("warm, melancholy", "Hemingway-like") — to its HSL, for the "drift to
+ * target" meter (#5). Same synaesthetic mapping as {@link deriveTextColour},
+ * but without the word floor: targets are deliberately terse. The page resolves
+ * common colour words locally first (named-colours) and only calls this for
+ * descriptors the lexicon doesn't cover, so it fires at most once per target.
+ */
+export async function deriveTargetColour(target: string): Promise<TextColour | null> {
+  const aim = target.trim();
+  if (aim.length === 0) return null;
+
+  const { object } = await generateObject({
+    model: anthropic("claude-sonnet-4-6"),
+    schema: ResponseSchema,
+    system: SYSTEM_PROMPT,
+    prompt: clampForModel(aim),
+    maxRetries: 2,
+  });
+  return object;
+}
+
+const EXPLAIN_SYSTEM_PROMPT = `You earlier mapped this prose to a single colour. Now explain that colour: pick the words and short phrases that MOST drive it — the ones that, if removed or changed, would shift the hue.
+
+For each, return:
+- "text": the exact substring, copied verbatim from the prose (same case, punctuation and spacing). A few words at most.
+- "weight": a number from -1 to 1. Positive = defines or intensifies the colour; negative = pulls against it (a note cutting across the dominant feel). Use the full range.
+- "reason": 2–6 words on why, e.g. "menacing adjectives", "warm domestic image". No period.
+
+Return the 3–8 strongest. Don't cover every word — only what actually moves the colour. Quote substrings exactly so they can be located in the text.`;
+
+const ExplainResponseSchema = z.object({
+  influences: z
+    .array(
+      z.object({
+        text: z.string().min(1).max(120),
+        weight: z.number().min(-1).max(1),
+        reason: z.string().min(2).max(80),
+      }),
+    )
+    .max(12),
+});
+
+export type { HueSegment } from "@/lib/quill/explain";
+
+/**
+ * Counterfactual explanation of the draft's hue (#2): the words and phrases that
+ * most drive (or fight) the colour, tiled back over the analysed text so the
+ * client can shade an inline heatmap and show each phrase's reason. Same cost
+ * profile and word floor as {@link deriveTextColour}; the page debounces it
+ * behind a "Why this colour?" toggle. The model only quotes the influential
+ * phrases — {@link tileInfluences} reconstructs the full text, so a loose quote
+ * degrades to "phrase dropped", never a corrupted overlay.
+ */
+export async function explainHue(rawText: string): Promise<HueSegment[] | null> {
+  const text = stripHtml(rawText).trim();
+  if (countWords(text) < MIN_WORDS) return null;
+
+  const clamped = clampForModel(text);
+  const { object } = await generateObject({
+    model: anthropic("claude-sonnet-4-6"),
+    schema: ExplainResponseSchema,
+    system: EXPLAIN_SYSTEM_PROMPT,
+    prompt: clamped,
+    maxRetries: 2,
+  });
+  return tileInfluences(clamped, object.influences);
+}
+
+/**
+ * Per-paragraph hues for the EmoArc band (B5). Derives a colour for each
+ * paragraph in parallel so the writer sees the stylistic arc across the text,
+ * not just one global swatch. Paragraphs too short to read return null (the
+ * band renders them neutral). Callers pass only the paragraphs they don't
+ * already have cached, so a typing burst re-derives at most the edited block.
+ */
+export async function deriveParagraphHues(paragraphs: string[]): Promise<(TextColour | null)[]> {
+  // Cap the fan-out so a very long draft can't trigger an unbounded burst of
+  // model calls; paragraphs past the limit stay neutral in the band.
+  return Promise.all(paragraphs.slice(0, MAX_BAND_PARAGRAPHS).map((p) => deriveTextColour(p)));
+}
+
+export type DraftArc = {
+  /** Smoothed per-sentence valence in reading order, with its paragraph. */
+  points: { v: number; paragraphIndex: number }[];
+  /** Nearest of Reagan et al.'s six canonical arcs, or null when ambiguous. */
+  match: { key: string; label: string; r: number } | null;
+};
+
+/**
+ * The emotional arc of the draft (research idea C) — per-sentence lexicon
+ * valence smoothed into a "story shape" and matched against the six canonical
+ * arcs Reagan et al. found in the Gutenberg corpus. Pure CPU (wink lexicon),
+ * no LLM, no network. Returns null below {@link MIN_ARC_SENTENCES} sentences —
+ * a short draft has no shape to speak of.
+ */
+export async function deriveDraftArc(rawText: string): Promise<DraftArc | null> {
+  const paragraphs = splitParagraphs(rawText);
+  if (paragraphs.length === 0) return null;
+  const valences = paragraphValences(paragraphs);
+  if (valences.length < MIN_ARC_SENTENCES) return null;
+
+  // Window scales with length so long drafts smooth more, short ones less.
+  const window = Math.max(3, Math.round(valences.length / 8));
+  const smoothed = movingAverage(
+    valences.map((p) => p.valence),
+    window,
+  );
+  return {
+    points: smoothed.map((v, i) => ({
+      v,
+      paragraphIndex: valences[i]?.paragraphIndex ?? 0,
+    })),
+    match: classifyArc(smoothed),
+  };
+}
+
+/**
+ * Classical stylometric fingerprint of the writer's draft (style-level feature).
+ * Pure CPU via wink-nlp — no LLM, no network — so the Quill can show the writer
+ * their own style numbers (the same fingerprint the Inkwell shows per author)
+ * live while typing. Returns null when the draft is too short to be meaningful.
+ */
+export async function deriveDraftStylometry(rawText: string): Promise<ClassicalFeatures | null> {
+  const text = stripHtml(rawText).trim();
+  if (countWords(text) < MIN_WORDS) return null;
+  return extractClassical(text);
+}
+
+export type StyleNeighbour = {
+  bookId: string;
+  title: string;
+  authorName: string;
+  /** Euclidean fingerprint distance — smaller is closer. */
+  distance: number;
+  hue: { hue: number; saturation: number; lightness: number } | null;
+};
+
+/**
+ * The corpus books whose stylometric fingerprint is closest to the writer's
+ * draft (style-level, S4) — "your prose writes most like these". Reuses the
+ * classical fingerprint distance the Inkwell layout is built on, so the answer
+ * is consistent with the canvas. Returns [] when the draft is too short or no
+ * corpus is loaded.
+ */
+export async function nearestAuthors(rawText: string, limit = 5): Promise<StyleNeighbour[]> {
+  const text = stripHtml(rawText).trim();
+  if (countWords(text) < MIN_WORDS) return [];
+  const mine = extractClassical(text);
+
+  const db = getDb();
+  const blended = alias(schema.bookColours, "blended_colours");
+  const rows = await db
+    .select({
+      bookId: schema.books.id,
+      title: schema.books.title,
+      authorName: schema.authors.name,
+      classical: schema.bookFeatures.classical,
+      h: blended.hue,
+      s: blended.saturation,
+      l: blended.lightness,
+    })
+    .from(schema.books)
+    .innerJoin(schema.authors, eq(schema.books.authorId, schema.authors.id))
+    .leftJoin(schema.bookFeatures, eq(schema.bookFeatures.bookId, schema.books.id))
+    .leftJoin(blended, and(eq(blended.bookId, schema.books.id), eq(blended.source, "blended")))
+    .where(eq(schema.books.status, "ready"));
+
+  return rows
+    .flatMap((r) => {
+      const classical = r.classical as ClassicalFeatures | null;
+      if (!classical) return [];
+      return [
+        {
+          bookId: r.bookId,
+          title: r.title,
+          authorName: r.authorName,
+          distance: fingerprintDistance(mine, classical),
+          hue:
+            r.h != null && r.s != null && r.l != null
+              ? { hue: r.h, saturation: r.s, lightness: r.l }
+              : null,
+        },
+      ];
+    })
+    .sort((a, b) => a.distance - b.distance)
+    .slice(0, limit);
+}
+
 function stripHtml(s: string): string {
   return s
-    .replace(/<[^>]+>/g, " ")
+    .replace(/<\/?(p|div|h[1-6]|li|br)[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
     .replace(/&nbsp;/g, " ")
-    .replace(/\s+/g, " ");
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function countWords(s: string): number {
@@ -87,31 +286,106 @@ Rewrite the draft so it FEELS like the target while preserving:
 - proper grammar and punctuation
 - the writer's chosen tense and POV
 
-Make changes at the level of word choice, sentence rhythm, image-density, and connective tissue. Don't add new facts, characters, or events. Don't moralise. Don't preface the rewrite with explanation or commentary.
+Make changes at the level of word choice, sentence rhythm, image-density, and connective tissue. Don't add new facts, characters, or events. Don't moralise.
 
-Return ONLY the rewritten prose. No quotes around it, no "Here's the rewrite:" preamble, no trailing notes.`;
+Return your answer as an aligned diff:
+
+- "diff": an ordered list of text segments that, read together, spell out BOTH the
+  original and the rewrite. Each segment has "op":
+    - "same"   — unchanged text shared by both versions (include the surrounding
+                 untouched words, punctuation and spaces verbatim)
+    - "remove" — text present in the ORIGINAL but cut or toned down
+    - "add"    — text present only in the REWRITE
+  Keep segments tight: wrap only the words that actually changed in remove/add,
+  and put a remove immediately before its replacement add. Preserve all
+  whitespace inside segments so the views read naturally. Concatenating every
+  non-"remove" segment MUST equal the rewritten prose; concatenating every
+  non-"add" segment MUST equal the original prose exactly.`;
+
+const RewriteResponseSchema = z.object({
+  diff: z
+    .array(
+      z.object({
+        text: z.string(),
+        op: z.enum(["same", "add", "remove"]),
+      }),
+    )
+    .min(1),
+});
+
+const INTENSITY_INSTRUCTIONS: Record<number, string> = {
+  1: "Whisper — change at most one word every 2–3 sentences. Only the most natural synonym swap. The text must feel untouched.",
+  2: "Subtle — change 1–2 words per sentence at most. No structural changes whatsoever.",
+  3: "Moderate — vary word choices throughout and occasionally adjust a sentence's rhythm. Structures mostly intact.",
+  4: "Bold — restructure individual sentences; use fresher vocabulary throughout.",
+  5: "Full — rewrite the prose substantially with new rhythms, structures, and vocabulary, while preserving meaning and intent.",
+};
 
 /**
  * Asks Claude to rewrite the user's draft toward a free-form target descriptor.
- * Returns just the rewritten text — the client diffs it against the original
- * and lets the user accept or reject.
+ * Returns a structured rewrite — an aligned word-level diff — so the client can
+ * show green/pink highlighting and per-hunk accept/reject.
+ *
+ * @param intensity 1–5 controlling how aggressively to change the prose.
+ *   Defaults to 3 (Moderate). 1 is a near-invisible whisper; 5 is a
+ *   substantial transformation that still preserves meaning.
  */
 export async function suggestRewrite(input: {
   text: string;
   target: string;
+  intensity?: number;
 }): Promise<TargetRewrite | null> {
   const text = stripHtml(input.text).trim();
   const target = input.target.trim();
   if (countWords(text) < MIN_WORDS) return null;
   if (target.length === 0) return null;
 
-  const { text: rewrite } = await generateText({
+  const intensity = Math.min(5, Math.max(1, Math.round(input.intensity ?? 3)));
+  const intensityLine = `Intensity: ${intensity}/5 — ${INTENSITY_INSTRUCTIONS[intensity]}`;
+
+  const { object } = await generateObject({
     model: anthropic("claude-sonnet-4-6"),
+    schema: RewriteResponseSchema,
     system: REWRITE_SYSTEM_PROMPT,
-    prompt: `Target: ${target}\n\nOriginal:\n${text}`,
+    prompt: `${intensityLine}\nTarget: ${target}\n\nOriginal:\n${clampForModel(text)}`,
     maxRetries: 2,
   });
-  return { rewrite: rewrite.trim() };
+
+  return {
+    diff: object.diff,
+    rewrite: rewriteFromDiff(object.diff).trim(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Selection rewrite — powers the editor's right-click "Rewrite" presets. Unlike
+// suggestRewrite (whole draft, structured diff), this rewrites a short selected
+// span and returns plain prose to drop straight back in place.
+// ---------------------------------------------------------------------------
+
+const SELECTION_REWRITE_PROMPT = `You are a careful prose editor. Rewrite the given passage toward the target while preserving its meaning, tense, and point of view, and keeping roughly the same length. Change only word choice, rhythm, and imagery — add no new facts.
+
+Return ONLY the rewritten passage. No quotes, no preamble, no commentary.`;
+
+const SELECTION_MIN_WORDS = 3;
+
+/**
+ * Rewrites a selected passage toward a free-form target (e.g. a right-click
+ * preset like "tighter and leaner"). Returns plain text, or null when the
+ * selection is too short or the target is empty.
+ */
+export async function rewriteSelection(text: string, target: string): Promise<string | null> {
+  const passage = text.trim();
+  const aim = target.trim();
+  if (countWords(passage) < SELECTION_MIN_WORDS || aim.length === 0) return null;
+
+  const { text: out } = await generateText({
+    model: anthropic("claude-sonnet-4-6"),
+    system: SELECTION_REWRITE_PROMPT,
+    prompt: `Target: ${aim}\n\nPassage:\n${clampForModel(passage)}`,
+    maxRetries: 2,
+  });
+  return out.trim();
 }
 
 // ---------------------------------------------------------------------------

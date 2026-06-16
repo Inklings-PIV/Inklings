@@ -1,12 +1,22 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { deriveDraftStylometry } from "@/app/(tabs)/quill/actions";
 import { type CanvasDot, CanvasShell } from "@/components/canvas/canvas-shell";
 import { BlotDetail, type NeighbourBlot } from "@/components/inkwell/blot-detail";
 import { MethodologyDialog } from "@/components/inkwell/methodology-dialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { type HSLOverride, type HueSource, hueFor } from "@/lib/colour/placeholder";
+import { softnessBucket, sourceDisagreement } from "@/lib/colour/uncertainty";
+import { layoutGuide } from "@/lib/inkwell/layout-guide";
+import { weightedCentroid } from "@/lib/layout/centroid";
+import { fingerprintDistance } from "@/lib/quill/fingerprint";
 import type { ClassicalFeatures } from "@/lib/stylometry/classical";
+
+// Mirrors the Quill's localStorage draft key — the Inkwell reads it to place the
+// writer's own draft as a blot (#10). Kept in sync by hand; both are user-local.
+const QUILL_DRAFT_KEY = "inklings-quill-draft";
+const DRAFT_NEIGHBOURS = 5;
 
 type Layout = "classical" | "modern" | "by-hue";
 
@@ -48,6 +58,35 @@ export function InkwellView({
   const [layout, setLayout] = useState<Layout>("classical");
   const [source, setSource] = useState<HueSource>("blended");
   const [selectedId, setSelectedId] = useState<string | null>(initialSelectedId);
+  // The writer's own draft, read from the Quill's localStorage and reduced to a
+  // stylometric fingerprint (#10). Re-read on cross-tab edits so the marker
+  // tracks the draft live while both tabs are open.
+  const [draftFeatures, setDraftFeatures] = useState<ClassicalFeatures | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    const read = () => {
+      let draft = "";
+      try {
+        draft = window.localStorage.getItem(QUILL_DRAFT_KEY) ?? "";
+      } catch {
+        return; // private mode / blocked storage — just no draft marker.
+      }
+      deriveDraftStylometry(draft)
+        .then((features) => {
+          if (!cancelled) setDraftFeatures(features);
+        })
+        .catch(() => {
+          // Transient failure — leave the last marker rather than drop it.
+        });
+    };
+    read();
+    window.addEventListener("storage", read);
+    return () => {
+      cancelled = true;
+      window.removeEventListener("storage", read);
+    };
+  }, []);
 
   const dots: CanvasDot[] = blots.flatMap((b) => {
     const coord = b.layouts[layout];
@@ -61,6 +100,11 @@ export function InkwellView({
         subtitle: b.authorName,
         // Real HSL when this source has a derived value; otherwise placeholder.
         color: hueFor(b.bookId, source, overrideFor(b, source)).rgb,
+        // Independent derivations only — blended is their average and would
+        // dilute the disagreement signal it encodes.
+        softness: softnessBucket(
+          sourceDisagreement([b.algorithmic, b.llm, b.crowd].filter((c) => c != null)),
+        ),
       },
     ];
   });
@@ -69,6 +113,27 @@ export function InkwellView({
     () => (selectedId ? (blots.find((b) => b.bookId === selectedId) ?? null) : null),
     [blots, selectedId],
   );
+
+  // Place the draft among the corpus blots it reads most like: rank by classical
+  // fingerprint distance, then sit it at the inverse-distance centroid of its
+  // nearest neighbours in the current layout. UMAP can't project one new point,
+  // so this is an honest "you write nearest these" rather than a fake coordinate.
+  const draftDot = useMemo<CanvasDot | null>(() => {
+    if (!draftFeatures) return null;
+    const neighbours = blots
+      .flatMap((b) => {
+        const coord = b.layouts[layout];
+        if (!coord || !b.classical) return [];
+        return [
+          { x: coord.x, y: coord.y, distance: fingerprintDistance(draftFeatures, b.classical) },
+        ];
+      })
+      .sort((a, b) => a.distance - b.distance)
+      .slice(0, DRAFT_NEIGHBOURS);
+    const centroid = weightedCentroid(neighbours);
+    if (!centroid) return null;
+    return { id: "__draft__", x: centroid.x, y: centroid.y, title: "You", subtitle: "your draft" };
+  }, [draftFeatures, blots, layout]);
 
   // Top-5 nearest neighbours on the current layout, by Euclidean distance.
   // Neighbours are layout-specific so the panel re-ranks when you change view.
@@ -103,14 +168,16 @@ export function InkwellView({
     <CanvasShell
       caption={caption}
       dots={dots}
+      marker={draftDot}
       onSelectDot={setSelectedId}
       toolbar={
         <>
-          <div className="flex flex-col">
+          <div className="flex max-w-md flex-col">
             <span className="font-serif text-lg tracking-tight text-ink-deep">The Inkwell</span>
             <span className="text-xs text-muted-foreground">
               {layoutBlurb[layout]} · {blots.length} {blots.length === 1 ? "blot" : "blots"}
             </span>
+            <LayoutLegend layout={layout} />
           </div>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <div className="flex items-center gap-1.5">
@@ -186,6 +253,24 @@ export function InkwellView({
         )
       }
     />
+  );
+}
+
+/**
+ * An honest, per-layout reading hint. UMAP axes aren't semantic, so the legend
+ * tells the viewer to read proximity, not position — and what the current
+ * layout is actually derived from. Crossfades on layout change (keyed) so the
+ * text re-settles rather than snapping, since only the wording changes.
+ */
+function LayoutLegend({ layout }: { layout: Layout }) {
+  const guide = layoutGuide(layout);
+  return (
+    <span
+      key={layout}
+      className="mt-1 animate-in text-[11px] leading-snug text-muted-foreground/80 fade-in duration-300"
+    >
+      {guide.distance}
+    </span>
   );
 }
 

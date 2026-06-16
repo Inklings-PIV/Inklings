@@ -1,21 +1,58 @@
 "use client";
 
-import { Check, Cloud, CloudOff, Loader2, Sparkles, X } from "lucide-react";
-import { useEffect, useState, useTransition } from "react";
-import { Editor } from "@/components/quill/editor";
+import {
+  ClipboardCopy,
+  Cloud,
+  CloudOff,
+  Download,
+  History,
+  Lightbulb,
+  Loader2,
+  Sparkles,
+  X,
+} from "lucide-react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { toast } from "sonner";
+import { ArcChart } from "@/components/quill/arc-chart";
+import { DiffActions, DiffText } from "@/components/quill/diff-view";
+import { Editor, type EditorHandle, type SelectionRange } from "@/components/quill/editor";
+import { HueExplainer } from "@/components/quill/hue-explainer";
+import { TargetWidgets } from "@/components/quill/target-widgets";
+import { useDiff } from "@/components/quill/use-diff";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { hueFromHSL } from "@/lib/colour/placeholder";
+import { driftToTarget } from "@/lib/quill/colour-distance";
+import { type FingerprintMetric, toFingerprint } from "@/lib/quill/fingerprint";
+import { type DraftVersion, pushVersion } from "@/lib/quill/history";
+import { htmlToMarkdown } from "@/lib/quill/markdown";
+import { nameToHsl } from "@/lib/quill/named-colours";
+import { splitParagraphs } from "@/lib/quill/paragraphs";
+import { computeWritingStats, type WritingStats } from "@/lib/quill/stats";
+import { type WidgetSelection, widgetsToTarget } from "@/lib/quill/widgets";
+import { cn } from "@/lib/utils";
 import {
+  type DraftArc,
   deleteCloudDraft,
+  deriveDraftArc,
+  deriveDraftStylometry,
+  deriveParagraphHues,
+  deriveTargetColour,
   deriveTextColour,
+  explainHue,
+  type HueSegment,
   loadCloudDraft,
+  nearestAuthors,
+  rewriteSelection,
+  type StyleNeighbour,
   saveCloudDraft,
   suggestRewrite,
   type TargetRewrite,
   type TextColour,
 } from "./actions";
+
+type BandSegment = { id: string; text: string; colour: TextColour | null };
 
 const LOCAL_DRAFT_KEY = "inklings-quill-draft";
 const CLOUD_PREF_KEY = "inklings-quill-cloud-save";
@@ -32,6 +69,12 @@ export default function QuillPage() {
   const [readout, setReadout] = useState<TextColour | null>(null);
   const [isPending, startReadout] = useTransition();
 
+  // Counterfactual hue explanation (#2) — "Why this colour?" reveals which words
+  // drive the hue. Off by default; derived (and paid for) only while it's open.
+  const [explain, setExplain] = useState(false);
+  const [explanation, setExplanation] = useState<HueSegment[] | null>(null);
+  const [explainPending, setExplainPending] = useState(false);
+
   // Cloud-save opt-in (#71). Both pieces of state are mirrored to
   // localStorage so the preference + the draft survive refreshes.
   const [cloudSave, setCloudSave] = useState(false);
@@ -41,16 +84,71 @@ export default function QuillPage() {
   // the empty default and immediately delete the cloud row.
   const [hydrated, setHydrated] = useState(false);
 
-  // Target mode state.
+  // Target mode state. The free-text note plus the widget facets compose
+  // into one target string (PromptCanvas, idea #3) — backend unchanged.
   const [target, setTarget] = useState("");
+  const [widgetSelection, setWidgetSelection] = useState<WidgetSelection>({});
+  // The target descriptor resolved to a colour, for the drift meter (#5).
+  const [targetColour, setTargetColour] = useState<TextColour | null>(null);
+  // Intensity slider (1–5) replaces the 3-variant fan.
+  const [intensity, setIntensity] = useState(3);
+  // Single rewrite result — inline diff replaces the modal RewritePanel.
   const [rewrite, setRewrite] = useState<TargetRewrite | null>(null);
   const [rewriteError, setRewriteError] = useState<string | null>(null);
   const [isRewriting, startRewrite] = useTransition();
+  const [highlightPending, setHighlightPending] = useState(false);
+  // Pre-rewrite snapshots. Accepting a rewrite remounts the editor and wipes
+  // TipTap's undo stack — this is the way back.
+  const [versions, setVersions] = useState<DraftVersion[]>([]);
+  // Live selection text drives the sidebar indicator; committed selection is
+  // frozen at request-time and used to splice the rewrite back in on accept.
+  const [liveSelection, setLiveSelection] = useState<string | null>(null);
+  const [committedSelection, setCommittedSelection] = useState<SelectionRange | null>(null);
+  // Diff state — computed from the active rewrite vs the committed text.
+  const diff = useDiff(
+    rewrite ? (committedSelection?.text ?? plainText(draft)) : "",
+    rewrite?.rewrite ?? "",
+  );
   // Bumping this remounts the Editor with new initialContent — TipTap
   // doesn't expose a reactive `value` prop and remount is the least
   // invasive way to replace the buffer when the user accepts a rewrite
   // or we restore a draft from storage.
   const [editorKey, setEditorKey] = useState(0);
+
+  // EmoArc hue band (B5). Cache hues by paragraph text so a typing burst only
+  // re-derives the block that actually changed; the band shows the arc across
+  // the whole draft in Readout mode.
+  const hueCacheRef = useRef<Record<string, TextColour | null>>({});
+  const [band, setBand] = useState<BandSegment[]>([]);
+  // EmoArc band → editor link (#1). Hovering a band segment highlights its
+  // paragraph in the editor (tinted in that segment's own hue); clicking one
+  // jumps to it. The editor handle lets the click select the block imperatively.
+  const editorRef = useRef<EditorHandle>(null);
+  const [highlight, setHighlight] = useState<{ index: number; tint: string | null } | null>(null);
+
+  // Live stylometric fingerprint of the draft (style-level). Cheap CPU-only
+  // derivation, so we can recompute on the same cadence as the hue readout.
+  const [fingerprint, setFingerprint] = useState<FingerprintMetric[] | null>(null);
+  // Emotional arc of the draft (research idea C) — lexicon valence per
+  // sentence, matched to Reagan et al.'s six Gutenberg story shapes.
+  const [arc, setArc] = useState<DraftArc | null>(null);
+  // Corpus authors closest to the draft's fingerprint (style-level, S4).
+  const [neighbours, setNeighbours] = useState<StyleNeighbour[]>([]);
+
+  // Active widgets + free-text note, composed in declaration order. "" when
+  // neither is set — every consumer treats that as "no target yet".
+  const composedTarget = useMemo(
+    () => widgetsToTarget(widgetSelection, target),
+    [widgetSelection, target],
+  );
+
+  // Live writing stats (F1) — cheap, derived from the draft's plain text.
+  const stats = useMemo(
+    () => computeWritingStats(draft.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ")),
+    [draft],
+  );
+  // Markdown export of the draft (F4).
+  const markdown = useMemo(() => htmlToMarkdown(draft), [draft]);
 
   // Hydrate from localStorage on mount. If cloud-save was on, also pull
   // the server-side draft and prefer it when present (cross-device case).
@@ -123,8 +221,12 @@ export default function QuillPage() {
     let cancelled = false;
     const handle = setTimeout(() => {
       startReadout(async () => {
-        const result = await deriveTextColour(draft);
-        if (!cancelled) setReadout(result);
+        try {
+          const result = await deriveTextColour(draft);
+          if (!cancelled) setReadout(result);
+        } catch {
+          // Transient model/network error — keep the last hue rather than crash.
+        }
       });
     }, 700);
     return () => {
@@ -133,12 +235,171 @@ export default function QuillPage() {
     };
   }, [draft]);
 
+  // Debounced counterfactual explanation (#2) — only while the panel is open and
+  // in readout mode, so we pay for it on demand. Same 700 ms window; latest wins.
+  useEffect(() => {
+    if (mode !== "readout" || !explain) return;
+    let cancelled = false;
+    setExplainPending(true);
+    const handle = setTimeout(async () => {
+      try {
+        const segments = await explainHue(draft);
+        if (!cancelled) setExplanation(segments);
+      } catch {
+        // Transient model/network error — keep the last explanation.
+      } finally {
+        if (!cancelled) setExplainPending(false);
+      }
+    }, 700);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [draft, mode, explain]);
+
+  // Debounced stylometric fingerprint — same 700 ms window as the hue readout.
+  useEffect(() => {
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        const features = await deriveDraftStylometry(draft);
+        if (!cancelled) setFingerprint(features ? toFingerprint(features) : null);
+      } catch {
+        // Tolerate a failed derivation — leave the previous fingerprint.
+      }
+    }, 700);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [draft]);
+
+  // Debounced emotional arc — same cadence as the fingerprint; CPU-only
+  // lexicon work, no model call. Null (draft too short / no shape) hides it.
+  useEffect(() => {
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        const result = await deriveDraftArc(draft);
+        if (!cancelled) setArc(result);
+      } catch {
+        // Tolerate a failed derivation — keep the previous arc.
+      }
+    }, 700);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [draft]);
+
+  // Debounced nearest-author match — longer 1500 ms window since it reads the
+  // corpus. Empty (too short, or no corpus loaded) hides the card.
+  useEffect(() => {
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        const matches = await nearestAuthors(draft);
+        if (!cancelled) setNeighbours(matches);
+      } catch {
+        // Corpus read failed — keep whatever neighbours were last shown.
+      }
+    }, 1500);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [draft]);
+
+  // Debounced EmoArc band — 800 ms after the last keystroke, derive a hue per
+  // paragraph (only the uncached ones) and lay them out as an arc. Single-
+  // paragraph drafts fall back to the global swatch, so we only build a band
+  // once there are at least two blocks to compare.
+  useEffect(() => {
+    if (mode !== "readout") return;
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      const paras = splitParagraphs(draft);
+      if (paras.length < 2) {
+        if (!cancelled) setBand([]);
+        return;
+      }
+      const cache = hueCacheRef.current;
+      const missing = paras.filter((p) => !(p in cache));
+      if (missing.length > 0) {
+        try {
+          const hues = await deriveParagraphHues(missing);
+          missing.forEach((p, i) => {
+            cache[p] = hues[i] ?? null;
+          });
+        } catch {
+          // Band derivation failed — render what's cached, skip the rest.
+        }
+      }
+      if (cancelled) return;
+      // Prune the cache to the paragraphs currently on screen so it can't grow
+      // without bound over a long editing session.
+      hueCacheRef.current = Object.fromEntries(paras.map((p) => [p, cache[p] ?? null]));
+      setBand(
+        paras.map((p, i) => ({
+          id: `${i}:${p.slice(0, 16)}`,
+          text: p,
+          colour: hueCacheRef.current[p] ?? null,
+        })),
+      );
+    }, 800);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [draft, mode]);
+
+  // Clear the EmoArc highlight whenever the band isn't on screen (mode switch,
+  // or the draft dropped below two paragraphs) — the band's own mouse-leave
+  // can't fire once it has unmounted, so a stale highlight would otherwise stick.
+  const bandVisible = mode === "readout" && band.length >= 2;
+  useEffect(() => {
+    if (!bandVisible) setHighlight(null);
+  }, [bandVisible]);
+
+  // Resolve the target descriptor to a colour for the drift meter (#5). Common
+  // colour/mood words map locally and for free; anything else the model derives
+  // once, debounced so a burst of typing in the target field is a single call.
+  useEffect(() => {
+    if (mode !== "target") return;
+    const aim = composedTarget.trim();
+    if (!aim) {
+      setTargetColour(null);
+      return;
+    }
+    const named = nameToHsl(aim);
+    if (named) {
+      setTargetColour({ ...named, justification: aim });
+      return;
+    }
+    let cancelled = false;
+    const handle = setTimeout(async () => {
+      try {
+        const colour = await deriveTargetColour(aim);
+        if (!cancelled) setTargetColour(colour);
+      } catch {
+        // Keep the last resolved target colour on a transient failure.
+      }
+    }, 600);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [composedTarget, mode]);
+
   const requestRewrite = () => {
+    const sel = editorRef.current?.getSelection() ?? null;
+    setCommittedSelection(sel);
     setRewriteError(null);
     setRewrite(null);
     startRewrite(async () => {
       try {
-        const result = await suggestRewrite({ text: draft, target });
+        const text = sel?.text ?? draft;
+        const result = await suggestRewrite({ text, target: composedTarget, intensity });
         if (!result) {
           setRewriteError("Write at least 8 words and enter a target before asking for a rewrite.");
           return;
@@ -150,24 +411,45 @@ export default function QuillPage() {
     });
   };
 
-  const acceptRewrite = () => {
-    if (!rewrite) return;
-    // Wrap each non-empty line in <p>…</p> so TipTap renders paragraphs
-    // properly when it remounts. Claude returns plain text with newlines.
-    const html = rewrite.rewrite
+  const acceptRewrite = (text: string) => {
+    const html = text
       .split(/\n\s*\n+/)
-      .map((p) => p.trim())
-      .filter(Boolean)
-      .map((p) => `<p>${escapeHtml(p)}</p>`)
+      .flatMap((p) => {
+        const trimmed = p.trim();
+        return trimmed ? [`<p>${escapeHtml(trimmed)}</p>`] : [];
+      })
       .join("");
-    setDraft(html);
+    // Snapshot the draft being replaced — the remount below wipes TipTap undo.
+    setVersions((stack) =>
+      pushVersion(stack, { html: draft, sourceTarget: composedTarget, takenAt: Date.now() }),
+    );
+    if (committedSelection) {
+      editorRef.current?.replaceRange(committedSelection.from, committedSelection.to, html);
+    } else {
+      setDraft(html);
+      setEditorKey((k) => k + 1);
+    }
     setRewrite(null);
+    setCommittedSelection(null);
+    setLiveSelection(null);
+  };
+
+  const restoreVersion = (version: DraftVersion) => {
+    // The current draft becomes a version too, so a restore is reversible.
+    setVersions((stack) =>
+      pushVersion(stack, { html: draft, sourceTarget: "", takenAt: Date.now() }),
+    );
+    setDraft(version.html);
+    setRewrite(null);
+    setRewriteError(null);
     setEditorKey((k) => k + 1);
   };
 
   const rejectRewrite = () => {
     setRewrite(null);
     setRewriteError(null);
+    setCommittedSelection(null);
+    setLiveSelection(null);
   };
 
   return (
@@ -181,34 +463,90 @@ export default function QuillPage() {
             Write, and watch the hue of your prose surface. Target a colour to receive nudges.
           </p>
         </div>
-        <ToggleGroup
-          type="single"
-          value={mode}
-          onValueChange={(v) => v && setMode(v as QuillMode)}
-          variant="outline"
-          size="sm"
-          className="shrink-0"
-        >
-          <ToggleGroupItem value="readout">Readout</ToggleGroupItem>
-          <ToggleGroupItem value="target">Target</ToggleGroupItem>
-        </ToggleGroup>
+        <div className="flex shrink-0 items-center gap-2">
+          {stats.words > 0 && <ExportControls markdown={markdown} />}
+          <ToggleGroup
+            type="single"
+            value={mode}
+            onValueChange={(v) => v && setMode(v as QuillMode)}
+            variant="outline"
+            size="sm"
+          >
+            <ToggleGroupItem value="readout">Readout</ToggleGroupItem>
+            <ToggleGroupItem value="target">Target</ToggleGroupItem>
+          </ToggleGroup>
+        </div>
       </header>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_280px]">
-        <Card className="relative overflow-hidden bg-card/60">
-          <div
-            aria-hidden="true"
-            className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-ink-bleed to-transparent opacity-60"
-          />
-          <CardContent className="p-6 sm:p-8">
-            <Editor
-              key={editorKey}
-              initialContent={draft}
-              placeholder="Write a paragraph and watch the ink reveal itself…"
-              onChange={setDraft}
+        <div className="flex flex-col gap-4">
+          {bandVisible && (
+            <HueBand
+              segments={band}
+              onHover={(index, tint) => setHighlight(index == null ? null : { index, tint })}
+              onActivate={(index) => editorRef.current?.focusBlock(index)}
             />
-          </CardContent>
-        </Card>
+          )}
+          <Card className="relative overflow-hidden bg-card/60">
+            <div
+              aria-hidden="true"
+              className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-ink-bleed to-transparent opacity-60"
+            />
+            <CardContent className="p-6 sm:p-8">
+              {mode === "target" && rewrite ? (
+                <div className="flex flex-col gap-3">
+                  <DiffActions
+                    resolvedCount={diff.resolvedCount}
+                    totalChanges={diff.totalChanges}
+                    onApply={() => acceptRewrite(diff.resolvedText())}
+                    onAcceptAll={() => acceptRewrite(rewrite.rewrite)}
+                    onReject={rejectRewrite}
+                    onHighlightEnter={() => setHighlightPending(true)}
+                    onHighlightLeave={() => setHighlightPending(false)}
+                  />
+                  {committedSelection?.beforeText?.split("\n\n").map((para) => (
+                    <p
+                      key={para}
+                      className="my-3 first:mt-0 font-serif text-lg leading-relaxed text-ink-deep/40 select-none"
+                    >
+                      {para}
+                    </p>
+                  ))}
+                  <DiffText
+                    segments={diff.segments}
+                    states={diff.states}
+                    setHunkState={diff.setHunkState}
+                    highlightPending={highlightPending}
+                  />
+                  {committedSelection?.afterText?.split("\n\n").map((para) => (
+                    <p
+                      key={para}
+                      className="my-3 first:mt-0 font-serif text-lg leading-relaxed text-ink-deep/40 select-none"
+                    >
+                      {para}
+                    </p>
+                  ))}
+                </div>
+              ) : (
+                <Editor
+                  key={editorKey}
+                  ref={editorRef}
+                  initialContent={draft}
+                  placeholder="Write a paragraph and watch the ink reveal itself…"
+                  onChange={setDraft}
+                  onDeriveHue={deriveTextColour}
+                  onRewriteSelection={rewriteSelection}
+                  onSelectionChange={(sel) => setLiveSelection(sel?.text ?? null)}
+                  highlightBlock={highlight}
+                />
+              )}
+            </CardContent>
+          </Card>
+          {stats.words > 0 && <WritingStatsBar stats={stats} />}
+          {mode === "readout" && explain && (
+            <HueExplainer segments={explanation} tint={readout} isPending={explainPending} />
+          )}
+        </div>
 
         <aside className="flex flex-col gap-4">
           <HueReadout
@@ -216,35 +554,48 @@ export default function QuillPage() {
             wordCount={countWords(draft)}
             readout={readout}
             isPending={isPending}
+            explain={explain}
+            onToggleExplain={() => setExplain((v) => !v)}
           />
+          {fingerprint && <StyleFingerprint metrics={fingerprint} />}
+          {arc && (
+            <ArcChart
+              arc={arc}
+              onHover={(paragraphIndex) =>
+                setHighlight(paragraphIndex == null ? null : { index: paragraphIndex, tint: null })
+              }
+            />
+          )}
+          {neighbours.length > 0 && <NeighbourAuthors neighbours={neighbours} />}
           <SaveSettings
             cloudSave={cloudSave}
             cloudSavedAt={cloudSavedAt}
             onToggle={toggleCloudSave}
           />
+          {versions.length > 0 && <VersionHistory versions={versions} onRestore={restoreVersion} />}
           {mode === "target" && (
             <TargetPicker
               target={target}
               onTargetChange={setTarget}
+              selection={widgetSelection}
+              onWidgetChange={(key, value) =>
+                setWidgetSelection((prev) => ({ ...prev, [key]: value }))
+              }
+              composedTarget={composedTarget}
+              intensity={intensity}
+              onIntensityChange={setIntensity}
               wordCount={countWords(draft)}
               onRequest={requestRewrite}
               isPending={isRewriting}
               hasRewrite={rewrite !== null}
+              selectionText={liveSelection}
+              onClearSelection={() => setLiveSelection(null)}
+              error={rewriteError}
             />
           )}
+          {mode === "target" && <DriftMeter readout={readout} target={targetColour} />}
         </aside>
       </div>
-
-      {mode === "target" && (rewrite || rewriteError || isRewriting) && (
-        <RewritePanel
-          original={draft}
-          rewrite={rewrite}
-          isPending={isRewriting}
-          error={rewriteError}
-          onAccept={acceptRewrite}
-          onReject={rejectRewrite}
-        />
-      )}
     </div>
   );
 }
@@ -259,16 +610,30 @@ function countWords(html: string): number {
     .filter(Boolean).length;
 }
 
+function plainText(html: string): string {
+  return html
+    .replace(/<\/?(p|div|h[1-6]|li|br)[^>]*>/gi, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function HueReadout({
   mode,
   wordCount,
   readout,
   isPending,
+  explain,
+  onToggleExplain,
 }: {
   mode: QuillMode;
   wordCount: number;
   readout: TextColour | null;
   isPending: boolean;
+  explain: boolean;
+  onToggleExplain: () => void;
 }) {
   const swatchCss = readout
     ? hueFromHSL(readout.hue, readout.saturation, readout.lightness).css
@@ -304,32 +669,397 @@ function HueReadout({
             {wordCount} {wordCount === 1 ? "word" : "words"}
           </p>
         )}
+        {mode === "readout" && readout && (
+          <button
+            type="button"
+            aria-pressed={explain}
+            onClick={onToggleExplain}
+            className={cn(
+              "inline-flex h-7 items-center gap-1.5 self-start rounded-md border px-2 text-[11px] transition-colors",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+              explain
+                ? "border-ink-deep bg-ink-deep text-ink-paper"
+                : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
+            )}
+          >
+            <Lightbulb className="size-3.5" />
+            {explain ? "Hide why" : "Why this colour?"}
+          </button>
+        )}
       </CardContent>
     </Card>
   );
 }
 
+/**
+ * The EmoArc hue band — a horizontal arc of one hue per paragraph, so the
+ * writer sees how the stylistic temperature rises and falls across the whole
+ * draft, not just its average (Amin's "Interactive Emotion Graph"). Hovering a
+ * segment dims the rest and surfaces that paragraph's reading below — the band
+ * is an index into the text, not just decoration.
+ */
+function HueBand({
+  segments,
+  onHover,
+  onActivate,
+}: {
+  segments: BandSegment[];
+  /** Hovered/focused segment index + its hue (null on leave) — drives the
+   *  editor highlight. */
+  onHover?: (index: number | null, tint: string | null) => void;
+  /** Clicked/activated segment index — jumps the editor to that paragraph. */
+  onActivate?: (index: number) => void;
+}) {
+  const [hovered, setHovered] = useState<number | null>(null);
+  const active = hovered != null ? segments[hovered] : null;
+
+  const enter = (index: number, tint: string | null) => {
+    setHovered(index);
+    onHover?.(index, tint);
+  };
+  const leave = () => {
+    setHovered(null);
+    onHover?.(null, null);
+  };
+
+  return (
+    <Card className="bg-card/60">
+      <CardContent className="flex flex-col gap-2 p-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">Hue arc</h2>
+          <span className="text-[11px] tabular-nums text-muted-foreground">
+            {segments.length} paragraphs
+          </span>
+        </div>
+        <div className="flex h-9 gap-0.5">
+          {segments.map((seg, i) => {
+            const css = seg.colour
+              ? hueFromHSL(seg.colour.hue, seg.colour.saturation, seg.colour.lightness).css
+              : undefined;
+            return (
+              <button
+                type="button"
+                key={seg.id}
+                onMouseEnter={() => enter(i, css ?? null)}
+                onMouseLeave={leave}
+                onFocus={() => enter(i, css ?? null)}
+                onBlur={leave}
+                onClick={() => onActivate?.(i)}
+                title="Jump to this paragraph"
+                aria-label={
+                  seg.colour
+                    ? `Paragraph ${i + 1}: ${seg.colour.justification}. Jump to it.`
+                    : `Paragraph ${i + 1}: too short to read. Jump to it.`
+                }
+                className={cn(
+                  "h-full flex-1 rounded-[2px] transition-all duration-200 ease-out",
+                  "first:rounded-l-md last:rounded-r-md focus-visible:outline-none",
+                  hovered === i && "z-10 ring-2 ring-ink-deep/25",
+                  hovered != null && hovered !== i && "opacity-40",
+                )}
+                style={{ backgroundColor: css ?? "var(--muted)" }}
+              />
+            );
+          })}
+        </div>
+        <p className="min-h-4 text-[11px] italic leading-snug text-muted-foreground transition-opacity duration-200">
+          {active
+            ? active.colour
+              ? `"${truncate(active.text)}" — ${active.colour.justification}`
+              : `"${truncate(active.text)}" — too short to read`
+            : "Hover the arc to read each paragraph’s hue."}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+function truncate(s: string): string {
+  return s.length > 52 ? `${s.slice(0, 52).trimEnd()}…` : s;
+}
+
+/**
+ * Export the draft as Markdown (F4) — copy to clipboard or download a .md file.
+ * The conversion is pure; this just wires the two delivery actions with toasts.
+ */
+function ExportControls({ markdown }: { markdown: string }) {
+  const copy = () => {
+    navigator.clipboard?.writeText(markdown);
+    toast.success("Copied as Markdown");
+  };
+  const download = () => {
+    const blob = new Blob([markdown], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "inkling-draft.md";
+    link.click();
+    URL.revokeObjectURL(url);
+    toast.success("Downloaded inkling-draft.md");
+  };
+  return (
+    <div className="flex items-center gap-1">
+      <Button size="sm" variant="outline" onClick={copy} title="Copy the draft as Markdown">
+        <ClipboardCopy className="size-3.5" /> Copy .md
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={download}
+        title="Download the draft as a .md file"
+      >
+        <Download className="size-3.5" />
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Live writing stats under the editor (F1) — a quiet status strip giving the
+ * writer size and pace at a glance. Numbers are tabular so they don't jitter
+ * as digits change while typing.
+ */
+function WritingStatsBar({ stats }: { stats: WritingStats }) {
+  const items = [
+    { label: stats.words === 1 ? "word" : "words", value: stats.words.toLocaleString() },
+    { label: stats.sentences === 1 ? "sentence" : "sentences", value: String(stats.sentences) },
+    { label: "min read", value: `~${stats.readingMinutes}` },
+    { label: "avg words/sentence", value: stats.avgSentenceWords.toFixed(1) },
+  ];
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-1 text-[11px] text-muted-foreground">
+      {items.map((item) => (
+        <span key={item.label} className="inline-flex items-baseline gap-1">
+          <span className="tabular-nums text-ink-deep/70">{item.value}</span>
+          {item.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The corpus books the writer's prose is stylistically closest to (S4) — the
+ * Quill's bridge into the Inkwell. Each row carries the book's own hue, tying
+ * the match back to the colour language; a closeness bar (inverse of distance)
+ * shows how near each one sits without exposing a raw metric.
+ */
+// Map distance (0 = identical, ~1+ = far across five 0..1 axes) to a 0..1
+// closeness for the bar. Clamp so the nearest never reads as a full bar
+// unless it's an exact match.
+const closeness = (d: number) => Math.max(0, 1 - d);
+
+function NeighbourAuthors({ neighbours }: { neighbours: StyleNeighbour[] }) {
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-2.5 p-5">
+        <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
+          Closest in the Inkwell
+        </h2>
+        <ul className="flex flex-col gap-2">
+          {neighbours.map((n) => {
+            const css = n.hue
+              ? hueFromHSL(n.hue.hue, n.hue.saturation, n.hue.lightness).css
+              : "var(--ink-faded)";
+            return (
+              <li key={n.bookId} className="flex flex-col gap-1">
+                <div className="flex items-center gap-2">
+                  <span
+                    aria-hidden="true"
+                    className="size-2.5 shrink-0 rounded-full"
+                    style={{ backgroundColor: css }}
+                  />
+                  <span className="min-w-0 flex-1 truncate text-xs text-ink-deep" title={n.title}>
+                    {n.title}
+                  </span>
+                  <span className="shrink-0 text-[11px] text-muted-foreground">{n.authorName}</span>
+                </div>
+                <div className="h-1 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full transition-[width] duration-500 ease-out"
+                    style={{
+                      width: `${Math.max(4, closeness(n.distance) * 100)}%`,
+                      backgroundColor: css,
+                    }}
+                  />
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+        <p className="text-[11px] italic leading-snug text-muted-foreground">
+          By classical stylometry — the same distance the Inkwell is laid out on.
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Live stylometric fingerprint of the draft — the same measurable shape the
+ * Inkwell shows per author (pitch p5), but for the writer's own prose. Bars
+ * ease toward their value so each keystroke nudges the shape rather than
+ * snapping it, making the numbers feel like a live reading of the ink.
+ */
+function StyleFingerprint({ metrics }: { metrics: FingerprintMetric[] }) {
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-2.5 p-5">
+        <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
+          Style fingerprint
+        </h2>
+        <ul className="flex flex-col gap-2">
+          {metrics.map((m) => (
+            <li key={m.key} className="flex flex-col gap-1" title={m.detail}>
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="text-xs text-ink-deep">{m.label}</span>
+                <span className="text-[11px] tabular-nums text-muted-foreground">
+                  {m.value.toFixed(2)}
+                </span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-muted">
+                <div
+                  className="h-full rounded-full bg-ink-bleed/70 transition-[width] duration-500 ease-out"
+                  style={{ width: `${Math.max(2, m.value * 100)}%` }}
+                />
+              </div>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Drift-to-target meter (#5) — a live bar showing how close the draft's hue has
+ * drifted toward the target's. Both sit on the same HSL scale, so the gap is
+ * meaningful; the bar fills as the writer edits toward the target, turning the
+ * abstract "style space" into direct, playful feedback. Shown only in target
+ * mode, once a target colour has resolved.
+ */
+function DriftMeter({
+  readout,
+  target,
+}: {
+  readout: TextColour | null;
+  target: TextColour | null;
+}) {
+  if (!target) return null;
+  const proximity = readout ? driftToTarget(readout, target) : 0;
+  const pct = Math.round(proximity * 100);
+  const targetCss = hueFromHSL(target.hue, target.saturation, target.lightness).css;
+  const draftCss = readout
+    ? hueFromHSL(readout.hue, readout.saturation, readout.lightness).css
+    : "var(--muted)";
+
+  return (
+    <Card>
+      <CardContent className="flex flex-col gap-2.5 p-5">
+        <div className="flex items-center justify-between">
+          <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
+            Drift to target
+          </h2>
+          <span className="text-[11px] tabular-nums text-muted-foreground">
+            {readout ? `${pct}%` : "—"}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span
+            aria-hidden="true"
+            className="size-3 shrink-0 rounded-full border border-border"
+            style={{ backgroundColor: draftCss }}
+            title="your current hue"
+          />
+          <div
+            className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-valuenow={readout ? pct : 0}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label={`Drift toward ${target.justification}`}
+          >
+            <div
+              className="h-full rounded-full transition-[width] duration-500 ease-out"
+              style={{ width: `${Math.max(2, proximity * 100)}%`, backgroundColor: targetCss }}
+            />
+          </div>
+          <span
+            aria-hidden="true"
+            className="size-3 shrink-0 rounded-full border border-border"
+            style={{ backgroundColor: targetCss }}
+            title="target hue"
+          />
+        </div>
+        <p className="text-[11px] italic leading-snug text-muted-foreground">
+          {readout
+            ? pct >= 90
+              ? "You're there — the ink matches your target."
+              : `${pct}% to "${target.justification}". Keep nudging.`
+            : "Write a few words and the meter will find your target."}
+        </p>
+      </CardContent>
+    </Card>
+  );
+}
+
+const INTENSITY_LABELS: Record<number, string> = {
+  1: "Whisper",
+  2: "Subtle",
+  3: "Moderate",
+  4: "Bold",
+  5: "Full",
+};
+
 function TargetPicker({
   target,
   onTargetChange,
+  selection,
+  onWidgetChange,
+  composedTarget,
+  intensity,
+  onIntensityChange,
   wordCount,
   onRequest,
   isPending,
   hasRewrite,
+  selectionText,
+  onClearSelection,
+  error,
 }: {
   target: string;
   onTargetChange: (s: string) => void;
+  selection: WidgetSelection;
+  onWidgetChange: (key: string, value: string | null) => void;
+  composedTarget: string;
+  intensity: number;
+  onIntensityChange: (n: number) => void;
   wordCount: number;
   onRequest: () => void;
   isPending: boolean;
   hasRewrite: boolean;
+  selectionText: string | null;
+  onClearSelection: () => void;
+  error: string | null;
 }) {
-  const canAsk = wordCount >= 8 && target.trim().length > 0 && !isPending;
+  const effectiveWordCount = selectionText ? countWords(selectionText) : wordCount;
+  const canAsk = effectiveWordCount >= 3 && composedTarget.trim().length > 0 && !isPending;
+  const buttonLabel = selectionText
+    ? "Nudge selection"
+    : hasRewrite
+      ? "Try another nudge"
+      : "Suggest a nudge";
   return (
     <Card>
       <CardContent className="flex flex-col gap-3 p-5">
-        <label className="flex flex-col gap-1.5">
+        <div className="flex flex-col gap-1.5">
           <span className="text-xs uppercase tracking-wider text-muted-foreground">target</span>
+          <TargetWidgets selection={selection} onChange={onWidgetChange} />
+        </div>
+        <label className="flex flex-col gap-1">
+          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            In your own words (optional)
+          </span>
           <input
             type="text"
             value={target}
@@ -338,101 +1068,120 @@ function TargetPicker({
             className="h-9 rounded-md border border-border bg-card px-3 text-sm placeholder:text-muted-foreground focus:ring-2 focus:ring-ring/40 focus:outline-none"
           />
         </label>
-        <p className="text-[11px] italic leading-snug text-muted-foreground">
-          Describe how you want the prose to feel — Claude will rewrite toward it. Colour names,
-          authors' voices, or moods all work.
-        </p>
+        {composedTarget ? (
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            Aiming for: <span className="italic">{composedTarget}</span>
+          </p>
+        ) : (
+          <p className="text-[11px] italic leading-snug text-muted-foreground">
+            Pick facets, write your own brief, or both — Claude rewrites toward the combination.
+          </p>
+        )}
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-baseline justify-between">
+            <span className="text-xs uppercase tracking-wider text-muted-foreground">
+              intensity
+            </span>
+            <span className="text-xs text-ink-bleed">{INTENSITY_LABELS[intensity]}</span>
+          </div>
+          <input
+            type="range"
+            min={1}
+            max={5}
+            step={1}
+            value={intensity}
+            onChange={(e) => onIntensityChange(Number(e.target.value))}
+            className="w-full accent-ink-bleed"
+            aria-label="Rewrite intensity"
+          />
+          <div className="flex justify-between text-[10px] text-muted-foreground">
+            <span>Whisper</span>
+            <span>Full</span>
+          </div>
+        </div>
+        {selectionText && (
+          <div className="flex items-center gap-1 rounded-md bg-ink-bleed/10 px-2 py-1 text-[11px] text-ink-bleed">
+            <span className="min-w-0 flex-1 truncate italic">
+              &ldquo;{selectionText.length > 48 ? `${selectionText.slice(0, 48)}…` : selectionText}
+              &rdquo;
+            </span>
+            <button
+              type="button"
+              aria-label="Clear selection"
+              onClick={onClearSelection}
+              className="shrink-0 rounded p-0.5 hover:bg-ink-bleed/20 transition-colors"
+            >
+              <X className="size-3" />
+            </button>
+          </div>
+        )}
         <Button size="sm" variant="outline" onClick={onRequest} disabled={!canAsk}>
           {isPending ? (
             <Loader2 className="size-4 animate-spin" />
           ) : (
             <Sparkles className="size-4" />
           )}
-          {hasRewrite ? "Try another nudge" : "Suggest a nudge"}
+          {buttonLabel}
         </Button>
+        {isPending && (
+          <p className="text-[11px] italic text-muted-foreground">Claude is rewriting…</p>
+        )}
+        {error && <p className="text-[11px] italic text-destructive">{error}</p>}
       </CardContent>
     </Card>
   );
 }
 
-function RewritePanel({
-  original,
-  rewrite,
-  isPending,
-  error,
-  onAccept,
-  onReject,
+/**
+ * Pre-rewrite snapshots. Every accepted rewrite (and every restore) banks the
+ * draft it replaced; one click brings it back — restores snapshot the current
+ * draft first, so going back is itself reversible.
+ */
+function VersionHistory({
+  versions,
+  onRestore,
 }: {
-  original: string;
-  rewrite: TargetRewrite | null;
-  isPending: boolean;
-  error: string | null;
-  onAccept: () => void;
-  onReject: () => void;
+  versions: DraftVersion[];
+  onRestore: (version: DraftVersion) => void;
 }) {
   return (
-    <Card className="mt-6 bg-card/60">
-      <CardContent className="flex flex-col gap-4 p-6">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
-            Suggested rewrite
-          </h2>
-          {!isPending && rewrite && (
-            <span className="text-[11px] italic text-muted-foreground">
-              Accept replaces your draft. Reject keeps it.
-            </span>
-          )}
-        </div>
-
-        {isPending ? (
-          <div className="flex items-center justify-center gap-2 py-6 text-sm text-muted-foreground">
-            <Loader2 className="size-4 animate-spin" /> Claude is rewriting…
-          </div>
-        ) : error ? (
-          <p className="text-xs italic text-destructive">{error}</p>
-        ) : rewrite ? (
-          <>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <h3 className="text-[10px] tracking-wider text-muted-foreground uppercase">
-                  Original
-                </h3>
-                <p className="mt-2 font-serif text-base leading-relaxed whitespace-pre-wrap text-ink-deep/70">
-                  {plainText(original)}
-                </p>
-              </div>
-              <div>
-                <h3 className="text-[10px] tracking-wider text-ink-bleed uppercase">Nudge</h3>
-                <p className="mt-2 font-serif text-base leading-relaxed whitespace-pre-wrap text-ink-deep">
-                  {rewrite.rewrite}
-                </p>
-              </div>
-            </div>
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={onReject}>
-                <X className="size-4" /> Keep original
-              </Button>
-              <Button size="sm" onClick={onAccept}>
-                <Check className="size-4" /> Use the nudge
-              </Button>
-            </div>
-          </>
-        ) : null}
+    <Card>
+      <CardContent className="flex flex-col gap-2.5 p-5">
+        <h2 className="flex items-center gap-1.5 text-[10px] tracking-widest text-muted-foreground uppercase">
+          <History aria-hidden="true" className="size-3.5" /> Versions
+        </h2>
+        <ul className="flex flex-col gap-1.5">
+          {versions.map((version) => (
+            <li key={`${version.takenAt}:${version.html.length}`}>
+              <button
+                type="button"
+                onClick={() => onRestore(version)}
+                title="Restore this draft (the current draft is kept as a version)"
+                className={cn(
+                  "flex w-full items-baseline justify-between gap-2 rounded-sm px-1 py-0.5 text-left text-xs",
+                  "transition-colors hover:bg-muted/60 hover:text-ink-deep",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                )}
+              >
+                <span className="truncate text-ink-deep">
+                  {version.sourceTarget ? `toward "${version.sourceTarget}"` : "snapshot"}
+                </span>
+                <span className="shrink-0 tabular-nums text-muted-foreground">
+                  {new Date(version.takenAt).toLocaleTimeString([], {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+        <p className="text-[11px] italic leading-snug text-muted-foreground">
+          Drafts replaced by a rewrite land here — click one to bring it back.
+        </p>
       </CardContent>
     </Card>
   );
-}
-
-function plainText(html: string): string {
-  return html
-    .replace(/<\/?(p|br|div|h[1-6]|li)[^>]*>/gi, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
 }
 
 function escapeHtml(s: string): string {

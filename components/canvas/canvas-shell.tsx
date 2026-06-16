@@ -34,6 +34,11 @@ export type CanvasDot = {
   subtitle: string;
   /** RGB tuple in 0–255. If omitted, dot uses the default ink colour. */
   color?: [number, number, number];
+  /**
+   * Source-disagreement bucket (lib/colour/uncertainty.ts): 0 sharp ink
+   * (methods agree) · 1 loose · 2 diffuse (methods contest the hue).
+   */
+  softness?: 0 | 1 | 2;
 };
 
 type CanvasShellProps = {
@@ -41,6 +46,8 @@ type CanvasShellProps = {
   detail: ReactNode;
   caption: string;
   dots?: CanvasDot[];
+  /** An extra, highlighted "you are here" dot (e.g. the writer's draft, #10). */
+  marker?: CanvasDot | null;
   onSelectDot?: (id: string | null) => void;
 };
 
@@ -49,6 +56,7 @@ export function CanvasShell({
   detail,
   caption,
   dots = [],
+  marker = null,
   onSelectDot,
 }: CanvasShellProps) {
   const hasDots = dots.length > 0;
@@ -102,6 +110,7 @@ export function CanvasShell({
               <div className="absolute inset-0">
                 <InkwellCanvas
                   dots={dots}
+                  marker={marker}
                   viewState={viewState}
                   onViewStateChange={handleControllerChange}
                   onSelect={onSelectDot}

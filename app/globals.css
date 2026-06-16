@@ -205,4 +205,22 @@
   .inklings-pulse {
     animation: inklings-pulse-soft 4s ease-in-out infinite;
   }
+
+  /* EmoArc band → editor link (#1): the block under the hovered hue-band
+     segment, washed in that segment's own hue (--emoarc-tint, set inline by the
+     decoration) with a faint inset ring. Paint-only, so no reflow; matches the
+     band's own 200ms ease-out so the two read as one gesture. */
+  .quill-emoarc-active {
+    border-radius: 0.25rem;
+    background: color-mix(in oklch, var(--emoarc-tint, var(--ink-bleed)) 12%, transparent);
+    box-shadow: inset 0 0 0 1px
+      color-mix(in oklch, var(--emoarc-tint, var(--ink-bleed)) 24%, transparent);
+  }
+  @media (prefers-reduced-motion: no-preference) {
+    .quill-emoarc-active {
+      transition:
+        background-color 200ms ease-out,
+        box-shadow 200ms ease-out;
+    }
+  }
 }

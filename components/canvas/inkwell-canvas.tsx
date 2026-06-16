@@ -15,6 +15,10 @@ const SCALE = 200;
 
 const DEFAULT_RGB: [number, number, number] = [40, 50, 80];
 
+// The draft marker (#10) — a warm amber so "you" reads instantly against the
+// corpus's mostly cool blots, independent of the hue-source toggle.
+const MARKER_RGB: [number, number, number] = [198, 134, 40];
+
 export const MIN_ZOOM = -3;
 export const MAX_ZOOM = 8;
 
@@ -53,10 +57,14 @@ function zoomDriven(zoom: number) {
 }
 
 // ---------------------------------------------------------------------------
-// Icon atlas — one SVG per shape, rendered as a mask icon. The radial
-// gradient inside the path is what gives each book its "ink dropped on paper"
-// look: opaque centre, gentle mid, fully transparent silhouette edge. A small
-// Gaussian blur softens the polygonal silhouette without turning it round.
+// Icon atlas — one SVG per shape × softness, rendered as a mask icon. The
+// radial gradient inside the path is what gives each book its "ink dropped on
+// paper" look: opaque centre, gentle mid, fully transparent silhouette edge.
+// A Gaussian blur softens the polygonal silhouette without turning it round.
+//
+// Softness encodes source disagreement (lib/colour/uncertainty.ts): methods
+// in consensus get the sharp profile, contested books bleed like ink on wet
+// paper — a softer core and a longer tail.
 // ---------------------------------------------------------------------------
 
 type DeckIcon = {
@@ -68,21 +76,65 @@ type DeckIcon = {
   mask: true;
 };
 
-function buildIcon(path: string): DeckIcon {
+type GradientProfile = {
+  /** [offset%, opacity] stops for the radial gradient. */
+  stops: ReadonlyArray<readonly [number, number]>;
+  blur: number;
+};
+
+// 0 sharp · 1 loose · 2 diffuse — indexed by Softness.
+const GRADIENTS: readonly GradientProfile[] = [
+  {
+    stops: [
+      [0, 1],
+      [45, 1],
+      [75, 0.55],
+      [100, 0],
+    ],
+    blur: 2.5,
+  },
+  {
+    stops: [
+      [0, 1],
+      [30, 0.85],
+      [65, 0.4],
+      [100, 0],
+    ],
+    blur: 3.5,
+  },
+  {
+    stops: [
+      [0, 0.9],
+      [15, 0.65],
+      [55, 0.3],
+      [100, 0],
+    ],
+    blur: 5,
+  },
+];
+
+function buildIcon(path: string, softness: number): DeckIcon {
+  // biome-ignore lint/style/noNonNullAssertion: softness is bucketed to 0..2.
+  const profile = GRADIENTS[softness] ?? GRADIENTS[0]!;
   // Expand viewBox a bit so the blur tail has room.
   const pad = 12;
   const dim = 120 + 2 * pad;
+  const stops = profile.stops
+    .map(
+      ([offset, opacity]) =>
+        `<stop offset='${offset}%' stop-color='white' stop-opacity='${opacity}'/>`,
+    )
+    .join("");
+  // width/height are required: Chrome's createImageBitmap refuses SVG images
+  // without natural dimensions, which left every blot invisible.
   const svg =
-    `<svg xmlns='http://www.w3.org/2000/svg' viewBox='${-pad} ${-pad} ${dim} ${dim}'>` +
+    `<svg xmlns='http://www.w3.org/2000/svg' width='${dim}' height='${dim}' viewBox='${-pad} ${-pad} ${dim} ${dim}'>` +
     `<defs>` +
     `<radialGradient id='g' cx='50%' cy='50%' r='55%'>` +
-    `<stop offset='0%' stop-color='white' stop-opacity='1'/>` +
-    `<stop offset='45%' stop-color='white' stop-opacity='1'/>` +
-    `<stop offset='75%' stop-color='white' stop-opacity='0.55'/>` +
-    `<stop offset='100%' stop-color='white' stop-opacity='0'/>` +
+    stops +
     `</radialGradient>` +
-    `<filter id='b' x='-20%' y='-20%' width='140%' height='140%'>` +
-    `<feGaussianBlur stdDeviation='2.5'/>` +
+    `<filter id='b' x='-25%' y='-25%' width='150%' height='150%'>` +
+    `<feGaussianBlur stdDeviation='${profile.blur}'/>` +
     `</filter>` +
     `</defs>` +
     `<path d='${path}' fill='url(#g)' filter='url(#b)'/>` +
@@ -97,21 +149,28 @@ function buildIcon(path: string): DeckIcon {
   };
 }
 
-const ICONS: DeckIcon[] = BLOT_SHAPES.map((p) => buildIcon(p));
+// ICONS[softness][shapeIndex] — small atlas: shapes × 3 gradient profiles.
+const ICONS: DeckIcon[][] = GRADIENTS.map((_, s) => BLOT_SHAPES.map((p) => buildIcon(p, s)));
 // BLOT_SHAPES is non-empty; this guarantees a non-undefined fallback for TS.
-const FALLBACK_ICON: DeckIcon = buildIcon(BLOT_SHAPES[0] ?? "M0,0 Z");
+const FALLBACK_ICON: DeckIcon = buildIcon(BLOT_SHAPES[0] ?? "M0,0 Z", 0);
+
+// Diffuse gradients carry less visual mass; nudge their size up so a
+// contested blot reads softer, not smaller.
+const SIZE_BY_SOFTNESS = [1, 1.07, 1.15] as const;
 
 // ---------------------------------------------------------------------------
 
 type Props = {
   dots: CanvasDot[];
+  /** A highlighted "you are here" dot drawn on top of the corpus (#10). */
+  marker?: CanvasDot | null;
   viewState: OrthographicViewState;
   onViewStateChange: (vs: OrthographicViewState) => void;
   /** Called with a blot's id on click, or null when the background is clicked. */
   onSelect?: (id: string | null) => void;
 };
 
-export function InkwellCanvas({ dots, viewState, onViewStateChange, onSelect }: Props) {
+export function InkwellCanvas({ dots, marker, viewState, onViewStateChange, onSelect }: Props) {
   const { blotSize, blotOpacity, labelOpacity } = zoomDriven(scalarZoom(viewState.zoom));
 
   const blotLayer = new IconLayer<CanvasDot>({
@@ -121,8 +180,8 @@ export function InkwellCanvas({ dots, viewState, onViewStateChange, onSelect }: 
     opacity: blotOpacity,
     sizeUnits: "pixels",
     getPosition: (d) => [d.x * SCALE, d.y * SCALE, 0],
-    getIcon: (d) => ICONS[shapeForId(d.id)] ?? FALLBACK_ICON,
-    getSize: blotSize,
+    getIcon: (d) => ICONS[d.softness ?? 0]?.[shapeForId(d.id)] ?? FALLBACK_ICON,
+    getSize: (d) => blotSize * (SIZE_BY_SOFTNESS[d.softness ?? 0] ?? 1),
     sizeMinPixels: 22,
     sizeMaxPixels: 160,
     getColor: (d) => {
@@ -130,7 +189,8 @@ export function InkwellCanvas({ dots, viewState, onViewStateChange, onSelect }: 
       return [r, g, b, 255];
     },
     updateTriggers: {
-      getIcon: dots.map((d) => d.id),
+      getIcon: dots.map((d) => `${d.id}|${d.softness ?? 0}`),
+      getSize: [blotSize, dots.map((d) => d.softness ?? 0).join(",")],
       getColor: dots.map((d) => d.color),
     },
   });
@@ -160,13 +220,65 @@ export function InkwellCanvas({ dots, viewState, onViewStateChange, onSelect }: 
     },
   });
 
+  // Draft marker (#10) — a soft halo, the amber dot, and an always-visible
+  // label, drawn on top of the corpus so "you are here" never hides among the
+  // blots at any zoom. Non-pickable: clicks fall through to the books beneath.
+  const markerData = marker ? [marker] : [];
+  const markerLayers = marker
+    ? [
+        new IconLayer<CanvasDot>({
+          id: "draft-halo",
+          data: markerData,
+          pickable: false,
+          opacity: 0.3,
+          sizeUnits: "pixels",
+          getPosition: (d) => [d.x * SCALE, d.y * SCALE, 0],
+          getIcon: () => FALLBACK_ICON,
+          getSize: blotSize * 1.85,
+          sizeMinPixels: 42,
+          getColor: () => [...MARKER_RGB, 255],
+        }),
+        new IconLayer<CanvasDot>({
+          id: "draft-marker",
+          data: markerData,
+          pickable: false,
+          sizeUnits: "pixels",
+          getPosition: (d) => [d.x * SCALE, d.y * SCALE, 0],
+          getIcon: () => FALLBACK_ICON,
+          getSize: blotSize,
+          sizeMinPixels: 24,
+          getColor: () => [...MARKER_RGB, 255],
+        }),
+        new TextLayer<CanvasDot>({
+          id: "draft-label",
+          data: markerData,
+          pickable: false,
+          sizeUnits: "pixels",
+          fontFamily: 'Georgia, "Times New Roman", serif',
+          fontWeight: 600,
+          getPosition: (d) => [d.x * SCALE, d.y * SCALE, 0],
+          getText: (d) => d.title,
+          getSize: 12,
+          getColor: [...MARKER_RGB, 255],
+          getPixelOffset: [0, -Math.round(blotSize * 0.7)],
+          getTextAnchor: "middle",
+          getAlignmentBaseline: "bottom",
+          background: true,
+          backgroundPadding: [5, 3],
+          getBackgroundColor: [250, 248, 244, 235],
+          getBorderColor: [...MARKER_RGB, 90],
+          getBorderWidth: 1,
+        }),
+      ]
+    : [];
+
   return (
     <DeckGL
       views={new OrthographicView({ id: "ortho" })}
       viewState={viewState}
       onViewStateChange={({ viewState: next }) => onViewStateChange(next as OrthographicViewState)}
       controller={true}
-      layers={[blotLayer, labelLayer]}
+      layers={[blotLayer, labelLayer, ...markerLayers]}
       style={{ background: "transparent" }}
       onClick={(info) => {
         const picked = (info.object as CanvasDot | undefined)?.id ?? null;

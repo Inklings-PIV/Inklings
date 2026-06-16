@@ -267,6 +267,8 @@ export const quillSamples = pgTable(
     scribeId: uuid("scribe_id")
       .notNull()
       .references(() => scribes.id, { onDelete: "cascade" }),
+    title: text("title").notNull().default("Untitled"),
+    docId: text("doc_id"),
     text: text("text").notNull(),
     computedColour: jsonb("computed_colour"),
     targetColour: jsonb("target_colour"),
@@ -274,7 +276,10 @@ export const quillSamples = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().default(sql`now()`),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().default(sql`now()`),
   },
-  (table) => [index("quill_samples_scribe_id_idx").on(table.scribeId)],
+  (table) => [
+    index("quill_samples_scribe_id_idx").on(table.scribeId),
+    uniqueIndex("quill_samples_scribe_doc_idx").on(table.scribeId, table.docId),
+  ],
 );
 
 // ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 import { anthropic } from "@ai-sdk/anthropic";
 import { generateObject, generateText } from "ai";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNotNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { z } from "zod";
 import { ensureScribe } from "@/lib/auth/scribe";
@@ -394,65 +394,65 @@ export async function rewriteSelection(text: string, target: string): Promise<st
 // has flipped the toggle in the Quill sidebar.
 // ---------------------------------------------------------------------------
 
-export type CloudDraft = { text: string; updatedAt: Date } | null;
+export type CloudDoc = { docId: string; title: string; text: string; updatedAt: Date };
 
-/**
- * Upserts the scribe's current draft. We keep at most one row per scribe so
- * revisits land back on the same row instead of accumulating snapshots —
- * `quill_samples` has no unique constraint on `scribeId`, so application
- * code enforces the invariant (find-and-update, else insert). Empty text
- * is treated as "delete the saved draft" — see deleteCloudDraft.
- */
-export async function saveCloudDraft(text: string): Promise<{ updatedAt: Date }> {
-  if (text.trim().length === 0) {
-    await deleteCloudDraft();
-    return { updatedAt: new Date() };
-  }
-
+/** Upserts one document by (scribeId, docId). */
+export async function saveCloudDoc({
+  docId,
+  title,
+  text,
+}: {
+  docId: string;
+  title: string;
+  text: string;
+}): Promise<{ updatedAt: Date }> {
   const scribe = await ensureScribe();
   const db = getDb();
-
   const [existing] = await db
     .select({ id: schema.quillSamples.id })
     .from(schema.quillSamples)
-    .where(eq(schema.quillSamples.scribeId, scribe.id))
+    .where(and(eq(schema.quillSamples.scribeId, scribe.id), eq(schema.quillSamples.docId, docId)))
     .limit(1);
-
   const now = new Date();
   if (existing) {
     await db
       .update(schema.quillSamples)
-      .set({ text, updatedAt: now })
+      .set({ title, text, updatedAt: now })
       .where(eq(schema.quillSamples.id, existing.id));
   } else {
-    await db.insert(schema.quillSamples).values({ scribeId: scribe.id, text });
+    await db.insert(schema.quillSamples).values({ scribeId: scribe.id, docId, title, text });
   }
   return { updatedAt: now };
 }
 
-/**
- * Loads the scribe's most recent cloud-saved draft, if any. Called on /quill
- * mount when the cloud-save toggle is on, so the writer comes back to where
- * they left off across devices.
- */
-export async function loadCloudDraft(): Promise<CloudDraft> {
+/** Returns all cloud-saved documents for the scribe, newest first. */
+export async function loadCloudDocs(): Promise<CloudDoc[]> {
   const scribe = await ensureScribe();
   const db = getDb();
-  const [row] = await db
-    .select({ text: schema.quillSamples.text, updatedAt: schema.quillSamples.updatedAt })
+  const rows = await db
+    .select({
+      docId: schema.quillSamples.docId,
+      title: schema.quillSamples.title,
+      text: schema.quillSamples.text,
+      updatedAt: schema.quillSamples.updatedAt,
+    })
     .from(schema.quillSamples)
-    .where(eq(schema.quillSamples.scribeId, scribe.id))
-    .orderBy(desc(schema.quillSamples.updatedAt))
-    .limit(1);
-  return row ? { text: row.text, updatedAt: row.updatedAt } : null;
+    .where(and(eq(schema.quillSamples.scribeId, scribe.id), isNotNull(schema.quillSamples.docId)))
+    .orderBy(desc(schema.quillSamples.updatedAt));
+  return rows.map((r) => ({ docId: r.docId!, title: r.title, text: r.text, updatedAt: r.updatedAt }));
 }
 
-/**
- * Deletes the scribe's cloud-saved draft. Fired when the writer turns the
- * cloud-save toggle off — privacy-first: if it's off, the text is gone
- * from the server.
- */
-export async function deleteCloudDraft(): Promise<void> {
+/** Deletes one document by docId. */
+export async function deleteCloudDoc(docId: string): Promise<void> {
+  const scribe = await ensureScribe();
+  const db = getDb();
+  await db
+    .delete(schema.quillSamples)
+    .where(and(eq(schema.quillSamples.scribeId, scribe.id), eq(schema.quillSamples.docId, docId)));
+}
+
+/** Deletes all cloud-saved documents. Fired when the writer turns cloud-save off. */
+export async function deleteAllCloudDocs(): Promise<void> {
   const scribe = await ensureScribe();
   const db = getDb();
   await db.delete(schema.quillSamples).where(eq(schema.quillSamples.scribeId, scribe.id));

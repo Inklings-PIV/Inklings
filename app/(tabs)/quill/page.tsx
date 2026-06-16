@@ -34,7 +34,8 @@ import { type WidgetSelection, widgetsToTarget } from "@/lib/quill/widgets";
 import { cn } from "@/lib/utils";
 import {
   type DraftArc,
-  deleteCloudDraft,
+  deleteAllCloudDocs,
+  deleteCloudDoc,
   deriveDraftArc,
   deriveDraftStylometry,
   deriveParagraphHues,
@@ -42,11 +43,11 @@ import {
   deriveTextColour,
   explainHue,
   type HueSegment,
-  loadCloudDraft,
+  loadCloudDocs,
   nearestAuthors,
   rewriteSelection,
   type StyleNeighbour,
-  saveCloudDraft,
+  saveCloudDoc,
   suggestRewrite,
   type TargetRewrite,
   type TextColour,
@@ -239,17 +240,25 @@ export default function QuillPage() {
       setHydrated(true);
 
       if (cloudPref) {
-        loadCloudDraft().then((cloud) => {
-          if (!cloud?.text || cloud.text === activeDraft) return;
-          const { text: cloudText, updatedAt: cloudUpdatedAt } = cloud;
-          setDocs((prev) =>
-            prev.map((d) =>
-              d.id === initialActiveId
-                ? { ...d, text: cloudText, updatedAt: cloudUpdatedAt.getTime() }
-                : d,
-            ),
-          );
-          setCloudSavedAt(cloudUpdatedAt);
+        loadCloudDocs().then((cloudDocs) => {
+          if (cloudDocs.length === 0) return;
+          setDocs((prev) => {
+            const merged = [...prev];
+            for (const cd of cloudDocs) {
+              const i = merged.findIndex((d) => d.id === cd.docId);
+              if (i >= 0) {
+                const local = merged[i];
+                if (local && cd.updatedAt.getTime() > local.updatedAt) {
+                  merged[i] = { ...local, title: cd.title, text: cd.text, updatedAt: cd.updatedAt.getTime() };
+                }
+              } else {
+                merged.push({ id: cd.docId, title: cd.title, text: cd.text, updatedAt: cd.updatedAt.getTime() });
+              }
+            }
+            return merged;
+          });
+          const newest = cloudDocs[0];
+          if (newest) setCloudSavedAt(newest.updatedAt);
           setEditorKey((k) => k + 1);
         });
       }
@@ -277,21 +286,26 @@ export default function QuillPage() {
     }
   }, [activeDocId, hydrated]);
 
-  // Debounced cloud autosave when the toggle is on. The 2 s wait keeps a
-  // burst of typing from firing dozens of writes.
+  // Debounced cloud autosave when the toggle is on. Watches the whole docs
+  // array so renames and new empty docs are also persisted.
   useEffect(() => {
-    if (!hydrated || !cloudSave) return;
+    if (!hydrated || !cloudSave || docs.length === 0) return;
     let cancelled = false;
     const handle = setTimeout(() => {
-      saveCloudDraft(draft).then((result) => {
-        if (!cancelled) setCloudSavedAt(result.updatedAt);
-      });
+      Promise.all(docs.map((d) => saveCloudDoc({ docId: d.id, title: d.title, text: d.text }))).then(
+        (results) => {
+          if (!cancelled) {
+            const last = results.at(-1);
+            if (last) setCloudSavedAt(last.updatedAt);
+          }
+        },
+      );
     }, CLOUD_SAVE_DEBOUNCE_MS);
     return () => {
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [draft, cloudSave, hydrated]);
+  }, [docs, cloudSave, hydrated]);
 
   const toggleCloudSave = async (next: boolean) => {
     setCloudSave(next);
@@ -301,8 +315,8 @@ export default function QuillPage() {
       // Storage can throw in private mode / quota-full; we tolerate it.
     }
     if (!next) {
-      // Privacy: when the toggle goes off, the cloud row goes too.
-      await deleteCloudDraft();
+      // Privacy: when the toggle goes off, all cloud docs go too.
+      await deleteAllCloudDocs();
       setCloudSavedAt(null);
     }
   };
@@ -344,6 +358,10 @@ export default function QuillPage() {
 
   const switchDoc = (id: string) => {
     if (id === activeDocId) return;
+    if (cloudSave && activeDocId) {
+      const dep = docs.find((d) => d.id === activeDocId);
+      if (dep) saveCloudDoc({ docId: dep.id, title: dep.title, text: dep.text }).catch(() => {});
+    }
     setActiveDocId(id);
     setEditorKey((k) => k + 1);
     setRewrite(null);
@@ -363,6 +381,7 @@ export default function QuillPage() {
   };
 
   const deleteDoc = (id: string) => {
+    if (cloudSave) deleteCloudDoc(id).catch(() => {});
     setDocs((prev) => {
       const filtered = prev.filter((d) => d.id !== id);
       const next =

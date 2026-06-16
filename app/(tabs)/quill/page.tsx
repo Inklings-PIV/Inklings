@@ -21,7 +21,6 @@ import { TargetWidgets } from "@/components/quill/target-widgets";
 import { useDiff } from "@/components/quill/use-diff";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { hueFromHSL } from "@/lib/colour/placeholder";
 import { driftToTarget } from "@/lib/quill/colour-distance";
 import { type FingerprintMetric, toFingerprint } from "@/lib/quill/fingerprint";
@@ -57,11 +56,33 @@ type BandSegment = { id: string; text: string; colour: TextColour | null };
 const LOCAL_DRAFT_KEY = "inklings-quill-draft";
 const CLOUD_PREF_KEY = "inklings-quill-cloud-save";
 const CLOUD_SAVE_DEBOUNCE_MS = 2000;
+const PANEL_PRESET_KEY = "inklings-quill-panel-preset";
+const PANEL_CUSTOM_KEY = "inklings-quill-panel-custom";
 
-type QuillMode = "readout" | "target";
+type PanelPreset = "essentials" | "analyse" | "rewrite" | "custom";
+
+// Which optional panels each preset activates.
+const PANEL_PRESETS: Record<Exclude<PanelPreset, "custom">, readonly string[]> = {
+  essentials: ["hue", "save"],
+  analyse: ["hue", "fingerprint", "arc", "neighbours", "save"],
+  rewrite: ["hue", "target", "save"],
+};
+
+const CUSTOM_PANEL_OPTIONS = [
+  { key: "hue", label: "Hue readout" },
+  { key: "fingerprint", label: "Style fingerprint" },
+  { key: "arc", label: "Emotional arc" },
+  { key: "neighbours", label: "Nearest authors" },
+  { key: "target", label: "Rewrite" },
+  { key: "save", label: "Save to scribe" },
+] as const;
+
+// Default custom panels — on for new users; existing saved sets load from localStorage.
+const DEFAULT_CUSTOM_PANELS = ["hue", "save"];
 
 export default function QuillPage() {
-  const [mode, setMode] = useState<QuillMode>("readout");
+  const [panelPreset, setPanelPreset] = useState<PanelPreset>("essentials");
+  const [customPanels, setCustomPanels] = useState<Set<string>>(new Set());
   // Local-first per the #45 privacy decision — the draft lives in
   // localStorage by default and only round-trips to the server when the
   // writer opts in via the SaveSettings toggle below.
@@ -115,6 +136,14 @@ export default function QuillPage() {
   // or we restore a draft from storage.
   const [editorKey, setEditorKey] = useState(0);
 
+  // Panel visibility — resolved from preset each render.
+  const panelVisible = (key: string): boolean => {
+    if (panelPreset === "custom") return customPanels.has(key);
+    return PANEL_PRESETS[panelPreset].includes(key);
+  };
+  const arcActive = panelVisible("arc");
+  const targetActive = panelVisible("target");
+
   // EmoArc hue band (B5). Cache hues by paragraph text so a typing burst only
   // re-derives the block that actually changed; the band shows the arc across
   // the whole draft in Readout mode.
@@ -156,8 +185,15 @@ export default function QuillPage() {
     try {
       const localDraft = window.localStorage.getItem(LOCAL_DRAFT_KEY) ?? "";
       const cloudPref = window.localStorage.getItem(CLOUD_PREF_KEY) === "true";
+      const savedPreset = (window.localStorage.getItem(PANEL_PRESET_KEY) ??
+        "essentials") as PanelPreset;
+      const savedCustom = JSON.parse(
+        window.localStorage.getItem(PANEL_CUSTOM_KEY) ?? JSON.stringify(DEFAULT_CUSTOM_PANELS),
+      ) as string[];
       setDraft(localDraft);
       setCloudSave(cloudPref);
+      setPanelPreset(savedPreset);
+      setCustomPanels(new Set(savedCustom));
       if (localDraft) setEditorKey((k) => k + 1);
       setHydrated(true);
       if (cloudPref) {
@@ -215,6 +251,29 @@ export default function QuillPage() {
     }
   };
 
+  const changePanelPreset = (preset: PanelPreset) => {
+    setPanelPreset(preset);
+    try {
+      window.localStorage.setItem(PANEL_PRESET_KEY, preset);
+    } catch {
+      // Storage can throw in private mode / quota-full; we tolerate it.
+    }
+  };
+
+  const toggleCustomPanel = (key: string) => {
+    setCustomPanels((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      try {
+        window.localStorage.setItem(PANEL_CUSTOM_KEY, JSON.stringify([...next]));
+      } catch {
+        // Storage can throw in private mode / quota-full; we tolerate it.
+      }
+      return next;
+    });
+  };
+
   // Debounced readout — 700 ms after the last keystroke we ask Claude for the
   // current hue. Latest call wins; in-flight ones are ignored when stale.
   useEffect(() => {
@@ -238,7 +297,7 @@ export default function QuillPage() {
   // Debounced counterfactual explanation (#2) — only while the panel is open and
   // in readout mode, so we pay for it on demand. Same 700 ms window; latest wins.
   useEffect(() => {
-    if (mode !== "readout" || !explain) return;
+    if (!explain) return;
     let cancelled = false;
     setExplainPending(true);
     const handle = setTimeout(async () => {
@@ -255,7 +314,7 @@ export default function QuillPage() {
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [draft, mode, explain]);
+  }, [draft, explain]);
 
   // Debounced stylometric fingerprint — same 700 ms window as the hue readout.
   useEffect(() => {
@@ -315,7 +374,7 @@ export default function QuillPage() {
   // paragraph drafts fall back to the global swatch, so we only build a band
   // once there are at least two blocks to compare.
   useEffect(() => {
-    if (mode !== "readout") return;
+    if (!arcActive) return;
     let cancelled = false;
     const handle = setTimeout(async () => {
       const paras = splitParagraphs(draft);
@@ -351,12 +410,12 @@ export default function QuillPage() {
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [draft, mode]);
+  }, [draft, arcActive]);
 
   // Clear the EmoArc highlight whenever the band isn't on screen (mode switch,
   // or the draft dropped below two paragraphs) — the band's own mouse-leave
   // can't fire once it has unmounted, so a stale highlight would otherwise stick.
-  const bandVisible = mode === "readout" && band.length >= 2;
+  const bandVisible = arcActive && band.length >= 2;
   useEffect(() => {
     if (!bandVisible) setHighlight(null);
   }, [bandVisible]);
@@ -365,7 +424,7 @@ export default function QuillPage() {
   // colour/mood words map locally and for free; anything else the model derives
   // once, debounced so a burst of typing in the target field is a single call.
   useEffect(() => {
-    if (mode !== "target") return;
+    if (!targetActive) return;
     const aim = composedTarget.trim();
     if (!aim) {
       setTargetColour(null);
@@ -389,7 +448,7 @@ export default function QuillPage() {
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [composedTarget, mode]);
+  }, [composedTarget, targetActive]);
 
   const requestRewrite = () => {
     const sel = editorRef.current?.getSelection() ?? null;
@@ -463,19 +522,7 @@ export default function QuillPage() {
             Write, and watch the hue of your prose surface. Target a colour to receive nudges.
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {stats.words > 0 && <ExportControls markdown={markdown} />}
-          <ToggleGroup
-            type="single"
-            value={mode}
-            onValueChange={(v) => v && setMode(v as QuillMode)}
-            variant="outline"
-            size="sm"
-          >
-            <ToggleGroupItem value="readout">Readout</ToggleGroupItem>
-            <ToggleGroupItem value="target">Target</ToggleGroupItem>
-          </ToggleGroup>
-        </div>
+        {stats.words > 0 && <ExportControls markdown={markdown} />}
       </header>
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_280px]">
@@ -493,7 +540,7 @@ export default function QuillPage() {
               className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-ink-bleed to-transparent opacity-60"
             />
             <CardContent className="p-6 sm:p-8">
-              {mode === "target" && rewrite ? (
+              {targetActive && rewrite ? (
                 <div className="flex flex-col gap-3">
                   <DiffActions
                     resolvedCount={diff.resolvedCount}
@@ -543,22 +590,30 @@ export default function QuillPage() {
             </CardContent>
           </Card>
           {stats.words > 0 && <WritingStatsBar stats={stats} />}
-          {mode === "readout" && explain && (
+          {explain && (
             <HueExplainer segments={explanation} tint={readout} isPending={explainPending} />
           )}
         </div>
 
         <aside className="flex flex-col gap-4">
-          <HueReadout
-            mode={mode}
-            wordCount={countWords(draft)}
-            readout={readout}
-            isPending={isPending}
-            explain={explain}
-            onToggleExplain={() => setExplain((v) => !v)}
+          <PanelSelector
+            preset={panelPreset}
+            customPanels={customPanels}
+            onPresetChange={changePanelPreset}
+            onCustomToggle={toggleCustomPanel}
           />
-          {fingerprint && <StyleFingerprint metrics={fingerprint} />}
-          {arc && (
+          {panelVisible("hue") && (
+            <HueReadout
+              targetActive={targetActive}
+              wordCount={countWords(draft)}
+              readout={readout}
+              isPending={isPending}
+              explain={explain}
+              onToggleExplain={() => setExplain((v) => !v)}
+            />
+          )}
+          {panelVisible("fingerprint") && fingerprint && <StyleFingerprint metrics={fingerprint} />}
+          {panelVisible("arc") && arc && (
             <ArcChart
               arc={arc}
               onHover={(paragraphIndex) =>
@@ -566,14 +621,11 @@ export default function QuillPage() {
               }
             />
           )}
-          {neighbours.length > 0 && <NeighbourAuthors neighbours={neighbours} />}
-          <SaveSettings
-            cloudSave={cloudSave}
-            cloudSavedAt={cloudSavedAt}
-            onToggle={toggleCloudSave}
-          />
+          {panelVisible("neighbours") && neighbours.length > 0 && (
+            <NeighbourAuthors neighbours={neighbours} />
+          )}
           {versions.length > 0 && <VersionHistory versions={versions} onRestore={restoreVersion} />}
-          {mode === "target" && (
+          {panelVisible("target") && (
             <TargetPicker
               target={target}
               onTargetChange={setTarget}
@@ -593,9 +645,90 @@ export default function QuillPage() {
               error={rewriteError}
             />
           )}
-          {mode === "target" && <DriftMeter readout={readout} target={targetColour} />}
+          {panelVisible("target") && <DriftMeter readout={readout} target={targetColour} />}
+          {panelVisible("save") && (
+            <SaveSettings
+              cloudSave={cloudSave}
+              cloudSavedAt={cloudSavedAt}
+              onToggle={toggleCloudSave}
+            />
+          )}
         </aside>
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Panel selector — preset tabs + custom toggles at the top of the sidebar
+// ---------------------------------------------------------------------------
+
+const PRESET_LABELS: Record<PanelPreset, string> = {
+  essentials: "Essentials",
+  analyse: "Analyse",
+  rewrite: "Rewrite",
+  custom: "Custom",
+};
+
+function PanelSelector({
+  preset,
+  customPanels,
+  onPresetChange,
+  onCustomToggle,
+}: {
+  preset: PanelPreset;
+  customPanels: Set<string>;
+  onPresetChange: (p: PanelPreset) => void;
+  onCustomToggle: (key: string) => void;
+}) {
+  const presets = Object.keys(PRESET_LABELS) as PanelPreset[];
+  return (
+    <div className="flex flex-col gap-2">
+      <div
+        role="tablist"
+        aria-label="Panel preset"
+        className="flex gap-0.5 rounded-lg border border-border bg-muted/40 p-0.5"
+      >
+        {presets.map((p) => (
+          <button
+            key={p}
+            type="button"
+            role="tab"
+            aria-selected={preset === p}
+            onClick={() => onPresetChange(p)}
+            className={cn(
+              "flex-1 rounded-md py-1 text-xs transition-colors",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+              preset === p
+                ? "bg-card text-ink-deep shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            {PRESET_LABELS[p]}
+          </button>
+        ))}
+      </div>
+      {preset === "custom" && (
+        <div className="flex flex-wrap gap-1.5 px-0.5">
+          {CUSTOM_PANEL_OPTIONS.map((opt) => (
+            <button
+              key={opt.key}
+              type="button"
+              aria-pressed={customPanels.has(opt.key)}
+              onClick={() => onCustomToggle(opt.key)}
+              className={cn(
+                "rounded-md border px-2 py-0.5 text-[11px] transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                customPanels.has(opt.key)
+                  ? "border-ink-bleed/40 bg-ink-bleed/10 text-ink-bleed"
+                  : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -621,14 +754,14 @@ function plainText(html: string): string {
 }
 
 function HueReadout({
-  mode,
+  targetActive,
   wordCount,
   readout,
   isPending,
   explain,
   onToggleExplain,
 }: {
-  mode: QuillMode;
+  targetActive: boolean;
   wordCount: number;
   readout: TextColour | null;
   isPending: boolean;
@@ -655,7 +788,7 @@ function HueReadout({
         </div>
         <p className="text-xs italic leading-snug text-muted-foreground">
           {readout
-            ? mode === "readout"
+            ? !targetActive
               ? "Keep writing — the hue updates as the ink dries."
               : "Aim for the target. Suggestions will appear inline."
             : wordCount < 8
@@ -669,7 +802,7 @@ function HueReadout({
             {wordCount} {wordCount === 1 ? "word" : "words"}
           </p>
         )}
-        {mode === "readout" && readout && (
+        {readout && (
           <button
             type="button"
             aria-pressed={explain}
@@ -726,7 +859,7 @@ function HueBand({
     <Card className="bg-card/60">
       <CardContent className="flex flex-col gap-2 p-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">Hue arc</h2>
+          <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">Hue band</h2>
           <span className="text-[11px] tabular-nums text-muted-foreground">
             {segments.length} paragraphs
           </span>

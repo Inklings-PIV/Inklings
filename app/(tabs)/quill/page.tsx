@@ -1,6 +1,8 @@
 "use client";
 
 import {
+  Check,
+  ChevronDown,
   ClipboardCopy,
   Cloud,
   CloudOff,
@@ -11,6 +13,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+import { Popover } from "radix-ui";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { ArcChart } from "@/components/quill/arc-chart";
@@ -784,25 +787,48 @@ function PanelSelector({
         ))}
       </div>
       {preset === "custom" && (
-        <div className="flex flex-wrap gap-1.5 px-0.5">
-          {CUSTOM_PANEL_OPTIONS.map((opt) => (
-            <button
-              key={opt.key}
-              type="button"
-              aria-pressed={customPanels.has(opt.key)}
-              onClick={() => onCustomToggle(opt.key)}
-              className={cn(
-                "rounded-md border px-2 py-0.5 text-[11px] transition-colors",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-                customPanels.has(opt.key)
-                  ? "border-ink-bleed/40 bg-ink-bleed/10 text-ink-bleed"
-                  : "border-border text-muted-foreground hover:bg-muted hover:text-foreground",
-              )}
+        <Popover.Root>
+          <Popover.Trigger
+            className={cn(
+              "flex items-center justify-between rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors",
+              "hover:bg-muted hover:text-foreground",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+            )}
+          >
+            <span className="flex items-center gap-1.5">
+              Panels
+              <ChevronDown className="size-3" />
+            </span>
+            <span className="tabular-nums">{customPanels.size} active</span>
+          </Popover.Trigger>
+          <Popover.Portal>
+            <Popover.Content
+              align="start"
+              sideOffset={4}
+              className="z-50 flex w-[var(--radix-popover-trigger-width)] flex-col rounded-md border border-border bg-card p-1 shadow-md"
             >
-              {opt.label}
-            </button>
-          ))}
-        </div>
+              {CUSTOM_PANEL_OPTIONS.map((opt) => {
+                const on = customPanels.has(opt.key);
+                return (
+                  <button
+                    key={opt.key}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => onCustomToggle(opt.key)}
+                    className={cn(
+                      "flex items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                      on ? "text-ink-bleed" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                    )}
+                  >
+                    <Check className={cn("size-3.5 shrink-0", !on && "opacity-0")} />
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </Popover.Content>
+          </Popover.Portal>
+        </Popover.Root>
       )}
     </div>
   );

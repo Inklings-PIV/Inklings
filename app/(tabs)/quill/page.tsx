@@ -78,14 +78,15 @@ type PanelPreset = "essentials" | "analyse" | "rewrite" | "custom";
 // Which optional panels each preset activates.
 const PANEL_PRESETS: Record<Exclude<PanelPreset, "custom">, readonly string[]> = {
   essentials: ["hue", "save"],
-  analyse: ["hue", "fingerprint", "arc", "neighbours", "save"],
+  analyse: ["hue", "fingerprint", "band", "arc", "neighbours", "save"],
   rewrite: ["hue", "target", "colour", "version", "save"],
 };
 
 const CUSTOM_PANEL_OPTIONS = [
   { key: "hue", label: "Hue readout" },
   { key: "fingerprint", label: "Style fingerprint" },
-  { key: "arc", label: "Emotional arc" },
+  { key: "band", label: "Hue band" },
+  { key: "arc", label: "Story shape" },
   { key: "neighbours", label: "Nearest authors" },
   { key: "version", label: "Versions" },
   { key: "target", label: "Rewrite" },
@@ -173,7 +174,7 @@ export default function QuillPage() {
     if (panelPreset === "custom") return customPanels.has(key);
     return PANEL_PRESETS[panelPreset].includes(key);
   };
-  const arcActive = panelVisible("arc");
+  const bandActive = panelVisible("band");
   const targetActive = panelVisible("target");
 
   // EmoArc hue band (B5). Cache hues by paragraph text so a typing burst only
@@ -406,7 +407,7 @@ export default function QuillPage() {
   // paragraph drafts fall back to the global swatch, so we only build a band
   // once there are at least two blocks to compare.
   useEffect(() => {
-    if (!arcActive) return;
+    if (!bandActive) return;
     let cancelled = false;
     const handle = setTimeout(async () => {
       const paras = splitParagraphs(draft);
@@ -442,12 +443,12 @@ export default function QuillPage() {
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [draft, arcActive]);
+  }, [draft, bandActive]);
 
   // Clear the EmoArc highlight whenever the band isn't on screen (mode switch,
   // or the draft dropped below two paragraphs) — the band's own mouse-leave
   // can't fire once it has unmounted, so a stale highlight would otherwise stick.
-  const bandVisible = arcActive && band.length >= 2;
+  const bandVisible = bandActive && band.length >= 2;
   useEffect(() => {
     if (!bandVisible) setHighlight(null);
   }, [bandVisible]);

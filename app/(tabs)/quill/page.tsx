@@ -79,7 +79,7 @@ type PanelPreset = "essentials" | "analyse" | "rewrite" | "custom";
 const PANEL_PRESETS: Record<Exclude<PanelPreset, "custom">, readonly string[]> = {
   essentials: ["hue", "save"],
   analyse: ["hue", "fingerprint", "arc", "neighbours", "save"],
-  rewrite: ["hue", "target", "colour", "save"],
+  rewrite: ["hue", "target", "colour", "version", "save"],
 };
 
 const CUSTOM_PANEL_OPTIONS = [
@@ -87,6 +87,7 @@ const CUSTOM_PANEL_OPTIONS = [
   { key: "fingerprint", label: "Style fingerprint" },
   { key: "arc", label: "Emotional arc" },
   { key: "neighbours", label: "Nearest authors" },
+  { key: "version", label: "Versions" },
   { key: "target", label: "Rewrite" },
   { key: "colour", label: "Colour drop" },
   { key: "save", label: "Save to scribe" },
@@ -701,7 +702,9 @@ export default function QuillPage() {
           {panelVisible("neighbours") && neighbours.length > 0 && (
             <NeighbourAuthors neighbours={neighbours} />
           )}
-          {versions.length > 0 && <VersionHistory versions={versions} onRestore={restoreVersion} />}
+          {panelVisible("version") && (
+            <VersionHistory versions={versions} onRestore={restoreVersion} />
+          )}
           {panelVisible("target") && (
             <TargetPicker
               target={target}

@@ -821,7 +821,9 @@ function PanelSelector({
                     className={cn(
                       "flex items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors",
                       "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-                      on ? "text-ink-bleed" : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                      on
+                        ? "text-ink-bleed"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
                     )}
                   >
                     <Check className={cn("size-3.5 shrink-0", !on && "opacity-0")} />

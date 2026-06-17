@@ -206,73 +206,91 @@
     animation: inklings-pulse-soft 4s ease-in-out infinite;
   }
 
-  /* Colour-drop splash (Quill). Coordinates set left/top; the negative margins
-     centre each blob on its point and transforms animate the bloom. */
-  @keyframes inklings-splash-land {
-    0%,
-    100% {
-      transform: scale(0.55);
-      opacity: 0.55;
-    }
-    50% {
-      transform: scale(1);
-      opacity: 0.85;
-    }
-  }
-  @keyframes inklings-splash-main {
+  /* Colour-drop ink splash (Quill). Each blot is a turbulence-displaced SVG
+     circle; these only animate scale/opacity. The big bloom overshoots then
+     lingers and fades slowly so it reads as ink soaking in, not a quick blip. */
+  @keyframes inklings-ink-bloom {
     0% {
-      transform: scale(0.1);
-      opacity: 0.85;
+      transform: scale(0);
+      opacity: 0;
     }
-    60% {
-      opacity: 0.5;
+    18% {
+      opacity: 0.92;
+    }
+    45% {
+      transform: scale(1.12);
+      opacity: 0.9;
+    }
+    72% {
+      transform: scale(0.99);
+      opacity: 0.82;
     }
     100% {
-      transform: scale(1);
+      transform: scale(1.05);
       opacity: 0;
     }
   }
-  @keyframes inklings-splash-ripple {
+  @keyframes inklings-ink-spatter {
     0% {
-      transform: scale(0.1);
+      transform: scale(0) rotate(var(--spin, 0deg));
+      opacity: 0;
+    }
+    35% {
+      transform: scale(1.18) rotate(var(--spin, 0deg));
+      opacity: 0.9;
+    }
+    65% {
+      transform: scale(0.96) rotate(var(--spin, 0deg));
+      opacity: 0.72;
+    }
+    100% {
+      transform: scale(1) rotate(var(--spin, 0deg));
+      opacity: 0;
+    }
+  }
+  @keyframes inklings-ink-land {
+    0%,
+    100% {
+      transform: scale(0.8);
+      opacity: 0.72;
+    }
+    50% {
+      transform: scale(1.06);
+      opacity: 0.95;
+    }
+  }
+  @keyframes inklings-ink-ring {
+    0% {
+      transform: scale(0.35);
       opacity: 0.7;
     }
     100% {
-      transform: scale(1);
+      transform: scale(1.3);
       opacity: 0;
     }
   }
-  .inklings-splash-land {
-    width: 16px;
-    height: 16px;
-    margin: -8px 0 0 -8px;
-    filter: blur(1px);
-    animation: inklings-splash-land 1.1s ease-in-out infinite;
-  }
-  .inklings-splash-main {
-    width: 150px;
-    height: 150px;
-    margin: -75px 0 0 -75px;
+  .inklings-ink-bloom {
     opacity: 0;
-    filter: blur(3px);
-    animation: inklings-splash-main 0.9s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+    animation: inklings-ink-bloom 1.7s cubic-bezier(0.18, 0.85, 0.32, 1) forwards;
   }
-  .inklings-splash-ripple {
-    width: 64px;
-    height: 64px;
-    margin: -32px 0 0 -32px;
-    border-width: 2px;
-    border-style: solid;
+  .inklings-ink-spatter {
     opacity: 0;
-    animation: inklings-splash-ripple 0.7s ease-out forwards;
+    animation: inklings-ink-spatter 1.25s cubic-bezier(0.2, 0.8, 0.3, 1) both;
+  }
+  .inklings-ink-land {
+    animation: inklings-ink-land 1.3s ease-in-out infinite;
+  }
+  .inklings-ink-ring {
+    opacity: 0;
+    animation: inklings-ink-ring 1.3s ease-out infinite;
   }
   @media (prefers-reduced-motion: reduce) {
-    .inklings-splash-land,
-    .inklings-splash-main,
-    .inklings-splash-ripple {
+    .inklings-ink-bloom,
+    .inklings-ink-spatter,
+    .inklings-ink-land,
+    .inklings-ink-ring {
       animation-duration: 0.3s;
       animation-iteration-count: 1;
-      filter: none;
     }
   }
 

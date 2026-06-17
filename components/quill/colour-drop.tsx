@@ -110,12 +110,24 @@ export type SplashState = {
   phase: "landing" | "splash";
 };
 
+// Short radial spray of droplets flung from the impact point — angle (deg),
+// distance (px) and size factor. Deterministic so it doesn't reshuffle on
+// re-render, but irregular enough to read as spatter, not a tidy ring.
+const SPRAY = [
+  { angle: 18, dist: 32, size: 0.5, spin: 40 },
+  { angle: 96, dist: 48, size: 0.34, spin: 210 },
+  { angle: 168, dist: 38, size: 0.62, spin: 120 },
+  { angle: 232, dist: 54, size: 0.42, spin: 300 },
+  { angle: 304, dist: 30, size: 0.55, spin: 70 },
+] as const;
+
 /**
- * The splash overlay, painted over the editor card. Step one (`landing`) is a
- * single ripple at the drop point — the stone hitting the water — held while
- * Claude rewrites. Step two (`splash`) blooms the main splash on the word, then
- * radiates secondary splashes across the words about to change. Pure visual;
- * the page owns the timing and clears it.
+ * The splash overlay, painted over the editor card. Step one (`landing`) is an
+ * ink drop quivering at the impact point with an expanding ring — the stone
+ * hitting the water — held while Claude rewrites. Step two (`splash`) blooms a
+ * big organic ink blot on the word, throws a radial spray, then spatters along
+ * the words about to change. Edges are irregular (turbulence-displaced circles),
+ * so it reads as ink, not a disc. Pure visual; the page owns the timing.
  */
 export function ColourSplash({ splash }: { splash: SplashState }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -129,6 +141,7 @@ export function ColourSplash({ splash }: { splash: SplashState }) {
   const local = (p: { x: number; y: number }) =>
     rect ? { x: p.x - rect.left, y: p.y - rect.top } : null;
   const origin = local(splash.origin);
+  const colour = splash.colourCss;
 
   return (
     <div
@@ -136,36 +149,57 @@ export function ColourSplash({ splash }: { splash: SplashState }) {
       aria-hidden="true"
       className="pointer-events-none absolute inset-0 z-20 overflow-hidden"
     >
+      <InkFilters />
       {origin && splash.phase === "landing" && (
-        <Drop
-          x={origin.x}
-          y={origin.y}
-          colour={splash.colourCss}
-          className="inklings-splash-land"
-        />
+        <>
+          <InkBlob
+            x={origin.x}
+            y={origin.y}
+            colour={colour}
+            size={64}
+            className="inklings-ink-land"
+          />
+          <InkRing x={origin.x} y={origin.y} colour={colour} size={120} />
+        </>
       )}
       {origin && splash.phase === "splash" && (
         <>
-          <Drop
+          <InkBlob
             x={origin.x}
             y={origin.y}
-            colour={splash.colourCss}
-            className="inklings-splash-main"
+            colour={colour}
+            size={240}
+            className="inklings-ink-bloom"
           />
+          {SPRAY.map((s) => {
+            const rad = (s.angle * Math.PI) / 180;
+            return (
+              <InkBlob
+                key={s.angle}
+                x={origin.x + Math.cos(rad) * s.dist}
+                y={origin.y + Math.sin(rad) * s.dist}
+                colour={colour}
+                size={110 * s.size}
+                spatter
+                spin={s.spin}
+                delay={120 + s.size * 120}
+              />
+            );
+          })}
           {splash.ripples.map((p, i) => {
             const l = local(p);
             if (!l) return null;
             return (
-              <span
+              <InkBlob
                 // biome-ignore lint/suspicious/noArrayIndexKey: sampled points have no stable id
                 key={i}
-                className="inklings-splash-ripple absolute rounded-full"
-                style={{
-                  left: l.x,
-                  top: l.y,
-                  borderColor: splash.colourCss,
-                  animationDelay: `${80 + i * 70}ms`,
-                }}
+                x={l.x}
+                y={l.y}
+                colour={colour}
+                size={70 + ((i * 13) % 26)}
+                spatter
+                spin={(i * 67) % 360}
+                delay={180 + i * 80}
               />
             );
           })}
@@ -175,21 +209,117 @@ export function ColourSplash({ splash }: { splash: SplashState }) {
   );
 }
 
-function Drop({
+/** Turbulence-displaced circle → an organic ink blot. `spatter` uses a rougher,
+ *  smaller-feature filter for the flung droplets; otherwise it blooms. */
+function InkBlob({
   x,
   y,
   colour,
+  size,
   className,
+  spatter = false,
+  spin = 0,
+  delay = 0,
 }: {
   x: number;
   y: number;
   colour: string;
-  className: string;
+  size: number;
+  className?: string;
+  spatter?: boolean;
+  spin?: number;
+  delay?: number;
 }) {
   return (
-    <span
-      className={cn("absolute rounded-full", className)}
-      style={{ left: x, top: y, backgroundColor: colour }}
-    />
+    <svg
+      aria-hidden="true"
+      width={size}
+      height={size}
+      viewBox="0 0 100 100"
+      className={cn("absolute origin-center", className, spatter && "inklings-ink-spatter")}
+      style={{
+        left: x,
+        top: y,
+        marginLeft: -size / 2,
+        marginTop: -size / 2,
+        color: colour,
+        ...(spatter ? { ["--spin" as string]: `${spin}deg`, animationDelay: `${delay}ms` } : {}),
+      }}
+    >
+      <circle
+        cx="50"
+        cy="50"
+        r="30"
+        fill="currentColor"
+        filter={`url(#${spatter ? "inklings-ink-rough" : "inklings-ink-soft"})`}
+      />
+    </svg>
+  );
+}
+
+/** The impact ring for the landing phase — a distorted stroked circle. */
+function InkRing({ x, y, colour, size }: { x: number; y: number; colour: string; size: number }) {
+  return (
+    <svg
+      aria-hidden="true"
+      width={size}
+      height={size}
+      viewBox="0 0 100 100"
+      className="inklings-ink-ring absolute origin-center"
+      style={{ left: x, top: y, marginLeft: -size / 2, marginTop: -size / 2, color: colour }}
+    >
+      <circle
+        cx="50"
+        cy="50"
+        r="30"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="3"
+        filter="url(#inklings-ink-rough)"
+      />
+    </svg>
+  );
+}
+
+/** Two turbulence filters shared by every blot: soft (the bloom) and rough (the
+ *  smaller, spikier spatter). Rendered once, referenced by id. */
+function InkFilters() {
+  return (
+    <svg aria-hidden="true" className="absolute size-0" focusable="false">
+      <defs>
+        <filter id="inklings-ink-soft" x="-50%" y="-50%" width="200%" height="200%">
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.028"
+            numOctaves="2"
+            seed="7"
+            result="n"
+          />
+          <feDisplacementMap
+            in="SourceGraphic"
+            in2="n"
+            scale="20"
+            xChannelSelector="R"
+            yChannelSelector="G"
+          />
+        </filter>
+        <filter id="inklings-ink-rough" x="-60%" y="-60%" width="220%" height="220%">
+          <feTurbulence
+            type="fractalNoise"
+            baseFrequency="0.06"
+            numOctaves="2"
+            seed="3"
+            result="n"
+          />
+          <feDisplacementMap
+            in="SourceGraphic"
+            in2="n"
+            scale="17"
+            xChannelSelector="R"
+            yChannelSelector="G"
+          />
+        </filter>
+      </defs>
+    </svg>
   );
 }

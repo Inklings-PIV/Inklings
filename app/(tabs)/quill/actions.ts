@@ -8,7 +8,7 @@ import { z } from "zod";
 import { ensureScribe } from "@/lib/auth/scribe";
 import { getDb, schema } from "@/lib/db";
 import { classifyArc, MIN_ARC_SENTENCES, movingAverage } from "@/lib/quill/arc";
-import { rewriteFromDiff, type TargetRewrite } from "@/lib/quill/diff";
+import type { TargetRewrite } from "@/lib/quill/diff";
 import { type HueSegment, tileInfluences } from "@/lib/quill/explain";
 import { fingerprintDistance } from "@/lib/quill/fingerprint";
 import { clampForModel, MAX_BAND_PARAGRAPHS } from "@/lib/quill/limits";
@@ -288,30 +288,7 @@ Rewrite the draft so it FEELS like the target while preserving:
 
 Make changes at the level of word choice, sentence rhythm, image-density, and connective tissue. Don't add new facts, characters, or events. Don't moralise.
 
-Return your answer as an aligned diff:
-
-- "diff": an ordered list of text segments that, read together, spell out BOTH the
-  original and the rewrite. Each segment has "op":
-    - "same"   — unchanged text shared by both versions (include the surrounding
-                 untouched words, punctuation and spaces verbatim)
-    - "remove" — text present in the ORIGINAL but cut or toned down
-    - "add"    — text present only in the REWRITE
-  Keep segments tight: wrap only the words that actually changed in remove/add,
-  and put a remove immediately before its replacement add. Preserve all
-  whitespace inside segments so the views read naturally. Concatenating every
-  non-"remove" segment MUST equal the rewritten prose; concatenating every
-  non-"add" segment MUST equal the original prose exactly.`;
-
-const RewriteResponseSchema = z.object({
-  diff: z
-    .array(
-      z.object({
-        text: z.string(),
-        op: z.enum(["same", "add", "remove"]),
-      }),
-    )
-    .min(1),
-});
+Return ONLY the rewritten prose — no preamble, no quotation marks, no commentary. Keep the paragraph breaks of the original.`;
 
 const INTENSITY_INSTRUCTIONS: Record<number, string> = {
   1: "Whisper — change at most one word every 2–3 sentences. Only the most natural synonym swap. The text must feel untouched.",
@@ -323,8 +300,9 @@ const INTENSITY_INSTRUCTIONS: Record<number, string> = {
 
 /**
  * Asks Claude to rewrite the user's draft toward a free-form target descriptor.
- * Returns a structured rewrite — an aligned word-level diff — so the client can
- * show green/pink highlighting and per-hunk accept/reject.
+ * Returns the rewritten prose as plain text; the client computes the word-level
+ * inline diff itself (diffWords), so we don't round-trip prose through a
+ * model-emitted segment array — that reconstruction dropped boundary spaces.
  *
  * @param intensity 1–5 controlling how aggressively to change the prose.
  *   Defaults to 3 (Moderate). 1 is a near-invisible whisper; 5 is a
@@ -343,18 +321,14 @@ export async function suggestRewrite(input: {
   const intensity = Math.min(5, Math.max(1, Math.round(input.intensity ?? 3)));
   const intensityLine = `Intensity: ${intensity}/5 — ${INTENSITY_INSTRUCTIONS[intensity]}`;
 
-  const { object } = await generateObject({
+  const { text: out } = await generateText({
     model: anthropic("claude-sonnet-4-6"),
-    schema: RewriteResponseSchema,
     system: REWRITE_SYSTEM_PROMPT,
     prompt: `${intensityLine}\nTarget: ${target}\n\nOriginal:\n${clampForModel(text)}`,
     maxRetries: 2,
   });
 
-  return {
-    diff: object.diff,
-    rewrite: rewriteFromDiff(object.diff).trim(),
-  };
+  return { rewrite: out.trim() };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 "use client";
 
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import {
@@ -40,7 +41,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { hueFromHSL } from "@/lib/colour/placeholder";
-import { textblockRanges } from "@/lib/quill/blocks";
+import { sentenceWindowAt, textblockRanges } from "@/lib/quill/blocks";
 import { NUDGE_PRESETS } from "@/lib/quill/nudge-presets";
 import { cn } from "@/lib/utils";
 
@@ -60,6 +61,26 @@ export type SelectionRange = {
   beforeText?: string;
   /** Text in the document after the selection — populated by getSelection(), not onSelectionChange. */
   afterText?: string;
+  /** Span begins mid-paragraph — the preceding context continues inline with it. */
+  openStart?: boolean;
+  /** Span ends mid-paragraph — the following context continues inline with it. */
+  openEnd?: boolean;
+};
+
+/** Drag-and-drop mime carrying a colour-drop swatch key from the palette. */
+export const COLOUR_DROP_MIME = "application/x-inklings-colour";
+
+/** What a colour-drop resolves to: the swatch, the span to rewrite, and the
+ *  viewport coordinates the splash should bloom from. */
+export type ColourDropDetail = {
+  /** The dropped swatch's key — the page maps it to a rewrite target. */
+  colourKey: string;
+  /** Sentence-window around the drop, ready to feed the diff/rewrite flow. */
+  span: SelectionRange;
+  /** Where the swatch landed (the targeted word), in viewport px. */
+  origin: { x: number; y: number };
+  /** Sampled points across the span for the radiating secondary splashes. */
+  ripples: { x: number; y: number }[];
 };
 
 type EditorProps = {
@@ -83,6 +104,8 @@ type EditorProps = {
    * the ink accent. Pass null to clear the highlight.
    */
   highlightBlock?: { index: number; tint?: string | null } | null;
+  /** A colour swatch was dropped on the prose — resolved span + splash coords. */
+  onColourDrop?: (detail: ColourDropDetail) => void;
 };
 
 /** Imperative handle for the Quill editor, exposed via `ref`. */
@@ -94,6 +117,22 @@ export type EditorHandle = {
   /** Replace the range [from, to] in the document with new HTML. */
   replaceRange: (from: number, to: number, html: string) => void;
 };
+
+// Whether the span begins/ends mid-paragraph — when it does, the adjacent
+// context belongs to the same block and should read inline with the rewrite
+// rather than as a separate paragraph above/below it.
+function openness(
+  doc: ProseMirrorNode,
+  from: number,
+  to: number,
+): { openStart: boolean; openEnd: boolean } {
+  const $from = doc.resolve(from);
+  const $to = doc.resolve(to);
+  return {
+    openStart: $from.parentOffset > 0,
+    openEnd: $to.parentOffset < $to.parent.content.size,
+  };
+}
 
 // Marks the top-level block holding the caret with `quill-focus-active`, so
 // focus mode can dim everything else via CSS. Always installed — it's inert
@@ -182,6 +221,7 @@ export function Editor({
   onDeriveHue,
   onRewriteSelection,
   highlightBlock,
+  onColourDrop,
 }: EditorProps & { ref?: Ref<EditorHandle> }) {
   // Track selection emptiness so the right-click menu can disable
   // selection-only actions; updated on every selection change.
@@ -306,6 +346,47 @@ export function Editor({
     toast.success("Copied");
   };
 
+  // Allow the palette's swatch drag to drop on the prose — without
+  // preventDefault on dragover the browser refuses the drop.
+  const handleColourDragOver = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes(COLOUR_DROP_MIME)) e.preventDefault();
+  };
+
+  // Resolve a dropped swatch to its target word, the sentence-window to rewrite,
+  // and the screen coordinates the splash plays over. We preventDefault so
+  // ProseMirror's own drop handling never sees it.
+  const handleColourDrop = (e: React.DragEvent) => {
+    if (!editor) return;
+    const colourKey = e.dataTransfer.getData(COLOUR_DROP_MIME);
+    if (!colourKey) return; // not our drag — let the editor handle it normally
+    e.preventDefault();
+    e.stopPropagation();
+    const { view } = editor;
+    const at = view.posAtCoords({ left: e.clientX, top: e.clientY });
+    if (!at) return;
+    const window = sentenceWindowAt(view.state.doc, at.pos);
+    if (!window) return;
+    const { from, to } = window;
+    const { doc } = view.state;
+    const span: SelectionRange = {
+      text: doc.textBetween(from, to, "\n\n"),
+      from,
+      to,
+      beforeText: doc.textBetween(0, from, "\n\n").trimStart(),
+      afterText: doc.textBetween(to, doc.content.size, "\n\n").trimEnd(),
+      ...openness(doc, from, to),
+    };
+    // Sample evenly across the span so the secondary splashes trace the words
+    // about to change, radiating out from the drop point.
+    const STEPS = 5;
+    const ripples = Array.from({ length: STEPS + 1 }, (_, i) => {
+      const p = Math.min(to, Math.max(from, Math.round(from + ((to - from) * i) / STEPS)));
+      const c = view.coordsAtPos(p);
+      return { x: c.left, y: (c.top + c.bottom) / 2 };
+    });
+    onColourDrop?.({ colourKey, span, origin: { x: e.clientX, y: e.clientY }, ripples });
+  };
+
   const canHue = hasSelection && !!onDeriveHue;
   const canRewrite = hasSelection && !!onRewriteSelection;
 
@@ -353,6 +434,7 @@ export function Editor({
           to,
           beforeText: doc.textBetween(0, from, "\n\n").trimStart(),
           afterText: doc.textBetween(to, doc.content.size, "\n\n").trimEnd(),
+          ...openness(doc, from, to),
         };
       },
       replaceRange(from: number, to: number, html: string) {
@@ -373,7 +455,10 @@ export function Editor({
       </div>
       <ContextMenu>
         <ContextMenuTrigger asChild>
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer-only colour-drop zone over the editable area; the same rewrite is keyboard-reachable via the Rewrite panel */}
           <div
+            onDragOver={handleColourDragOver}
+            onDrop={handleColourDrop}
             className={cn(
               "relative",
               focusMode && [

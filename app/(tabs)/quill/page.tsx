@@ -14,8 +14,19 @@ import {
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { ArcChart } from "@/components/quill/arc-chart";
+import {
+  ColourPalette,
+  ColourSplash,
+  colourDropByKey,
+  type SplashState,
+} from "@/components/quill/colour-drop";
 import { DiffActions, DiffText } from "@/components/quill/diff-view";
-import { Editor, type EditorHandle, type SelectionRange } from "@/components/quill/editor";
+import {
+  type ColourDropDetail,
+  Editor,
+  type EditorHandle,
+  type SelectionRange,
+} from "@/components/quill/editor";
 import { HueExplainer } from "@/components/quill/hue-explainer";
 import { TargetWidgets } from "@/components/quill/target-widgets";
 import { useDiff } from "@/components/quill/use-diff";
@@ -65,7 +76,7 @@ type PanelPreset = "essentials" | "analyse" | "rewrite" | "custom";
 const PANEL_PRESETS: Record<Exclude<PanelPreset, "custom">, readonly string[]> = {
   essentials: ["hue", "save"],
   analyse: ["hue", "fingerprint", "arc", "neighbours", "save"],
-  rewrite: ["hue", "target", "save"],
+  rewrite: ["hue", "target", "colour", "save"],
 };
 
 const CUSTOM_PANEL_OPTIONS = [
@@ -74,6 +85,7 @@ const CUSTOM_PANEL_OPTIONS = [
   { key: "arc", label: "Emotional arc" },
   { key: "neighbours", label: "Nearest authors" },
   { key: "target", label: "Rewrite" },
+  { key: "colour", label: "Colour drop" },
   { key: "save", label: "Save to scribe" },
 ] as const;
 
@@ -118,6 +130,9 @@ export default function QuillPage() {
   const [rewriteError, setRewriteError] = useState<string | null>(null);
   const [isRewriting, startRewrite] = useTransition();
   const [highlightPending, setHighlightPending] = useState(false);
+  // Colour-drop splash overlay (null when idle). The page owns the two-step
+  // timing; the overlay just paints whatever phase it's handed.
+  const [splash, setSplash] = useState<SplashState | null>(null);
   // Pre-rewrite snapshots. Accepting a rewrite remounts the editor and wipes
   // TipTap's undo stack — this is the way back.
   const [versions, setVersions] = useState<DraftVersion[]>([]);
@@ -130,6 +145,19 @@ export default function QuillPage() {
     rewrite ? (committedSelection?.text ?? plainText(draft)) : "",
     rewrite?.rewrite ?? "",
   );
+  // Surrounding context for the diff. When the span opens mid-paragraph, its
+  // immediate before/after fragment hugs the diff inline (leadIn/tailOut) so a
+  // sub-paragraph rewrite reads as one paragraph; the remaining whole paragraphs
+  // render as greyed blocks above/below.
+  const beforeParts = committedSelection?.beforeText?.split("\n\n").filter(Boolean) ?? [];
+  const afterParts = committedSelection?.afterText?.split("\n\n").filter(Boolean) ?? [];
+  const leadIn =
+    committedSelection?.openStart && beforeParts.length
+      ? beforeParts[beforeParts.length - 1]
+      : undefined;
+  const tailOut = committedSelection?.openEnd && afterParts.length ? afterParts[0] : undefined;
+  const blockBefore = leadIn ? beforeParts.slice(0, -1) : beforeParts;
+  const blockAfter = tailOut ? afterParts.slice(1) : afterParts;
   // Bumping this remounts the Editor with new initialContent — TipTap
   // doesn't expose a reactive `value` prop and remount is the least
   // invasive way to replace the buffer when the user accepts a rewrite
@@ -470,6 +498,47 @@ export default function QuillPage() {
     });
   };
 
+  // A colour swatch was dropped on a word. Splash lands at the drop point while
+  // the rewrite is in flight; when it returns we bloom the full splash over the
+  // affected span, then hand off to the same inline diff the Rewrite panel uses.
+  const handleColourDrop = (detail: ColourDropDetail) => {
+    if (splash) return; // one drop at a time
+    const colour = colourDropByKey(detail.colourKey);
+    if (!colour) return;
+    const colourCss = hueFromHSL(colour.hsl.hue, colour.hsl.saturation, colour.hsl.lightness).css;
+    setSplash({ colourCss, origin: detail.origin, ripples: detail.ripples, phase: "landing" });
+    setCommittedSelection(detail.span);
+    setRewriteError(null);
+    setRewrite(null);
+    startRewrite(async () => {
+      try {
+        const result = await suggestRewrite({
+          text: detail.span.text,
+          target: colour.target,
+          intensity,
+        });
+        if (!result) {
+          setSplash(null);
+          setCommittedSelection(null);
+          toast.error(
+            "Drop on a fuller passage — the rewrite needs at least 8 words around the word.",
+          );
+          return;
+        }
+        // Step two: bloom the splash, then reveal the diff once it settles.
+        setSplash((s) => (s ? { ...s, phase: "splash" } : s));
+        window.setTimeout(() => {
+          setRewrite(result);
+          setSplash(null);
+        }, 950);
+      } catch (err) {
+        setSplash(null);
+        setCommittedSelection(null);
+        setRewriteError((err as Error).message);
+      }
+    });
+  };
+
   const acceptRewrite = (text: string) => {
     const html = text
       .split(/\n\s*\n+/)
@@ -539,9 +608,10 @@ export default function QuillPage() {
               aria-hidden="true"
               className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-ink-bleed to-transparent opacity-60"
             />
+            {splash && <ColourSplash splash={splash} />}
             <CardContent className="p-6 sm:p-8">
-              {targetActive && rewrite ? (
-                <div className="flex flex-col gap-3">
+              {rewrite ? (
+                <div>
                   <DiffActions
                     resolvedCount={diff.resolvedCount}
                     totalChanges={diff.totalChanges}
@@ -551,28 +621,28 @@ export default function QuillPage() {
                     onHighlightEnter={() => setHighlightPending(true)}
                     onHighlightLeave={() => setHighlightPending(false)}
                   />
-                  {committedSelection?.beforeText?.split("\n\n").map((para) => (
-                    <p
-                      key={para}
-                      className="my-3 first:mt-0 font-serif text-lg leading-relaxed text-ink-deep/40 select-none"
-                    >
-                      {para}
-                    </p>
-                  ))}
-                  <DiffText
-                    segments={diff.segments}
-                    states={diff.states}
-                    setHunkState={diff.setHunkState}
-                    highlightPending={highlightPending}
-                  />
-                  {committedSelection?.afterText?.split("\n\n").map((para) => (
-                    <p
-                      key={para}
-                      className="my-3 first:mt-0 font-serif text-lg leading-relaxed text-ink-deep/40 select-none"
-                    >
-                      {para}
-                    </p>
-                  ))}
+                  {/* One block-flow prose container mirroring the editor exactly,
+                      so before/diff/after paragraphs collapse margins uniformly. */}
+                  <div className="mt-4 min-h-[400px] w-full font-serif text-lg leading-relaxed text-ink-deep">
+                    {blockBefore.map((para) => (
+                      <p key={para} className="my-3 first:mt-0 text-ink-deep/40 select-none">
+                        {para}
+                      </p>
+                    ))}
+                    <DiffText
+                      segments={diff.segments}
+                      states={diff.states}
+                      setHunkState={diff.setHunkState}
+                      highlightPending={highlightPending}
+                      leadIn={leadIn}
+                      tailOut={tailOut}
+                    />
+                    {blockAfter.map((para) => (
+                      <p key={para} className="my-3 first:mt-0 text-ink-deep/40 select-none">
+                        {para}
+                      </p>
+                    ))}
+                  </div>
                 </div>
               ) : (
                 <Editor
@@ -585,6 +655,7 @@ export default function QuillPage() {
                   onRewriteSelection={rewriteSelection}
                   onSelectionChange={(sel) => setLiveSelection(sel?.text ?? null)}
                   highlightBlock={highlight}
+                  onColourDrop={handleColourDrop}
                 />
               )}
             </CardContent>
@@ -646,6 +717,7 @@ export default function QuillPage() {
             />
           )}
           {panelVisible("target") && <DriftMeter readout={readout} target={targetColour} />}
+          {panelVisible("colour") && <ColourPalette />}
           {panelVisible("save") && (
             <SaveSettings
               cloudSave={cloudSave}

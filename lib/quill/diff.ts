@@ -19,9 +19,11 @@ export type RewriteSegment = {
 };
 
 export type TargetRewrite = {
-  /** Full rewritten prose, reconstructed from the diff (`add` + `same`). */
+  /** Full rewritten prose. The client diffs this against the original itself
+   *  (diffWords), so the structured `diff` is optional and no longer the source
+   *  of the rewrite text. */
   rewrite: string;
-  diff: RewriteSegment[];
+  diff?: RewriteSegment[];
 };
 
 /** Reconstruct the rewritten text: everything except removed spans. */

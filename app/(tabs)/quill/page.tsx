@@ -610,7 +610,7 @@ export default function QuillPage() {
             />
             {splash && <ColourSplash splash={splash} />}
             <CardContent className="p-6 sm:p-8">
-              {rewrite ? (
+              {rewrite && (
                 <div>
                   <DiffActions
                     resolvedCount={diff.resolvedCount}
@@ -644,7 +644,10 @@ export default function QuillPage() {
                     ))}
                   </div>
                 </div>
-              ) : (
+              )}
+              {/* Editor stays mounted under the diff (hidden) so editorRef stays
+                  live — acceptRewrite's replaceRange splices into the real doc. */}
+              <div className={cn(rewrite && "hidden")}>
                 <Editor
                   key={editorKey}
                   ref={editorRef}
@@ -657,7 +660,7 @@ export default function QuillPage() {
                   highlightBlock={highlight}
                   onColourDrop={handleColourDrop}
                 />
-              )}
+              </div>
             </CardContent>
           </Card>
           {stats.words > 0 && <WritingStatsBar stats={stats} />}

@@ -66,17 +66,30 @@ export function DiffText({
   states,
   setHunkState,
   highlightPending = false,
+  leadIn,
+  tailOut,
 }: {
   segments: DiffSegment[];
   states: Record<string, HunkState>;
   setHunkState: (id: string, next: HunkState) => void;
   highlightPending?: boolean;
+  /** Unchanged in-paragraph context hugging the start of the span, rendered
+   *  greyed and inline so a mid-paragraph rewrite reads as one paragraph. */
+  leadIn?: string;
+  /** Unchanged in-paragraph context hugging the end of the span. */
+  tailOut?: string;
 }) {
   const paragraphs = buildParagraphGroups(segments);
+  const lastIndex = paragraphs.length - 1;
+  // Returns a bare run of <p>s (no wrapper) so the diff paragraphs sit in the
+  // same block flow as the surrounding before/after context the page renders —
+  // margins collapse uniformly and `first:mt-0` resolves against the real first
+  // paragraph, matching the Tiptap editor's rhythm exactly.
   return (
-    <div className="min-h-[400px] w-full font-serif text-lg leading-relaxed text-ink-deep">
-      {paragraphs.map((para) => (
+    <>
+      {paragraphs.map((para, pIndex) => (
         <p key={para.key} className="my-3 first:mt-0">
+          {pIndex === 0 && leadIn && <span className="text-ink-deep/40 select-none">{leadIn}</span>}
           {para.items.map((item) => {
             if (item.kind === "br") return <br key={item.key} />;
             if (item.kind === "text") return <span key={item.key}>{item.value}</span>;
@@ -92,9 +105,12 @@ export function DiffText({
               />
             );
           })}
+          {pIndex === lastIndex && tailOut && (
+            <span className="text-ink-deep/40 select-none">{tailOut}</span>
+          )}
         </p>
       ))}
-    </div>
+    </>
   );
 }
 

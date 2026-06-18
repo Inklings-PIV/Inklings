@@ -135,6 +135,8 @@ export default function QuillPage() {
   const [rewriteError, setRewriteError] = useState<string | null>(null);
   const [isRewriting, startRewrite] = useTransition();
   const [highlightPending, setHighlightPending] = useState(false);
+  const [showNudgeReady, setShowNudgeReady] = useState(false);
+  const wasRewritingRef = useRef(false);
   // Colour-drop splash overlay (null when idle). The page owns the two-step
   // timing; the overlay just paints whatever phase it's handed.
   const [splash, setSplash] = useState<SplashState | null>(null);
@@ -242,6 +244,23 @@ export default function QuillPage() {
       setHydrated(true);
     }
   }, []);
+
+  useEffect(() => {
+    const wasRewriting = wasRewritingRef.current;
+
+    if (wasRewriting && !isRewriting && rewrite) {
+      setShowNudgeReady(true);
+
+      const timer = window.setTimeout(() => {
+        setShowNudgeReady(false);
+      }, 5000);
+
+      wasRewritingRef.current = isRewriting;
+      return () => window.clearTimeout(timer);
+    }
+
+    wasRewritingRef.current = isRewriting;
+  }, [isRewriting, rewrite]);
 
   // Mirror every draft change to localStorage — implicit, no UI signal
   // needed since this is the privacy default.
@@ -614,6 +633,23 @@ export default function QuillPage() {
               className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-ink-bleed to-transparent opacity-60"
             />
             {splash && <ColourSplash splash={splash} />}
+            {(isRewriting || showNudgeReady) && (
+              <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex justify-center">
+                <p className="text-xs italic text-muted-foreground/70">
+                  {isRewriting ? (
+                    <>
+                      <span className="mr-1 inline-block animate-pulse">✦</span>
+                      Rewriting toward target…
+                    </>
+                  ) : (
+                    <>
+                      <span className="mr-1 text-ink-bleed">✓</span>
+                      Nudge ready
+                    </>
+                  )}
+                </p>
+              </div>
+            )}
             <CardContent className="p-6 sm:p-8">
               {rewrite && (
                 <div>
@@ -626,6 +662,10 @@ export default function QuillPage() {
                     onHighlightEnter={() => setHighlightPending(true)}
                     onHighlightLeave={() => setHighlightPending(false)}
                   />
+                  <p className="mt-3 text-xs leading-relaxed text-muted-foreground/80">
+                    <span className="text-ink-bleed/80">Tip:</span> Highlighted words are
+                    interactive — click one to accept or reject that change.
+                  </p>
                   {/* One block-flow prose container mirroring the editor exactly,
                       so before/diff/after paragraphs collapse margins uniformly. */}
                   <div className="mt-4 min-h-[400px] w-full font-serif text-lg leading-relaxed text-ink-deep">

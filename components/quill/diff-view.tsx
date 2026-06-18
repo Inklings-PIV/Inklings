@@ -243,8 +243,8 @@ function HunkSpan({
       {/* biome-ignore lint/a11y/noStaticElementInteractions: extends hover area to bridge the gap between word and tooltip */}
       <span
         className={cn(
-          "pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2",
-          "flex items-center gap-0.5 rounded border border-border bg-card/95 p-0.5 shadow-sm backdrop-blur",
+          "pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 -translate-x-1/2",
+          "flex items-center gap-1 rounded-md border border-border/90 bg-background/95 px-1 py-1 shadow-md backdrop-blur",
           "transition-opacity duration-100",
           isOpen ? "pointer-events-auto opacity-100" : "opacity-0",
         )}
@@ -254,15 +254,15 @@ function HunkSpan({
         {state === "pending" ? (
           <>
             <HunkButton label="Accept this change" onClick={wrap(onAccept)} variant="accept">
-              <Check className="size-3" />
+              <Check className="size-4" strokeWidth={2.5} />
             </HunkButton>
             <HunkButton label="Reject this change" onClick={wrap(onReject)} variant="reject">
-              <X className="size-3" />
+              <X className="size-4" strokeWidth={2.5} />
             </HunkButton>
           </>
         ) : (
           <HunkButton label="Reset this change" onClick={wrap(onReset)} variant="reset">
-            <RotateCcw className="size-3" />
+            <RotateCcw className="size-4" strokeWidth={2.5} />
           </HunkButton>
         )}
       </span>
@@ -299,11 +299,14 @@ function HunkButton({
         onClick();
       }}
       className={cn(
-        "inline-flex size-5 items-center justify-center rounded transition-colors",
+        "inline-flex size-6 cursor-pointer items-center justify-center rounded-md transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-        variant === "accept" && "text-ink-bleed hover:bg-ink-bleed/15",
-        variant === "reject" && "text-destructive hover:bg-destructive/10",
-        variant === "reset" && "text-muted-foreground hover:bg-muted",
+        variant === "accept" &&
+          "text-emerald-700 hover:bg-emerald-500/15 hover:text-emerald-800 dark:text-emerald-300 dark:hover:text-emerald-200",
+        variant === "reject" &&
+          "text-rose-700 hover:bg-rose-500/15 hover:text-rose-800 dark:text-rose-300 dark:hover:text-rose-200",
+        variant === "reset" &&
+          "text-slate-700 hover:bg-muted hover:text-slate-950 dark:text-slate-300 dark:hover:text-white",
       )}
     >
       {children}

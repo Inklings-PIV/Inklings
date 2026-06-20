@@ -472,6 +472,26 @@ export function Editor({
     el?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "nearest" });
   }, [editor, highlightIndex, highlightTint]);
 
+  // ProseMirror keeps its range when the editor loses DOM focus, so the highlight
+  // vanishes but the selection (and the Rewrite button's target) silently lives
+  // on. Collapse it on any pointer-down outside the editor, except on interactive
+  // controls — so buttons keep the selection but whitespace always drops it.
+  useEffect(() => {
+    if (!editor) return;
+    const INTERACTIVE =
+      "button, a, input, textarea, select, label, [role='button'], [contenteditable='true']";
+    const onDown = (e: PointerEvent) => {
+      if (editor.state.selection.empty) return;
+      const t = e.target as HTMLElement | null;
+      if (!t) return;
+      if (t.closest(".ProseMirror")) return; // editor: caret-move clears it
+      if (t.closest(INTERACTIVE)) return; // any control keeps the selection
+      editor.commands.setTextSelection(editor.state.selection.head);
+    };
+    document.addEventListener("pointerdown", onDown, true);
+    return () => document.removeEventListener("pointerdown", onDown, true);
+  }, [editor]);
+
   useImperativeHandle(
     ref,
     () => ({

@@ -143,9 +143,10 @@ export default function QuillPage() {
   // Pre-rewrite snapshots. Accepting a rewrite remounts the editor and wipes
   // TipTap's undo stack — this is the way back.
   const [versions, setVersions] = useState<DraftVersion[]>([]);
-  // Live selection text drives the sidebar indicator; committed selection is
+  // Live selection drives the sidebar indicator + persistent editor mark;
+  // committed selection is
   // frozen at request-time and used to splice the rewrite back in on accept.
-  const [liveSelection, setLiveSelection] = useState<string | null>(null);
+  const [liveSelection, setLiveSelection] = useState<SelectionRange | null>(null);
   const [committedSelection, setCommittedSelection] = useState<SelectionRange | null>(null);
   // Diff state — computed from the active rewrite vs the committed text.
   const diff = useDiff(
@@ -251,13 +252,6 @@ export default function QuillPage() {
 
     if (wasRewriting && !isRewriting && rewrite) {
       setShowNudgeReady(true);
-
-      const timer = window.setTimeout(() => {
-        setShowNudgeReady(false);
-      }, 5000);
-
-      wasRewritingRef.current = isRewriting;
-      return () => window.clearTimeout(timer);
     }
 
     wasRewritingRef.current = isRewriting;
@@ -511,6 +505,7 @@ export default function QuillPage() {
   const requestRewrite = () => {
     const sel = editorRef.current?.getSelection() ?? null;
     setCommittedSelection(sel);
+    setShowNudgeReady(false);
     setRewriteError(null);
     setRewrite(null);
     startRewrite(async () => {
@@ -538,6 +533,7 @@ export default function QuillPage() {
     const colourCss = hueFromHSL(colour.hsl.hue, colour.hsl.saturation, colour.hsl.lightness).css;
     setSplash({ colourCss, origin: detail.origin, ripples: detail.ripples, phase: "landing" });
     setCommittedSelection(detail.span);
+    setShowNudgeReady(false);
     setRewriteError(null);
     setRewrite(null);
     startRewrite(async () => {
@@ -588,6 +584,7 @@ export default function QuillPage() {
       setEditorKey((k) => k + 1);
     }
     setRewrite(null);
+    setShowNudgeReady(false);
     setCommittedSelection(null);
     setLiveSelection(null);
   };
@@ -600,12 +597,14 @@ export default function QuillPage() {
     setDraft(version.html);
     setRewrite(null);
     setRewriteError(null);
+    setShowNudgeReady(false);
     setEditorKey((k) => k + 1);
   };
 
   const rejectRewrite = () => {
     setRewrite(null);
     setRewriteError(null);
+    setShowNudgeReady(false);
     setCommittedSelection(null);
     setLiveSelection(null);
   };
@@ -668,13 +667,9 @@ export default function QuillPage() {
                     onHighlightEnter={() => setHighlightPending(true)}
                     onHighlightLeave={() => setHighlightPending(false)}
                   />
-                  <p className="mt-3 text-xs leading-relaxed text-muted-foreground/80">
-                    <span className="text-ink-bleed/80">Tip:</span> Highlighted words are
-                    interactive — click one to accept or reject that change.
-                  </p>
                   {/* One block-flow prose container mirroring the editor exactly,
                       so before/diff/after paragraphs collapse margins uniformly. */}
-                  <div className="mt-4 min-h-[400px] w-full font-serif text-lg leading-relaxed text-ink-deep">
+                  <div className="mt-4 max-h-[min(430px,calc(100vh-31rem))] min-h-[260px] w-full overflow-y-auto overscroll-contain px-3 pt-8 pb-8 font-serif text-lg leading-relaxed text-ink-deep">
                     {blockBefore.map((para) => (
                       <p key={para} className="my-3 first:mt-0 text-ink-deep/40 select-none">
                         {para}
@@ -707,8 +702,10 @@ export default function QuillPage() {
                   onChange={setDraft}
                   onDeriveHue={deriveTextColour}
                   onRewriteSelection={rewriteSelection}
-                  onSelectionChange={(sel) => setLiveSelection(sel?.text ?? null)}
+                  onSelectionChange={setLiveSelection}
                   highlightBlock={highlight}
+                  pendingRewriteRange={isRewriting ? committedSelection : liveSelection}
+                  pendingRewriteLoading={isRewriting && !!committedSelection}
                   onColourDrop={handleColourDrop}
                 />
               </div>
@@ -768,7 +765,7 @@ export default function QuillPage() {
               onRequest={requestRewrite}
               isPending={isRewriting}
               hasRewrite={rewrite !== null}
-              selectionText={liveSelection}
+              selectionText={liveSelection?.text ?? null}
               onClearSelection={() => setLiveSelection(null)}
               error={rewriteError}
             />

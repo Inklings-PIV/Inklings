@@ -104,6 +104,10 @@ type EditorProps = {
    * the ink accent. Pass null to clear the highlight.
    */
   highlightBlock?: { index: number; tint?: string | null } | null;
+  /** Selection being rewritten by the parent; stays painted while focus moves away. */
+  pendingRewriteRange?: SelectionRange | null;
+  /** Show local loading feedback beside the pending range. */
+  pendingRewriteLoading?: boolean;
   /** A colour swatch was dropped on the prose — resolved span + splash coords. */
   onColourDrop?: (detail: ColourDropDetail) => void;
 };
@@ -164,6 +168,8 @@ const FocusActiveBlock = Extension.create({
 /** Which block the EmoArc band is pointing at, plus the wash colour to use. */
 type EmoArcState = { index: number; tint: string | null } | null;
 const emoArcKey = new PluginKey<EmoArcState>("emoArcHighlight");
+type PendingRewriteState = { from: number; to: number; loading: boolean } | null;
+const pendingRewriteKey = new PluginKey<PendingRewriteState>("pendingRewriteHighlight");
 
 // Tints + outlines the block the EmoArc hue band is hovering, turning the band
 // into a navigation control over the prose. The target index lives in plugin
@@ -202,6 +208,51 @@ const EmoArcHighlight = Extension.create({
   },
 });
 
+// Keeps a selected passage visually connected to the loading rewrite after
+// focus leaves the editor and the browser's native selection paint disappears.
+const PendingRewriteHighlight = Extension.create({
+  name: "pendingRewriteHighlight",
+  addProseMirrorPlugins() {
+    return [
+      new Plugin<PendingRewriteState>({
+        key: pendingRewriteKey,
+        state: {
+          init: () => null,
+          apply(tr, value) {
+            const meta = tr.getMeta(pendingRewriteKey) as PendingRewriteState | undefined;
+            return meta === undefined ? value : meta;
+          },
+        },
+        props: {
+          decorations(state) {
+            const range = pendingRewriteKey.getState(state);
+            if (!range || range.from >= range.to) return null;
+            const from = Math.max(0, Math.min(range.from, state.doc.content.size));
+            const to = Math.max(from, Math.min(range.to, state.doc.content.size));
+            if (from === to) return null;
+            const decos = [Decoration.inline(from, to, { class: "quill-pending-rewrite" })];
+            if (range.loading) {
+              decos.push(
+                Decoration.widget(
+                  to,
+                  () => {
+                    const label = document.createElement("span");
+                    label.className = "quill-pending-rewrite-label";
+                    label.textContent = "Nudging this passage...";
+                    return label;
+                  },
+                  { side: 1 },
+                ),
+              );
+            }
+            return DecorationSet.create(state.doc, decos);
+          },
+        },
+      }),
+    ];
+  },
+});
+
 /**
  * TipTap editor wired with StarterKit (bold/italic/headings/lists/quote
  * keyboard shortcuts), a right-click context menu, and an optional focus mode
@@ -221,6 +272,8 @@ export function Editor({
   onDeriveHue,
   onRewriteSelection,
   highlightBlock,
+  pendingRewriteRange,
+  pendingRewriteLoading = false,
   onColourDrop,
 }: EditorProps & { ref?: Ref<EditorHandle> }) {
   // Track selection emptiness so the right-click menu can disable
@@ -232,7 +285,7 @@ export function Editor({
   // once on mount) can call the current closure.
   const readHueRef = useRef<() => void>(() => undefined);
   const editor = useEditor({
-    extensions: [StarterKit, FocusActiveBlock, EmoArcHighlight],
+    extensions: [StarterKit, FocusActiveBlock, EmoArcHighlight, PendingRewriteHighlight],
     content: initialContent,
     onSelectionUpdate: ({ editor: ed }) => {
       const { from, to, empty } = ed.state.selection;
@@ -409,6 +462,23 @@ export function Editor({
     el?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "nearest" });
   }, [editor, highlightIndex, highlightTint]);
 
+  useEffect(() => {
+    if (!editor) return;
+    const range = pendingRewriteRange
+      ? {
+          from: pendingRewriteRange.from,
+          to: pendingRewriteRange.to,
+          loading: pendingRewriteLoading,
+        }
+      : null;
+    editor.view.dispatch(editor.state.tr.setMeta(pendingRewriteKey, range));
+    if (!range) return;
+    const at = editor.view.domAtPos(range.from).node;
+    const el = at instanceof HTMLElement ? at : at.parentElement;
+    const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    el?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "nearest" });
+  }, [editor, pendingRewriteRange, pendingRewriteLoading]);
+
   useImperativeHandle(
     ref,
     () => ({
@@ -460,7 +530,7 @@ export function Editor({
             onDragOver={handleColourDragOver}
             onDrop={handleColourDrop}
             className={cn(
-              "relative",
+              "relative max-h-[min(540px,calc(100vh-24rem))] overflow-y-auto overscroll-contain pr-2 pb-8",
               focusMode && [
                 "[&_.ProseMirror>*]:opacity-35 [&_.ProseMirror>*]:transition-opacity [&_.ProseMirror>*]:duration-300",
                 "[&_.quill-focus-active]:!opacity-100",

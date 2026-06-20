@@ -147,17 +147,25 @@ export function DiffActions({
   }
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-2">
+    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border/70 pb-3">
       {/* biome-ignore lint/a11y/noStaticElementInteractions: hover-only highlight; no click/keyboard action needed */}
-      <span
-        className="cursor-default text-[11px] tabular-nums text-muted-foreground"
+      <div
+        className="min-w-0 cursor-default space-y-1"
         onMouseEnter={onHighlightEnter}
         onMouseLeave={onHighlightLeave}
       >
-        {resolvedCount} of {totalChanges} {totalChanges === 1 ? "change" : "changes"} resolved
-        <span className="ml-1 opacity-60">· changes shown inline above</span>
-      </span>
-      <div className="flex flex-wrap items-center gap-1.5">
+        <div className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+          Review suggested changes
+        </div>
+        <p className="text-xs leading-snug text-muted-foreground/85">
+          <span className="tabular-nums">
+            {resolvedCount} of {totalChanges} {totalChanges === 1 ? "change" : "changes"} resolved
+          </span>
+          <span className="mx-1.5 text-muted-foreground/45">·</span>
+          Click highlighted text to accept or reject individual changes.
+        </p>
+      </div>
+      <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
         <Button variant="outline" size="sm" onClick={onReject}>
           <X className="size-4" /> Keep original
         </Button>
@@ -243,7 +251,7 @@ function HunkSpan({
       {/* biome-ignore lint/a11y/noStaticElementInteractions: extends hover area to bridge the gap between word and tooltip */}
       <span
         className={cn(
-          "pointer-events-none absolute bottom-full left-1/2 z-20 mb-1 -translate-x-1/2",
+          "pointer-events-none absolute bottom-full left-1/2 z-30 mb-0.5 -translate-x-1/2",
           "flex items-center gap-1 rounded-md border border-border/90 bg-background/95 px-1 py-1 shadow-md backdrop-blur",
           "transition-opacity duration-100",
           isOpen ? "pointer-events-auto opacity-100" : "opacity-0",

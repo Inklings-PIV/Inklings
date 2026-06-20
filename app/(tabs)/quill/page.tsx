@@ -67,12 +67,13 @@ type PanelPreset = "essentials" | "analyse" | "rewrite" | "custom";
 
 // Which optional panels each preset activates.
 const PANEL_PRESETS: Record<Exclude<PanelPreset, "custom">, readonly string[]> = {
-  essentials: ["hue", "save"],
+  essentials: ["docs", "hue", "save"],
   analyse: ["hue", "fingerprint", "arc", "neighbours", "save"],
   rewrite: ["hue", "target", "save"],
 };
 
 const CUSTOM_PANEL_OPTIONS = [
+  { key: "docs", label: "Documents" },
   { key: "hue", label: "Hue readout" },
   { key: "fingerprint", label: "Style fingerprint" },
   { key: "arc", label: "Emotional arc" },
@@ -82,7 +83,7 @@ const CUSTOM_PANEL_OPTIONS = [
 ] as const;
 
 // Default custom panels — on for new users; existing saved sets load from localStorage.
-const DEFAULT_CUSTOM_PANELS = ["hue", "save"];
+const DEFAULT_CUSTOM_PANELS = ["docs", "hue", "save"];
 
 export default function QuillPage() {
   const [panelPreset, setPanelPreset] = useState<PanelPreset>("essentials");
@@ -646,7 +647,7 @@ export default function QuillPage() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1456px] px-4 py-6 sm:px-6 sm:py-8">
+    <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
       <header className="flex flex-wrap items-start justify-between gap-3 sm:items-end sm:gap-4">
         <div className="min-w-0">
           <h1 className="font-display text-2xl tracking-tight text-ink-deep sm:text-3xl">
@@ -659,15 +660,7 @@ export default function QuillPage() {
         {stats.words > 0 && <ExportControls markdown={markdown} />}
       </header>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[160px_1fr_280px]">
-        <DocList
-          docs={docs}
-          activeId={activeDocId ?? ""}
-          onCreate={createDoc}
-          onSwitch={switchDoc}
-          onRename={renameDoc}
-          onDelete={deleteDoc}
-        />
+      <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_280px]">
         <div className="flex flex-col gap-4">
           {bandVisible && (
             <HueBand
@@ -752,6 +745,16 @@ export default function QuillPage() {
             onPresetChange={changePanelPreset}
             onCustomToggle={toggleCustomPanel}
           />
+          {panelVisible("docs") && (
+            <DocList
+              docs={docs}
+              activeId={activeDocId ?? ""}
+              onCreate={createDoc}
+              onSwitch={switchDoc}
+              onRename={renameDoc}
+              onDelete={deleteDoc}
+            />
+          )}
           {panelVisible("hue") && (
             <HueReadout
               targetActive={targetActive}
@@ -990,44 +993,40 @@ function DocList({
   onDelete: (id: string) => void;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editTitle, setEditTitle] = useState("");
-
-  const commitRename = (id: string) => {
-    onRename(id, editTitle.trim() || "Untitled");
-    setEditingId(null);
-  };
 
   return (
-    <div className="flex flex-col gap-1 pt-0.5">
-      <div className="flex items-center justify-between px-1 pb-1">
-        <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
-          Documents
-        </span>
-        <button
-          type="button"
-          onClick={onCreate}
-          title="New document"
-          className={cn(
-            "inline-flex size-5 items-center justify-center rounded transition-colors",
-            "text-muted-foreground hover:bg-accent hover:text-foreground",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-          )}
-        >
-          <Plus className="size-3.5" />
-        </button>
-      </div>
-      <ul className="flex flex-col gap-0.5">
+    <Card className="bg-card/60">
+      <CardContent className="flex flex-col gap-2 p-5">
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] uppercase tracking-widest text-muted-foreground">
+            Documents
+          </span>
+          <button
+            type="button"
+            onClick={onCreate}
+            title="New document"
+            className={cn(
+              "inline-flex size-5 items-center justify-center rounded transition-colors",
+              "text-muted-foreground hover:bg-accent hover:text-foreground",
+              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+            )}
+          >
+            <Plus className="size-3.5" />
+          </button>
+        </div>
+        <ul className="flex flex-col gap-0.5">
         {docs.map((doc) => (
           <li key={doc.id} className="group flex items-center gap-1">
             {editingId === doc.id ? (
               <input
                 autoFocus
-                value={editTitle}
-                onChange={(e) => setEditTitle(e.target.value)}
-                onBlur={() => commitRename(doc.id)}
+                value={doc.title}
+                onChange={(e) => onRename(doc.id, e.target.value)}
+                onBlur={() => setEditingId(null)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === "Escape") commitRename(doc.id);
+                  if (e.key === "Enter" || e.key === "Escape") setEditingId(null);
                 }}
+                placeholder="Untitled"
                 className={cn(
                   "min-w-0 flex-1 rounded border border-ring/40 bg-card px-1.5 py-0.5 text-xs",
                   "focus:outline-none focus:ring-1 focus:ring-ring/60",
@@ -1038,10 +1037,7 @@ function DocList({
                 <button
                   type="button"
                   onClick={() => onSwitch(doc.id)}
-                  onDoubleClick={() => {
-                    setEditingId(doc.id);
-                    setEditTitle(doc.title);
-                  }}
+                  onDoubleClick={() => setEditingId(doc.id)}
                   title={`${doc.title} — double-click to rename`}
                   className={cn(
                     "min-w-0 flex-1 truncate rounded px-1.5 py-1 text-left text-xs transition-colors",
@@ -1071,8 +1067,9 @@ function DocList({
             )}
           </li>
         ))}
-      </ul>
-    </div>
+        </ul>
+      </CardContent>
+    </Card>
   );
 }
 

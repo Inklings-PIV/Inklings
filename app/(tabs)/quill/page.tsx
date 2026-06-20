@@ -367,6 +367,24 @@ export default function QuillPage() {
   // Fill the hue slot from a capture (right-click or Hue-band drag) or a mix.
   const captureHue = (hue: CapturedHue) => setSlot(hue);
 
+  // Drop a text selection into the slot — derive its hue, then capture it.
+  const captureHueFromText = (text: string) => {
+    const id = toast.loading("Reading the hue…");
+    deriveTextColour(text)
+      .then((c) => {
+        if (!c) {
+          toast.error("Selection too short to read a hue", { id });
+          return;
+        }
+        captureHue({
+          hsl: { hue: c.hue, saturation: c.saturation, lightness: c.lightness },
+          phrase: c.justification,
+        });
+        toast.success(`Captured — ${c.justification}`, { id });
+      })
+      .catch(() => toast.error("Couldn't read the hue", { id }));
+  };
+
   // Debounced readout — 700 ms after the last keystroke we ask Claude for the
   // current hue. Latest call wins; in-flight ones are ignored when stale.
   useEffect(() => {
@@ -815,6 +833,7 @@ export default function QuillPage() {
               onToggleColour={toggleColour}
               slot={slot}
               onCaptureHue={captureHue}
+              onCaptureText={captureHueFromText}
               onClearSlot={() => setSlot(null)}
               brushSize={brushSize}
               onBrushChange={changeBrushSize}

@@ -53,6 +53,7 @@ export function RewritePanel({
   onToggleColour,
   slot,
   onCaptureHue,
+  onCaptureText,
   onClearSlot,
   brushSize,
   onBrushChange,
@@ -77,6 +78,7 @@ export function RewritePanel({
   onToggleColour: (key: string) => void;
   slot: CapturedHue | null;
   onCaptureHue: (hue: CapturedHue) => void;
+  onCaptureText: (text: string) => void;
   onClearSlot: () => void;
   brushSize: number;
   onBrushChange: (n: number) => void;
@@ -136,6 +138,7 @@ export function RewritePanel({
               active={selectedColour === SLOT_KEY}
               onToggle={() => onToggleColour(SLOT_KEY)}
               onCapture={onCaptureHue}
+              onCaptureText={onCaptureText}
               onClear={onClearSlot}
             />
           </div>
@@ -351,31 +354,43 @@ function HueSlot({
   active,
   onToggle,
   onCapture,
+  onCaptureText,
   onClear,
 }: {
   slot: CapturedHue | null;
   active: boolean;
   onToggle: () => void;
   onCapture: (hue: CapturedHue) => void;
+  onCaptureText: (text: string) => void;
   onClear: () => void;
 }) {
   const [over, setOver] = useState(false);
 
   const onDragOver = (e: React.DragEvent) => {
-    if (e.dataTransfer.types.includes(HUE_CAPTURE_MIME)) {
+    const t = e.dataTransfer.types;
+    if (t.includes(HUE_CAPTURE_MIME) || t.includes("text/plain")) {
       e.preventDefault();
+      e.dataTransfer.dropEffect = "copy"; // copy, so a dragged editor selection isn't moved out
       setOver(true);
     }
   };
   const onDrop = (e: React.DragEvent) => {
-    const raw = e.dataTransfer.getData(HUE_CAPTURE_MIME);
     setOver(false);
-    if (!raw) return;
-    e.preventDefault();
-    try {
-      onCapture(JSON.parse(raw) as CapturedHue);
-    } catch {
-      // Ignore a malformed payload — nothing to capture.
+    // A precomputed hue from the band, or a raw text selection we derive a hue from.
+    const raw = e.dataTransfer.getData(HUE_CAPTURE_MIME);
+    if (raw) {
+      e.preventDefault();
+      try {
+        onCapture(JSON.parse(raw) as CapturedHue);
+      } catch {
+        // Ignore a malformed payload — nothing to capture.
+      }
+      return;
+    }
+    const text = e.dataTransfer.getData("text/plain").trim();
+    if (text) {
+      e.preventDefault();
+      onCaptureText(text);
     }
   };
 
@@ -386,7 +401,7 @@ function HueSlot({
         onDragOver={onDragOver}
         onDragLeave={() => setOver(false)}
         onDrop={onDrop}
-        title="Drop a paragraph's hue here (drag from the Hue band), or right-click text → Capture hue"
+        title="Drop a selection or a Hue-band segment here to capture its hue (or right-click text → Capture hue)"
         className={cn(
           "flex size-7 shrink-0 items-center justify-center rounded-full border border-dashed transition-colors",
           over

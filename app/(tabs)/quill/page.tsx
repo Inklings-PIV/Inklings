@@ -9,18 +9,16 @@ import {
   Download,
   History,
   Lightbulb,
-  Loader2,
-  Sparkles,
-  X,
 } from "lucide-react";
 import { Popover } from "radix-ui";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { ArcChart } from "@/components/quill/arc-chart";
 import {
-  ColourPalette,
   ColourSplash,
+  colourCssOf,
   colourDropByKey,
+  NEUTRAL_INK_CSS,
   type SplashState,
 } from "@/components/quill/colour-drop";
 import { DiffActions, DiffText } from "@/components/quill/diff-view";
@@ -31,7 +29,7 @@ import {
   type SelectionRange,
 } from "@/components/quill/editor";
 import { HueExplainer } from "@/components/quill/hue-explainer";
-import { TargetWidgets } from "@/components/quill/target-widgets";
+import { RewritePanel } from "@/components/quill/rewrite-panel";
 import { useDiff } from "@/components/quill/use-diff";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -72,6 +70,11 @@ const CLOUD_PREF_KEY = "inklings-quill-cloud-save";
 const CLOUD_SAVE_DEBOUNCE_MS = 2000;
 const PANEL_PRESET_KEY = "inklings-quill-panel-preset";
 const PANEL_CUSTOM_KEY = "inklings-quill-panel-custom";
+const BRUSH_SIZE_KEY = "inklings-quill-brush-size";
+const ANIMATE_KEY = "inklings-quill-animate-rewrite";
+
+// Splash blot size multiplier per brush size — a bigger brush throws more ink.
+const BRUSH_SPLASH_SCALE: Record<number, number> = { 1: 0.7, 3: 1, 7: 1.4 };
 
 type PanelPreset = "essentials" | "analyse" | "rewrite" | "custom";
 
@@ -79,7 +82,7 @@ type PanelPreset = "essentials" | "analyse" | "rewrite" | "custom";
 const PANEL_PRESETS: Record<Exclude<PanelPreset, "custom">, readonly string[]> = {
   essentials: ["hue", "save"],
   analyse: ["hue", "fingerprint", "band", "arc", "neighbours", "save"],
-  rewrite: ["hue", "target", "colour", "version", "save"],
+  rewrite: ["hue", "target", "version", "save"],
 };
 
 const CUSTOM_PANEL_OPTIONS = [
@@ -90,7 +93,6 @@ const CUSTOM_PANEL_OPTIONS = [
   { key: "neighbours", label: "Nearest authors" },
   { key: "version", label: "Versions" },
   { key: "target", label: "Rewrite" },
-  { key: "colour", label: "Colour drop" },
   { key: "save", label: "Save to scribe" },
 ] as const;
 
@@ -138,6 +140,12 @@ export default function QuillPage() {
   // Colour-drop splash overlay (null when idle). The page owns the two-step
   // timing; the overlay just paints whatever phase it's handed.
   const [splash, setSplash] = useState<SplashState | null>(null);
+  // Fused rewrite controls: an optionally-selected mood colour folded into the
+  // target, the brush size (sentences a colour drop covers), and whether a
+  // button-triggered rewrite plays the splash. Brush + animate persist.
+  const [selectedColour, setSelectedColour] = useState<string | null>(null);
+  const [brushSize, setBrushSize] = useState(3);
+  const [animateOnRewrite, setAnimateOnRewrite] = useState(true);
   // Pre-rewrite snapshots. Accepting a rewrite remounts the editor and wipes
   // TipTap's undo stack — this is the way back.
   const [versions, setVersions] = useState<DraftVersion[]>([]);
@@ -197,12 +205,16 @@ export default function QuillPage() {
   // Corpus authors closest to the draft's fingerprint (style-level, S4).
   const [neighbours, setNeighbours] = useState<StyleNeighbour[]>([]);
 
-  // Active widgets + free-text note, composed in declaration order. "" when
-  // neither is set — every consumer treats that as "no target yet".
-  const composedTarget = useMemo(
-    () => widgetsToTarget(widgetSelection, target),
-    [widgetSelection, target],
-  );
+  // Selected mood colour (optional) + widgets + free-text note, composed into
+  // one target. "" when nothing is set — every consumer treats that as "no
+  // target yet". The colour is just another phrase, so drift/rewrite see it too.
+  const composedTarget = useMemo(() => {
+    const colourPhrase = selectedColour ? colourDropByKey(selectedColour)?.target : undefined;
+    const words = widgetsToTarget(widgetSelection, target);
+    return [colourPhrase, words].filter(Boolean).join("; ");
+  }, [selectedColour, widgetSelection, target]);
+  // Brush size (sentences) → window radius each side: 1→0, 3→1, 7→3.
+  const brushRadius = Math.floor((brushSize - 1) / 2);
 
   // Live writing stats (F1) — cheap, derived from the draft's plain text.
   const stats = useMemo(
@@ -227,6 +239,10 @@ export default function QuillPage() {
       setCloudSave(cloudPref);
       setPanelPreset(savedPreset);
       setCustomPanels(new Set(savedCustom));
+      const savedBrush = Number(window.localStorage.getItem(BRUSH_SIZE_KEY));
+      if ([1, 3, 7].includes(savedBrush)) setBrushSize(savedBrush);
+      const savedAnimate = window.localStorage.getItem(ANIMATE_KEY);
+      if (savedAnimate !== null) setAnimateOnRewrite(savedAnimate === "true");
       if (localDraft) setEditorKey((k) => k + 1);
       setHydrated(true);
       if (cloudPref) {
@@ -306,6 +322,27 @@ export default function QuillPage() {
       return next;
     });
   };
+
+  const changeBrushSize = (size: number) => {
+    setBrushSize(size);
+    try {
+      window.localStorage.setItem(BRUSH_SIZE_KEY, String(size));
+    } catch {
+      // Storage can throw in private mode / quota-full; we tolerate it.
+    }
+  };
+
+  const changeAnimate = (next: boolean) => {
+    setAnimateOnRewrite(next);
+    try {
+      window.localStorage.setItem(ANIMATE_KEY, String(next));
+    } catch {
+      // Storage can throw in private mode / quota-full; we tolerate it.
+    }
+  };
+
+  // Tap a swatch to fold its mood into the target (toggle on/off).
+  const toggleColour = (key: string) => setSelectedColour((prev) => (prev === key ? null : key));
 
   // Debounced readout — 700 ms after the last keystroke we ask Claude for the
   // current hue. Latest call wins; in-flight ones are ignored when stale.
@@ -483,64 +520,99 @@ export default function QuillPage() {
     };
   }, [composedTarget, targetActive]);
 
-  const requestRewrite = () => {
-    const sel = editorRef.current?.getSelection() ?? null;
-    setCommittedSelection(sel);
+  // The single rewrite flow behind every entry point — a colour drag, the
+  // Rewrite button, a selection. `span` null means "the whole draft". When
+  // `coords` is set the splash plays over them and the diff is revealed only
+  // once it settles; otherwise the diff appears immediately.
+  const runRewrite = (opts: {
+    text: string;
+    span: SelectionRange | null;
+    target: string;
+    coords: { origin: { x: number; y: number }; ripples: { x: number; y: number }[] } | null;
+    colourCss: string;
+    scale?: number;
+    tooShort: string;
+  }) => {
+    if (splash) return; // a splash is mid-flight — ignore until it clears
+    setCommittedSelection(opts.span);
     setRewriteError(null);
     setRewrite(null);
+    if (opts.coords) {
+      setSplash({
+        colourCss: opts.colourCss,
+        origin: opts.coords.origin,
+        ripples: opts.coords.ripples,
+        phase: "landing",
+        scale: opts.scale ?? 1,
+      });
+    }
     startRewrite(async () => {
       try {
-        const text = sel?.text ?? draft;
-        const result = await suggestRewrite({ text, target: composedTarget, intensity });
-        if (!result) {
-          setRewriteError("Write at least 8 words and enter a target before asking for a rewrite.");
-          return;
-        }
-        setRewrite(result);
-      } catch (err) {
-        setRewriteError((err as Error).message);
-      }
-    });
-  };
-
-  // A colour swatch was dropped on a word. Splash lands at the drop point while
-  // the rewrite is in flight; when it returns we bloom the full splash over the
-  // affected span, then hand off to the same inline diff the Rewrite panel uses.
-  const handleColourDrop = (detail: ColourDropDetail) => {
-    if (splash) return; // one drop at a time
-    const colour = colourDropByKey(detail.colourKey);
-    if (!colour) return;
-    const colourCss = hueFromHSL(colour.hsl.hue, colour.hsl.saturation, colour.hsl.lightness).css;
-    setSplash({ colourCss, origin: detail.origin, ripples: detail.ripples, phase: "landing" });
-    setCommittedSelection(detail.span);
-    setRewriteError(null);
-    setRewrite(null);
-    startRewrite(async () => {
-      try {
-        const result = await suggestRewrite({
-          text: detail.span.text,
-          target: colour.target,
-          intensity,
-        });
+        const result = await suggestRewrite({ text: opts.text, target: opts.target, intensity });
         if (!result) {
           setSplash(null);
           setCommittedSelection(null);
-          toast.error(
-            "Drop on a fuller passage — the rewrite needs at least 8 words around the word.",
-          );
+          if (opts.coords) toast.error(opts.tooShort);
+          else setRewriteError(opts.tooShort);
           return;
         }
-        // Step two: bloom the splash, then reveal the diff once it settles.
-        setSplash((s) => (s ? { ...s, phase: "splash" } : s));
-        window.setTimeout(() => {
+        if (opts.coords) {
+          // Bloom the splash, then reveal the diff once it settles.
+          setSplash((s) => (s ? { ...s, phase: "splash" } : s));
+          window.setTimeout(() => {
+            setRewrite(result);
+            setSplash(null);
+          }, 950);
+        } else {
           setRewrite(result);
-          setSplash(null);
-        }, 950);
+        }
       } catch (err) {
         setSplash(null);
         setCommittedSelection(null);
         setRewriteError((err as Error).message);
       }
+    });
+  };
+
+  // The Rewrite button: rewrite the selection if there is one, else the whole
+  // draft, toward the composed target. Animate over the selection when the
+  // toggle is on (whole-draft rewrites never splash — it'd cover everything).
+  const requestRewrite = () => {
+    const sel = editorRef.current?.getSelection() ?? null;
+    const colourCss = selectedColour
+      ? (() => {
+          const c = colourDropByKey(selectedColour);
+          return c ? colourCssOf(c) : NEUTRAL_INK_CSS;
+        })()
+      : NEUTRAL_INK_CSS;
+    const coords =
+      animateOnRewrite && sel
+        ? (editorRef.current?.splashPointsFor(sel.from, sel.to) ?? null)
+        : null;
+    runRewrite({
+      text: sel?.text ?? draft,
+      span: sel,
+      target: composedTarget,
+      coords,
+      colourCss,
+      tooShort: "Write at least 8 words and enter a target before asking for a rewrite.",
+    });
+  };
+
+  // Drag gesture: a swatch dropped on a word — colour-only target (ignores the
+  // form), always animated, span sized by the brush (or the selection, which the
+  // editor lets win). The splash scales with the brush size.
+  const handleColourDrop = (detail: ColourDropDetail) => {
+    const colour = colourDropByKey(detail.colourKey);
+    if (!colour) return;
+    runRewrite({
+      text: detail.span.text,
+      span: detail.span,
+      target: colour.target,
+      coords: { origin: detail.origin, ripples: detail.ripples },
+      colourCss: colourCssOf(colour),
+      scale: BRUSH_SPLASH_SCALE[brushSize] ?? 1,
+      tooShort: "Drop on a fuller passage — the rewrite needs at least 8 words around the word.",
     });
   };
 
@@ -664,6 +736,7 @@ export default function QuillPage() {
                   onSelectionChange={(sel) => setLiveSelection(sel?.text ?? null)}
                   highlightBlock={highlight}
                   onColourDrop={handleColourDrop}
+                  brushRadius={brushRadius}
                 />
               </div>
             </CardContent>
@@ -707,16 +780,22 @@ export default function QuillPage() {
             <VersionHistory versions={versions} onRestore={restoreVersion} />
           )}
           {panelVisible("target") && (
-            <TargetPicker
-              target={target}
-              onTargetChange={setTarget}
+            <RewritePanel
+              selectedColour={selectedColour}
+              onToggleColour={toggleColour}
+              brushSize={brushSize}
+              onBrushChange={changeBrushSize}
               selection={widgetSelection}
               onWidgetChange={(key, value) =>
                 setWidgetSelection((prev) => ({ ...prev, [key]: value }))
               }
+              target={target}
+              onTargetChange={setTarget}
               composedTarget={composedTarget}
               intensity={intensity}
               onIntensityChange={setIntensity}
+              animate={animateOnRewrite}
+              onAnimateChange={changeAnimate}
               wordCount={countWords(draft)}
               onRequest={requestRewrite}
               isPending={isRewriting}
@@ -727,7 +806,6 @@ export default function QuillPage() {
             />
           )}
           {panelVisible("target") && <DriftMeter readout={readout} target={targetColour} />}
-          {panelVisible("colour") && <ColourPalette />}
           {panelVisible("save") && (
             <SaveSettings
               cloudSave={cloudSave}
@@ -1238,135 +1316,6 @@ function DriftMeter({
               : `${pct}% to "${target.justification}". Keep nudging.`
             : "Write a few words and the meter will find your target."}
         </p>
-      </CardContent>
-    </Card>
-  );
-}
-
-const INTENSITY_LABELS: Record<number, string> = {
-  1: "Whisper",
-  2: "Subtle",
-  3: "Moderate",
-  4: "Bold",
-  5: "Full",
-};
-
-function TargetPicker({
-  target,
-  onTargetChange,
-  selection,
-  onWidgetChange,
-  composedTarget,
-  intensity,
-  onIntensityChange,
-  wordCount,
-  onRequest,
-  isPending,
-  hasRewrite,
-  selectionText,
-  onClearSelection,
-  error,
-}: {
-  target: string;
-  onTargetChange: (s: string) => void;
-  selection: WidgetSelection;
-  onWidgetChange: (key: string, value: string | null) => void;
-  composedTarget: string;
-  intensity: number;
-  onIntensityChange: (n: number) => void;
-  wordCount: number;
-  onRequest: () => void;
-  isPending: boolean;
-  hasRewrite: boolean;
-  selectionText: string | null;
-  onClearSelection: () => void;
-  error: string | null;
-}) {
-  const effectiveWordCount = selectionText ? countWords(selectionText) : wordCount;
-  const canAsk = effectiveWordCount >= 3 && composedTarget.trim().length > 0 && !isPending;
-  const buttonLabel = selectionText
-    ? "Nudge selection"
-    : hasRewrite
-      ? "Try another nudge"
-      : "Suggest a nudge";
-  return (
-    <Card>
-      <CardContent className="flex flex-col gap-3 p-5">
-        <div className="flex flex-col gap-1.5">
-          <span className="text-xs uppercase tracking-wider text-muted-foreground">target</span>
-          <TargetWidgets selection={selection} onChange={onWidgetChange} />
-        </div>
-        <label className="flex flex-col gap-1">
-          <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-            In your own words (optional)
-          </span>
-          <input
-            type="text"
-            value={target}
-            onChange={(e) => onTargetChange(e.target.value)}
-            placeholder="warm, melancholy · Hemingway-like · lush, baroque"
-            className="h-9 rounded-md border border-border bg-card px-3 text-sm placeholder:text-muted-foreground focus:ring-2 focus:ring-ring/40 focus:outline-none"
-          />
-        </label>
-        {composedTarget ? (
-          <p className="text-[11px] leading-snug text-muted-foreground">
-            Aiming for: <span className="italic">{composedTarget}</span>
-          </p>
-        ) : (
-          <p className="text-[11px] italic leading-snug text-muted-foreground">
-            Pick facets, write your own brief, or both — Claude rewrites toward the combination.
-          </p>
-        )}
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-baseline justify-between">
-            <span className="text-xs uppercase tracking-wider text-muted-foreground">
-              intensity
-            </span>
-            <span className="text-xs text-ink-bleed">{INTENSITY_LABELS[intensity]}</span>
-          </div>
-          <input
-            type="range"
-            min={1}
-            max={5}
-            step={1}
-            value={intensity}
-            onChange={(e) => onIntensityChange(Number(e.target.value))}
-            className="w-full accent-ink-bleed"
-            aria-label="Rewrite intensity"
-          />
-          <div className="flex justify-between text-[10px] text-muted-foreground">
-            <span>Whisper</span>
-            <span>Full</span>
-          </div>
-        </div>
-        {selectionText && (
-          <div className="flex items-center gap-1 rounded-md bg-ink-bleed/10 px-2 py-1 text-[11px] text-ink-bleed">
-            <span className="min-w-0 flex-1 truncate italic">
-              &ldquo;{selectionText.length > 48 ? `${selectionText.slice(0, 48)}…` : selectionText}
-              &rdquo;
-            </span>
-            <button
-              type="button"
-              aria-label="Clear selection"
-              onClick={onClearSelection}
-              className="shrink-0 rounded p-0.5 hover:bg-ink-bleed/20 transition-colors"
-            >
-              <X className="size-3" />
-            </button>
-          </div>
-        )}
-        <Button size="sm" variant="outline" onClick={onRequest} disabled={!canAsk}>
-          {isPending ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <Sparkles className="size-4" />
-          )}
-          {buttonLabel}
-        </Button>
-        {isPending && (
-          <p className="text-[11px] italic text-muted-foreground">Claude is rewriting…</p>
-        )}
-        {error && <p className="text-[11px] italic text-destructive">{error}</p>}
       </CardContent>
     </Card>
   );

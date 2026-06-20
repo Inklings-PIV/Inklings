@@ -1,8 +1,6 @@
 "use client";
 
 import { useLayoutEffect, useRef, useState } from "react";
-import { COLOUR_DROP_MIME } from "@/components/quill/editor";
-import { Card, CardContent } from "@/components/ui/card";
 import { hueFromHSL } from "@/lib/colour/placeholder";
 import { cn } from "@/lib/utils";
 
@@ -62,42 +60,14 @@ export function colourDropByKey(key: string): ColourDrop | undefined {
   return COLOUR_DROPS.find((c) => c.key === key);
 }
 
-export function ColourPalette() {
-  return (
-    <Card>
-      <CardContent className="flex flex-col gap-2.5 p-5">
-        <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">Colour drop</h2>
-        <div className="flex flex-wrap gap-2">
-          {COLOUR_DROPS.map((c) => {
-            const css = hueFromHSL(c.hsl.hue, c.hsl.saturation, c.hsl.lightness).css;
-            return (
-              <button
-                key={c.key}
-                type="button"
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData(COLOUR_DROP_MIME, c.key);
-                  e.dataTransfer.effectAllowed = "copy";
-                }}
-                title={`${c.label} — ${c.target}`}
-                aria-label={`${c.label}: ${c.target}. Drag onto a word to rewrite around it.`}
-                className={cn(
-                  "size-7 shrink-0 cursor-grab rounded-full border border-border shadow-inner transition-transform",
-                  "hover:scale-110 active:cursor-grabbing",
-                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-                )}
-                style={{ backgroundColor: css }}
-              />
-            );
-          })}
-        </div>
-        <p className="text-[11px] italic leading-snug text-muted-foreground">
-          Drag a colour onto a word — the splash marks what gets rewritten toward that mood.
-        </p>
-      </CardContent>
-    </Card>
-  );
+/** CSS for a swatch's colour. */
+export function colourCssOf(c: ColourDrop): string {
+  return hueFromHSL(c.hsl.hue, c.hsl.saturation, c.hsl.lightness).css;
 }
+
+/** Splash colour for a rewrite with no colour picked — a neutral ink tone, since
+ *  the target is an abstract mood, not the draft's current hue. */
+export const NEUTRAL_INK_CSS = hueFromHSL(220, 12, 60).css;
 
 export type SplashState = {
   /** CSS colour of the dropped swatch. */
@@ -108,6 +78,8 @@ export type SplashState = {
   ripples: { x: number; y: number }[];
   /** "landing" while the rewrite is in flight, "splash" once it has arrived. */
   phase: "landing" | "splash";
+  /** Multiplies every blot's size — scales the splash with the brush. */
+  scale?: number;
 };
 
 // Short radial spray of droplets flung from the impact point — angle (deg),
@@ -142,6 +114,7 @@ export function ColourSplash({ splash }: { splash: SplashState }) {
     rect ? { x: p.x - rect.left, y: p.y - rect.top } : null;
   const origin = local(splash.origin);
   const colour = splash.colourCss;
+  const scale = splash.scale ?? 1;
 
   return (
     <div
@@ -156,10 +129,10 @@ export function ColourSplash({ splash }: { splash: SplashState }) {
             x={origin.x}
             y={origin.y}
             colour={colour}
-            size={64}
+            size={64 * scale}
             className="inklings-ink-land"
           />
-          <InkRing x={origin.x} y={origin.y} colour={colour} size={120} />
+          <InkRing x={origin.x} y={origin.y} colour={colour} size={120 * scale} />
         </>
       )}
       {origin && splash.phase === "splash" && (
@@ -168,7 +141,7 @@ export function ColourSplash({ splash }: { splash: SplashState }) {
             x={origin.x}
             y={origin.y}
             colour={colour}
-            size={240}
+            size={240 * scale}
             className="inklings-ink-bloom"
           />
           {SPRAY.map((s) => {
@@ -176,10 +149,10 @@ export function ColourSplash({ splash }: { splash: SplashState }) {
             return (
               <InkBlob
                 key={s.angle}
-                x={origin.x + Math.cos(rad) * s.dist}
-                y={origin.y + Math.sin(rad) * s.dist}
+                x={origin.x + Math.cos(rad) * s.dist * scale}
+                y={origin.y + Math.sin(rad) * s.dist * scale}
                 colour={colour}
-                size={110 * s.size}
+                size={110 * s.size * scale}
                 spatter
                 spin={s.spin}
                 delay={120 + s.size * 120}
@@ -196,7 +169,7 @@ export function ColourSplash({ splash }: { splash: SplashState }) {
                 x={l.x}
                 y={l.y}
                 colour={colour}
-                size={70 + ((i * 13) % 26)}
+                size={(70 + ((i * 13) % 26)) * scale}
                 spatter
                 spin={(i * 67) % 360}
                 delay={180 + i * 80}

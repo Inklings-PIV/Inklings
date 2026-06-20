@@ -2,7 +2,7 @@
 
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
-import { Decoration, DecorationSet } from "@tiptap/pm/view";
+import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import {
   EditorContent,
   Extension,
@@ -106,6 +106,15 @@ type EditorProps = {
   highlightBlock?: { index: number; tint?: string | null } | null;
   /** A colour swatch was dropped on the prose — resolved span + splash coords. */
   onColourDrop?: (detail: ColourDropDetail) => void;
+  /** Sentences each side of the drop point to include in the rewrite window
+   *  (0 = just the dropped-on sentence). Drives the colour-drop brush size. */
+  brushRadius?: number;
+};
+
+/** Splash geometry for a range: the centre point and sampled points across it. */
+export type SplashPoints = {
+  origin: { x: number; y: number };
+  ripples: { x: number; y: number }[];
 };
 
 /** Imperative handle for the Quill editor, exposed via `ref`. */
@@ -116,7 +125,21 @@ export type EditorHandle = {
   getSelection: () => SelectionRange | null;
   /** Replace the range [from, to] in the document with new HTML. */
   replaceRange: (from: number, to: number, html: string) => void;
+  /** Splash coords (viewport px) for an arbitrary range — used to animate a
+   *  rewrite triggered from the panel rather than a drop. */
+  splashPointsFor: (from: number, to: number) => SplashPoints | null;
 };
+
+// Sample points (viewport px) evenly across a range, so the secondary splashes
+// trace the words about to change. Shared by the drop handler and splashPointsFor.
+const RIPPLE_STEPS = 5;
+function sampleRipples(view: EditorView, from: number, to: number): { x: number; y: number }[] {
+  return Array.from({ length: RIPPLE_STEPS + 1 }, (_, i) => {
+    const p = Math.min(to, Math.max(from, Math.round(from + ((to - from) * i) / RIPPLE_STEPS)));
+    const c = view.coordsAtPos(p);
+    return { x: c.left, y: (c.top + c.bottom) / 2 };
+  });
+}
 
 // Whether the span begins/ends mid-paragraph — when it does, the adjacent
 // context belongs to the same block and should read inline with the rewrite
@@ -222,6 +245,7 @@ export function Editor({
   onRewriteSelection,
   highlightBlock,
   onColourDrop,
+  brushRadius = 1,
 }: EditorProps & { ref?: Ref<EditorHandle> }) {
   // Track selection emptiness so the right-click menu can disable
   // selection-only actions; updated on every selection change.
@@ -352,9 +376,10 @@ export function Editor({
     if (e.dataTransfer.types.includes(COLOUR_DROP_MIME)) e.preventDefault();
   };
 
-  // Resolve a dropped swatch to its target word, the sentence-window to rewrite,
-  // and the screen coordinates the splash plays over. We preventDefault so
-  // ProseMirror's own drop handling never sees it.
+  // Resolve a dropped swatch to the span to rewrite + the splash coordinates. An
+  // active text selection wins over the brush — the drop rewrites exactly the
+  // selected text; otherwise it's the brush-sized sentence window at the drop
+  // point. We preventDefault so ProseMirror's own drop handling never sees it.
   const handleColourDrop = (e: React.DragEvent) => {
     if (!editor) return;
     const colourKey = e.dataTransfer.getData(COLOUR_DROP_MIME);
@@ -362,12 +387,22 @@ export function Editor({
     e.preventDefault();
     e.stopPropagation();
     const { view } = editor;
-    const at = view.posAtCoords({ left: e.clientX, top: e.clientY });
-    if (!at) return;
-    const window = sentenceWindowAt(view.state.doc, at.pos);
-    if (!window) return;
-    const { from, to } = window;
-    const { doc } = view.state;
+    const { doc, selection } = view.state;
+    let from: number;
+    let to: number;
+    let origin: { x: number; y: number };
+    if (!selection.empty) {
+      ({ from, to } = selection);
+      const pts = sampleRipples(view, from, to);
+      origin = pts[Math.floor(pts.length / 2)] ?? { x: e.clientX, y: e.clientY };
+    } else {
+      const at = view.posAtCoords({ left: e.clientX, top: e.clientY });
+      if (!at) return;
+      const window = sentenceWindowAt(doc, at.pos, brushRadius);
+      if (!window) return;
+      ({ from, to } = window);
+      origin = { x: e.clientX, y: e.clientY };
+    }
     const span: SelectionRange = {
       text: doc.textBetween(from, to, "\n\n"),
       from,
@@ -376,15 +411,8 @@ export function Editor({
       afterText: doc.textBetween(to, doc.content.size, "\n\n").trimEnd(),
       ...openness(doc, from, to),
     };
-    // Sample evenly across the span so the secondary splashes trace the words
-    // about to change, radiating out from the drop point.
-    const STEPS = 5;
-    const ripples = Array.from({ length: STEPS + 1 }, (_, i) => {
-      const p = Math.min(to, Math.max(from, Math.round(from + ((to - from) * i) / STEPS)));
-      const c = view.coordsAtPos(p);
-      return { x: c.left, y: (c.top + c.bottom) / 2 };
-    });
-    onColourDrop?.({ colourKey, span, origin: { x: e.clientX, y: e.clientY }, ripples });
+    const ripples = sampleRipples(view, from, to);
+    onColourDrop?.({ colourKey, span, origin, ripples });
   };
 
   const canHue = hasSelection && !!onDeriveHue;
@@ -439,6 +467,12 @@ export function Editor({
       },
       replaceRange(from: number, to: number, html: string) {
         editor?.chain().setTextSelection({ from, to }).insertContent(html).run();
+      },
+      splashPointsFor(from: number, to: number) {
+        if (!editor) return null;
+        const ripples = sampleRipples(editor.view, from, to);
+        const origin = ripples[Math.floor(ripples.length / 2)] ?? ripples[0];
+        return origin ? { origin, ripples } : null;
       },
     }),
     [editor],

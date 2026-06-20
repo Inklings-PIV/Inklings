@@ -617,21 +617,22 @@ export default function QuillPage() {
   };
 
   const acceptRewrite = (text: string) => {
-    const html = text
-      .split(/\n\s*\n+/)
-      .flatMap((p) => {
-        const trimmed = p.trim();
-        return trimmed ? [`<p>${escapeHtml(trimmed)}</p>`] : [];
-      })
-      .join("");
     // Snapshot the draft being replaced — the remount below wipes TipTap undo.
     setVersions((stack) =>
       pushVersion(stack, { html: draft, sourceTarget: composedTarget, takenAt: Date.now() }),
     );
     if (committedSelection) {
-      editorRef.current?.replaceRange(committedSelection.from, committedSelection.to, html);
+      // The editor splices as an open ProseMirror slice, so the rewrite merges
+      // at the cut points (no host-paragraph splitting), whatever the span.
+      editorRef.current?.replaceRange(committedSelection.from, committedSelection.to, text);
     } else {
-      setDraft(html);
+      const asBlocks = text
+        .split(/\n\s*\n+/)
+        .map((p) => p.trim())
+        .filter(Boolean)
+        .map((p) => `<p>${escapeHtml(p)}</p>`)
+        .join("");
+      setDraft(asBlocks);
       setEditorKey((k) => k + 1);
     }
     setRewrite(null);

@@ -1,6 +1,6 @@
 "use client";
 
-import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import { Fragment, type Node as ProseMirrorNode, Slice } from "@tiptap/pm/model";
 import { Plugin, PluginKey } from "@tiptap/pm/state";
 import { Decoration, DecorationSet, type EditorView } from "@tiptap/pm/view";
 import {
@@ -123,8 +123,9 @@ export type EditorHandle = {
   focusBlock: (index: number) => void;
   /** Return the current selection with position info and surrounding context. */
   getSelection: () => SelectionRange | null;
-  /** Replace the range [from, to] in the document with new HTML. */
-  replaceRange: (from: number, to: number, html: string) => void;
+  /** Replace the range [from, to] with rewritten prose (paragraphs split on
+   *  blank lines), merging at the cut points instead of splitting host blocks. */
+  replaceRange: (from: number, to: number, text: string) => void;
   /** Splash coords (viewport px) for an arbitrary range — used to animate a
    *  rewrite triggered from the panel rather than a drop. */
   splashPointsFor: (from: number, to: number) => SplashPoints | null;
@@ -465,8 +466,22 @@ export function Editor({
           ...openness(doc, from, to),
         };
       },
-      replaceRange(from: number, to: number, html: string) {
-        editor?.chain().setTextSelection({ from, to }).insertContent(html).run();
+      replaceRange(from: number, to: number, text: string) {
+        if (!editor) return;
+        const { schema } = editor.state;
+        const paras = text
+          .split(/\n\s*\n+/)
+          .map((p) => p.trim())
+          .filter(Boolean);
+        const paragraph = schema.nodes.paragraph;
+        if (paras.length === 0 || !paragraph) return;
+        // A slice open at both ends (textblock depth 1) fits like a paste: the
+        // first paragraph merges into the block at `from`, internal breaks split,
+        // the last merges into the block at `to`. Handles in-paragraph, whole-
+        // paragraph and cross-paragraph spans without splitting the host blocks.
+        const nodes = paras.map((t) => paragraph.create(null, schema.text(t)));
+        const slice = new Slice(Fragment.fromArray(nodes), 1, 1);
+        editor.view.dispatch(editor.state.tr.replaceRange(from, to, slice));
       },
       splashPointsFor(from: number, to: number) {
         if (!editor) return null;

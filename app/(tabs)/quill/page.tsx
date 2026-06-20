@@ -81,8 +81,8 @@ type PanelPreset = "essentials" | "analyse" | "rewrite" | "custom";
 // Which optional panels each preset activates.
 const PANEL_PRESETS: Record<Exclude<PanelPreset, "custom">, readonly string[]> = {
   essentials: ["hue", "save"],
-  analyse: ["hue", "fingerprint", "band", "arc", "neighbours", "save"],
-  rewrite: ["hue", "target", "version", "save"],
+  analyse: ["hue", "fingerprint", "band", "arc", "neighbours"],
+  rewrite: ["target", "version"],
 };
 
 const CUSTOM_PANEL_OPTIONS = [

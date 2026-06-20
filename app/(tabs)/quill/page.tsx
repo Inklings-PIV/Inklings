@@ -211,6 +211,7 @@ export default function QuillPage() {
     () => computeWritingStats(draft.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ")),
     [draft],
   );
+  const hasDraftText = plainText(draft).length > 0;
   // Markdown export of the draft (F4).
   const markdown = useMemo(() => htmlToMarkdown(draft), [draft]);
 
@@ -329,6 +330,11 @@ export default function QuillPage() {
   // Debounced readout — 700 ms after the last keystroke we ask Claude for the
   // current hue. Latest call wins; in-flight ones are ignored when stale.
   useEffect(() => {
+    if (!hasDraftText) {
+      setReadout(null);
+      return;
+    }
+
     let cancelled = false;
     const handle = setTimeout(() => {
       startReadout(async () => {
@@ -344,7 +350,7 @@ export default function QuillPage() {
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [draft]);
+  }, [draft, hasDraftText]);
 
   // Debounced counterfactual explanation (#2) — only while the panel is open and
   // in readout mode, so we pay for it on demand. Same 700 ms window; latest wins.
@@ -724,8 +730,9 @@ export default function QuillPage() {
           {panelVisible("hue") && (
             <HueReadout
               targetActive={targetActive}
+              hasText={hasDraftText}
               wordCount={countWords(draft)}
-              readout={readout}
+              readout={hasDraftText ? readout : null}
               isPending={isPending}
               explain={explain}
               onToggleExplain={() => setExplain((v) => !v)}
@@ -902,6 +909,7 @@ function plainText(html: string): string {
 
 function HueReadout({
   targetActive,
+  hasText,
   wordCount,
   readout,
   isPending,
@@ -909,6 +917,7 @@ function HueReadout({
   onToggleExplain,
 }: {
   targetActive: boolean;
+  hasText: boolean;
   wordCount: number;
   readout: TextColour | null;
   isPending: boolean;
@@ -924,7 +933,7 @@ function HueReadout({
     <Card>
       <CardContent className="flex flex-col gap-3 p-5">
         <div className="flex items-center gap-3">
-          <HueSwatch swatchCss={swatchCss} />
+          <HueSwatch swatchCss={swatchCss} showWave={hasText} />
 
           <div className="flex min-w-0 flex-col">
             <span className="text-xs uppercase tracking-wider text-muted-foreground">
@@ -1546,16 +1555,21 @@ function relativeTime(d: Date): string {
  * Path notes — viewBox is 48×48 to match the rendered size:
  *  - The wave path is 96 wide (two visible widths) so the translate
  *    animation has fresh wave coming in from the right.
- *  - Quadratic-bezier sine with 24-px period (two crests per visible
- *    width) and 4-px amplitude around a baseline at y=30 — keeps the
- *    grey area roughly the top 60 % of the circle.
+ *  - Quadratic-bezier sine with 24-px period (two strong curves per
+ *    visible width) and 4-px amplitude around a baseline at y=30 —
+ *    keeps the grey area roughly the top 60 % of the circle.
  *  - The gradient repeats the rainbow twice (0..50 % is one full sweep,
  *    50..100 % the same again) so when the wave translates by exactly
  *    -48 px, the colours at any fixed canvas x are identical to t=0
  *    and the loop is seamless.
  */
-function HueSwatch({ swatchCss }: { swatchCss: string | undefined }) {
+function HueSwatch({ swatchCss, showWave }: { swatchCss: string | undefined; showWave: boolean }) {
   const hasHue = !!swatchCss;
+  const wavePath =
+    "M0,30 Q6,26 12,30 T24,30 T36,30 T48,30 T60,30 T72,30 T84,30 T96,30 L96,48 L0,48 Z";
+  const emptyWavePath =
+    "M-18,30 Q-12,26 -6,30 T6,30 T18,30 T30,30 T42,30 T54,30 T66,30 T78,30 T90,30 T102,30 L102,48 L-18,48 Z";
+
   return (
     <div
       aria-label="Your current hue"
@@ -1566,7 +1580,52 @@ function HueSwatch({ swatchCss }: { swatchCss: string | undefined }) {
         aria-hidden="true"
         viewBox="0 0 48 48"
         preserveAspectRatio="none"
-        className="absolute inset-0 size-full"
+        className={cn(
+          "absolute inset-0 size-full transition-all duration-1000",
+          showWave || hasHue ? "scale-105 opacity-0 blur-[1px]" : "scale-100 opacity-100 blur-0",
+        )}
+      >
+        <title>Empty hue placeholder</title>
+        <defs>
+          <linearGradient id="hue-empty-drop" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="hsl(252, 60%, 76%)" />
+            <stop offset="100%" stopColor="hsl(252, 48%, 48%)" />
+          </linearGradient>
+          <linearGradient id="hue-empty-wave" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="hsl(252, 55%, 68%)" stopOpacity="0.78" />
+            <stop offset="100%" stopColor="hsl(252, 48%, 46%)" stopOpacity="0.52" />
+          </linearGradient>
+        </defs>
+        <path
+          className={cn("inklings-hue-empty-wave", showWave && "inklings-hue-purple-wave-dissolve")}
+          fill="url(#hue-empty-wave)"
+          d={emptyWavePath}
+        />
+        <g
+          className={cn("inklings-hue-empty-drop", showWave && "inklings-hue-empty-drop-dissolve")}
+        >
+          <path
+            d="M24 16 C21.8 19.2 20.4 21.5 20.4 23.7 C20.4 26 22 27.8 24 27.8 C26 27.8 27.6 26 27.6 23.7 C27.6 21.5 26.2 19.2 24 16 Z"
+            fill="url(#hue-empty-drop)"
+          />
+          <path
+            d="M23.1 19.4 C22.2 21 21.8 22.3 21.8 23.5"
+            fill="none"
+            stroke="hsl(252, 75%, 86%)"
+            strokeLinecap="round"
+            strokeOpacity="0.42"
+            strokeWidth="0.8"
+          />
+        </g>
+      </svg>
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 48 48"
+        preserveAspectRatio="none"
+        className={cn(
+          "absolute inset-0 size-full transition-opacity delay-200 duration-[900ms]",
+          showWave ? "opacity-100" : "opacity-0",
+        )}
       >
         <title>Rainbow wave loading indicator</title>
         <defs>
@@ -1587,10 +1646,7 @@ function HueSwatch({ swatchCss }: { swatchCss: string | undefined }) {
           </linearGradient>
         </defs>
         <g className="inklings-wave-flow">
-          <path
-            fill="url(#hue-wave-rainbow)"
-            d="M0,30 Q6,26 12,30 T24,30 T36,30 T48,30 T60,30 T72,30 T84,30 T96,30 L96,48 L0,48 Z"
-          />
+          <path fill="url(#hue-wave-rainbow)" d={wavePath} />
         </g>
       </svg>
       <span

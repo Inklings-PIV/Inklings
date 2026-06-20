@@ -69,6 +69,66 @@ export function colourCssOf(c: ColourDrop): string {
  *  the target is an abstract mood, not the draft's current hue. */
 export const NEUTRAL_INK_CSS = hueFromHSL(220, 12, 60).css;
 
+// ---------------------------------------------------------------------------
+// Captured / mixed hues — the custom swatch that lives in the "hue slot". A hue
+// extracted from a passage or mixed from the base colours becomes a swatch like
+// any other: an HSL for display + a phrase for what it means to a rewrite.
+// ---------------------------------------------------------------------------
+
+/** Drag key the slot swatch carries (vs a base colour's own key). */
+export const SLOT_KEY = "__slot__";
+/** Mime for dragging a paragraph's hue (from the hue band) into the slot. */
+export const HUE_CAPTURE_MIME = "application/x-inklings-hue";
+
+export type CapturedHue = {
+  hsl: { hue: number; saturation: number; lightness: number };
+  /** The rewrite-target meaning of this hue (a justification or a mix recipe). */
+  phrase: string;
+};
+
+export function capturedHueCss(h: CapturedHue): string {
+  return hueFromHSL(h.hsl.hue, h.hsl.saturation, h.hsl.lightness).css;
+}
+
+/** Weighted blend of HSL colours — hue by circular mean, sat/lightness linear. */
+export function blendHues(
+  parts: { hsl: { hue: number; saturation: number; lightness: number }; weight: number }[],
+): { hue: number; saturation: number; lightness: number } | null {
+  let x = 0;
+  let y = 0;
+  let s = 0;
+  let l = 0;
+  let w = 0;
+  for (const p of parts) {
+    const r = (p.hsl.hue * Math.PI) / 180;
+    x += Math.cos(r) * p.weight;
+    y += Math.sin(r) * p.weight;
+    s += p.hsl.saturation * p.weight;
+    l += p.hsl.lightness * p.weight;
+    w += p.weight;
+  }
+  if (w === 0) return null;
+  return {
+    hue: ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360,
+    saturation: s / w,
+    lightness: l / w,
+  };
+}
+
+const PART_WORDS = ["zero", "one", "two", "three", "four", "five", "six"];
+function partWord(n: number): string {
+  return PART_WORDS[n] ?? String(n);
+}
+
+/** Compose a mix recipe into a phrase: "two parts calm, melancholy; one part …". */
+export function mixPhrase(recipe: { phrase: string; parts: number }[]): string {
+  return recipe
+    .filter((r) => r.parts > 0)
+    .sort((a, b) => b.parts - a.parts)
+    .map((r) => `${partWord(r.parts)} part${r.parts === 1 ? "" : "s"} ${r.phrase}`)
+    .join("; ");
+}
+
 export type SplashState = {
   /** CSS colour of the dropped swatch. */
   colourCss: string;

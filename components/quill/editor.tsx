@@ -22,6 +22,7 @@ import {
   List,
   ListOrdered,
   Palette,
+  Pipette,
   Quote,
   Redo2,
   Undo2,
@@ -95,6 +96,9 @@ type EditorProps = {
   className?: string;
   /** Right-click "Read the hue" — derive a colour for the selected passage. */
   onDeriveHue?: (text: string) => Promise<SelectionColour | null>;
+  /** Right-click "Capture hue" — like Read the hue, but also lifts it into the
+   *  hue slot so it can be re-applied or mixed. */
+  onCaptureHue?: (hue: SelectionColour) => void;
   /** Right-click "Rewrite" presets — rewrite the selection toward a target. */
   onRewriteSelection?: (text: string, target: string) => Promise<string | null>;
   /**
@@ -243,6 +247,7 @@ export function Editor({
   placeholder,
   className,
   onDeriveHue,
+  onCaptureHue,
   onRewriteSelection,
   highlightBlock,
   onColourDrop,
@@ -345,6 +350,34 @@ export function Editor({
     }
   };
 
+  // Like readHue, but also lifts the colour into the hue slot (still prints it).
+  const captureHue = async () => {
+    const sel = selectionText();
+    if (!sel || !onDeriveHue) return;
+    const id = toast.loading("Reading the hue…");
+    try {
+      const colour = await onDeriveHue(sel.text);
+      if (!colour) {
+        toast.error("Selection too short to read a hue", { id });
+        return;
+      }
+      const css = hueFromHSL(colour.hue, colour.saturation, colour.lightness).css;
+      toast.success(`Captured — ${colour.justification}`, {
+        id,
+        icon: (
+          <span
+            aria-hidden="true"
+            className="inline-block size-3 rounded-full"
+            style={{ backgroundColor: css }}
+          />
+        ),
+      });
+      onCaptureHue?.(colour);
+    } catch {
+      toast.error("Couldn't read the hue", { id });
+    }
+  };
+
   const applyPreset = (target: string, label: string) => {
     const sel = selectionText();
     if (!sel || !onRewriteSelection || !editor) return;
@@ -417,6 +450,7 @@ export function Editor({
   };
 
   const canHue = hasSelection && !!onDeriveHue;
+  const canCapture = hasSelection && !!onDeriveHue && !!onCaptureHue;
   const canRewrite = hasSelection && !!onRewriteSelection;
 
   // Drive the EmoArc highlight from the band's hovered segment. Split into
@@ -568,6 +602,9 @@ export function Editor({
             <span className="ml-auto pl-6 text-[10px] tracking-wider text-muted-foreground">
               ⌘↵
             </span>
+          </ContextMenuItem>
+          <ContextMenuItem disabled={!canCapture} onSelect={captureHue}>
+            <Pipette className="size-4" /> Capture hue
           </ContextMenuItem>
           <ContextMenuSub>
             <ContextMenuSubTrigger disabled={!canRewrite}>

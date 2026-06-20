@@ -1,12 +1,22 @@
 "use client";
 
-import { Brush, ChevronDown, Loader2, Sparkles, X } from "lucide-react";
+import { Brush, ChevronDown, FlaskConical, Loader2, Pipette, Sparkles, X } from "lucide-react";
 import { useState } from "react";
-import { COLOUR_DROPS, type ColourDrop, colourCssOf } from "@/components/quill/colour-drop";
+import {
+  blendHues,
+  type CapturedHue,
+  COLOUR_DROPS,
+  capturedHueCss,
+  colourCssOf,
+  HUE_CAPTURE_MIME,
+  mixPhrase,
+  SLOT_KEY,
+} from "@/components/quill/colour-drop";
 import { COLOUR_DROP_MIME } from "@/components/quill/editor";
 import { TargetWidgets } from "@/components/quill/target-widgets";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { hueFromHSL } from "@/lib/colour/placeholder";
 import type { WidgetSelection } from "@/lib/quill/widgets";
 import { cn } from "@/lib/utils";
 
@@ -41,6 +51,9 @@ function countWords(s: string): number {
 export function RewritePanel({
   selectedColour,
   onToggleColour,
+  slot,
+  onCaptureHue,
+  onClearSlot,
   brushSize,
   onBrushChange,
   selection,
@@ -62,6 +75,9 @@ export function RewritePanel({
 }: {
   selectedColour: string | null;
   onToggleColour: (key: string) => void;
+  slot: CapturedHue | null;
+  onCaptureHue: (hue: CapturedHue) => void;
+  onClearSlot: () => void;
   brushSize: number;
   onBrushChange: (n: number) => void;
   selection: WidgetSelection;
@@ -103,15 +119,25 @@ export function RewritePanel({
             open={colourOpen}
             onToggle={() => setColourOpen((v) => !v)}
           />
-          <div className="flex flex-wrap gap-2">
+          <div className="flex items-center justify-between gap-1">
             {COLOUR_DROPS.map((c) => (
               <Swatch
                 key={c.key}
-                colour={c}
+                css={colourCssOf(c)}
+                dragKey={c.key}
+                title={`${c.label} — ${c.target}. Drag onto a word, or tap to add to the target.`}
+                ariaLabel={`${c.label}: ${c.target}`}
                 active={selectedColour === c.key}
                 onToggle={() => onToggleColour(c.key)}
               />
             ))}
+            <HueSlot
+              slot={slot}
+              active={selectedColour === SLOT_KEY}
+              onToggle={() => onToggleColour(SLOT_KEY)}
+              onCapture={onCaptureHue}
+              onClear={onClearSlot}
+            />
           </div>
           {colourOpen && (
             <>
@@ -141,9 +167,11 @@ export function RewritePanel({
                   ))}
                 </div>
               </div>
+              <InkBeaker onPour={onCaptureHue} />
               <p className="text-[11px] italic leading-snug text-muted-foreground">
                 Drag a colour onto a word for an instant nudge, or tap one to fold its mood into the
-                target below.
+                target. The slot holds a hue you capture from your own prose — right-click a passage
+                → Capture, or drag a segment from the Hue band.
               </p>
             </>
           )}
@@ -274,13 +302,21 @@ function SectionHeader({
 }
 
 /** A mood swatch: draggable (the quick gesture) and clickable (toggle into the
- *  composed target). The two don't conflict — a click never starts a drag. */
+ *  composed target). The two don't conflict — a click never starts a drag.
+ *  Generic over base colours and the custom hue slot — both carry a css + a
+ *  drag key + a phrase. */
 function Swatch({
-  colour,
+  css,
+  dragKey,
+  title,
+  ariaLabel,
   active,
   onToggle,
 }: {
-  colour: ColourDrop;
+  css: string;
+  dragKey: string;
+  title: string;
+  ariaLabel: string;
   active: boolean;
   onToggle: () => void;
 }) {
@@ -290,19 +326,201 @@ function Swatch({
       draggable
       aria-pressed={active}
       onDragStart={(e) => {
-        e.dataTransfer.setData(COLOUR_DROP_MIME, colour.key);
+        e.dataTransfer.setData(COLOUR_DROP_MIME, dragKey);
         e.dataTransfer.effectAllowed = "copy";
       }}
       onClick={onToggle}
-      title={`${colour.label} — ${colour.target}. Drag onto a word, or tap to add to the target.`}
-      aria-label={`${colour.label}: ${colour.target}`}
+      title={title}
+      aria-label={ariaLabel}
       className={cn(
         "size-7 shrink-0 cursor-grab rounded-full border shadow-inner transition-transform",
         "hover:scale-110 active:cursor-grabbing",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
         active ? "border-ink-deep ring-2 ring-ink-deep/50" : "border-border",
       )}
-      style={{ backgroundColor: colourCssOf(colour) }}
+      style={{ backgroundColor: css }}
     />
+  );
+}
+
+/** The custom hue slot — one holder for an extracted or mixed hue. Empty, it's a
+ *  drop target for a hue dragged from the band; filled, it's a swatch like any
+ *  other (drag to apply, tap to fold into the target) with a clear button. */
+function HueSlot({
+  slot,
+  active,
+  onToggle,
+  onCapture,
+  onClear,
+}: {
+  slot: CapturedHue | null;
+  active: boolean;
+  onToggle: () => void;
+  onCapture: (hue: CapturedHue) => void;
+  onClear: () => void;
+}) {
+  const [over, setOver] = useState(false);
+
+  const onDragOver = (e: React.DragEvent) => {
+    if (e.dataTransfer.types.includes(HUE_CAPTURE_MIME)) {
+      e.preventDefault();
+      setOver(true);
+    }
+  };
+  const onDrop = (e: React.DragEvent) => {
+    const raw = e.dataTransfer.getData(HUE_CAPTURE_MIME);
+    setOver(false);
+    if (!raw) return;
+    e.preventDefault();
+    try {
+      onCapture(JSON.parse(raw) as CapturedHue);
+    } catch {
+      // Ignore a malformed payload — nothing to capture.
+    }
+  };
+
+  if (!slot) {
+    return (
+      // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only drop target; capture is also reachable via right-click → Capture hue
+      <div
+        onDragOver={onDragOver}
+        onDragLeave={() => setOver(false)}
+        onDrop={onDrop}
+        title="Drop a paragraph's hue here (drag from the Hue band), or right-click text → Capture hue"
+        className={cn(
+          "flex size-7 shrink-0 items-center justify-center rounded-full border border-dashed transition-colors",
+          over
+            ? "border-ink-deep bg-ink-deep/10 text-ink-deep"
+            : "border-border text-muted-foreground",
+        )}
+      >
+        <Pipette className="size-3.5" />
+      </div>
+    );
+  }
+
+  return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: wrapper only extends the drop zone; the swatch + clear button are the interactive controls
+    <span
+      className="relative inline-flex"
+      onDragOver={onDragOver}
+      onDragLeave={() => setOver(false)}
+      onDrop={onDrop}
+    >
+      <Swatch
+        css={capturedHueCss(slot)}
+        dragKey={SLOT_KEY}
+        title={`Captured hue — ${slot.phrase}. Drag onto a word, or tap to add to the target.`}
+        ariaLabel={`Captured hue: ${slot.phrase}`}
+        active={active}
+        onToggle={onToggle}
+      />
+      <button
+        type="button"
+        aria-label="Clear captured hue"
+        onClick={onClear}
+        className="absolute -right-1 -top-1 flex size-3.5 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm hover:text-foreground"
+      >
+        <X className="size-2.5" />
+      </button>
+    </span>
+  );
+}
+
+/** The ink beaker — add "parts" of the base colours (click +1, right-click −1),
+ *  see the blend + recipe live, and pour it into the hue slot as a mixed swatch.
+ *  Reads like the analogy: "two parts calm (blue), one part crimson (love)." */
+function InkBeaker({ onPour }: { onPour: (hue: CapturedHue) => void }) {
+  const [open, setOpen] = useState(false);
+  const [recipe, setRecipe] = useState<Record<string, number>>({});
+
+  const change = (key: string, delta: number) =>
+    setRecipe((r) => {
+      const n = (r[key] ?? 0) + delta;
+      const next = { ...r };
+      if (n <= 0) delete next[key];
+      else next[key] = n;
+      return next;
+    });
+
+  const entries = COLOUR_DROPS.filter((c) => (recipe[c.key] ?? 0) > 0);
+  const blend = blendHues(entries.map((c) => ({ hsl: c.hsl, weight: recipe[c.key] ?? 0 })));
+  const phrase = mixPhrase(entries.map((c) => ({ phrase: c.target, parts: recipe[c.key] ?? 0 })));
+  const previewCss = blend
+    ? hueFromHSL(blend.hue, blend.saturation, blend.lightness).css
+    : undefined;
+
+  const pour = () => {
+    if (!blend) return;
+    onPour({ hsl: blend, phrase });
+    setRecipe({});
+    setOpen(false);
+  };
+
+  return (
+    <div className="flex flex-col gap-2">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+        className="inline-flex items-center gap-1 self-start text-[11px] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none"
+      >
+        <FlaskConical className="size-3.5" /> Mix a hue
+        <ChevronDown className={cn("size-3 transition-transform", open && "rotate-180")} />
+      </button>
+      {open && (
+        <div className="flex flex-col gap-2 rounded-md border border-border/60 p-2">
+          <div className="flex flex-wrap gap-1.5">
+            {COLOUR_DROPS.map((c) => (
+              <button
+                key={c.key}
+                type="button"
+                onClick={() => change(c.key, 1)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  change(c.key, -1);
+                }}
+                title={`${c.label} — click to add a part, right-click to remove`}
+                aria-label={`Add a part of ${c.label}`}
+                className="relative size-6 rounded-full border border-border shadow-inner transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                style={{ backgroundColor: colourCssOf(c) }}
+              >
+                {(recipe[c.key] ?? 0) > 0 && (
+                  <span className="absolute -right-1 -top-1 flex min-w-3.5 items-center justify-center rounded-full bg-ink-deep px-0.5 text-[9px] tabular-nums text-ink-paper">
+                    {recipe[c.key]}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+          {entries.length > 0 ? (
+            <>
+              <div className="flex items-center gap-2">
+                <span
+                  aria-hidden="true"
+                  className="size-6 shrink-0 rounded-full border border-border shadow-inner"
+                  style={{ backgroundColor: previewCss }}
+                />
+                <p className="flex-1 text-[11px] italic leading-snug text-muted-foreground">
+                  {phrase}
+                </p>
+              </div>
+              <div className="flex gap-1.5">
+                <Button size="sm" variant="outline" onClick={pour}>
+                  Pour into slot
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setRecipe({})}>
+                  Clear
+                </Button>
+              </div>
+            </>
+          ) : (
+            <p className="text-[11px] italic leading-snug text-muted-foreground">
+              Tap colours to add parts — “two parts calm (blue), one part crimson (love)”.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

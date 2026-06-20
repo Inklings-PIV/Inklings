@@ -15,10 +15,14 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { ArcChart } from "@/components/quill/arc-chart";
 import {
+  type CapturedHue,
   ColourSplash,
+  capturedHueCss,
   colourCssOf,
   colourDropByKey,
+  HUE_CAPTURE_MIME,
   NEUTRAL_INK_CSS,
+  SLOT_KEY,
   type SplashState,
 } from "@/components/quill/colour-drop";
 import { DiffActions, DiffText } from "@/components/quill/diff-view";
@@ -146,6 +150,9 @@ export default function QuillPage() {
   const [selectedColour, setSelectedColour] = useState<string | null>(null);
   const [brushSize, setBrushSize] = useState(3);
   const [animateOnRewrite, setAnimateOnRewrite] = useState(true);
+  // The one custom-hue slot: a hue extracted from a passage (right-click capture
+  // or a Hue-band drag) or mixed from the bases. Acts as a 7th swatch.
+  const [slot, setSlot] = useState<CapturedHue | null>(null);
   // Pre-rewrite snapshots. Accepting a rewrite remounts the editor and wipes
   // TipTap's undo stack — this is the way back.
   const [versions, setVersions] = useState<DraftVersion[]>([]);
@@ -209,10 +216,23 @@ export default function QuillPage() {
   // one target. "" when nothing is set — every consumer treats that as "no
   // target yet". The colour is just another phrase, so drift/rewrite see it too.
   const composedTarget = useMemo(() => {
-    const colourPhrase = selectedColour ? colourDropByKey(selectedColour)?.target : undefined;
+    const colourPhrase = !selectedColour
+      ? undefined
+      : selectedColour === SLOT_KEY
+        ? slot?.phrase
+        : colourDropByKey(selectedColour)?.target;
     const words = widgetsToTarget(widgetSelection, target);
     return [colourPhrase, words].filter(Boolean).join("; ");
-  }, [selectedColour, widgetSelection, target]);
+  }, [selectedColour, slot, widgetSelection, target]);
+
+  // CSS for a swatch key (base or the slot), for the splash colour. Falls back
+  // to neutral ink when nothing resolves.
+  const swatchCss = (key: string | null): string => {
+    if (!key) return NEUTRAL_INK_CSS;
+    if (key === SLOT_KEY) return slot ? capturedHueCss(slot) : NEUTRAL_INK_CSS;
+    const c = colourDropByKey(key);
+    return c ? colourCssOf(c) : NEUTRAL_INK_CSS;
+  };
   // Brush size (sentences) → window radius each side: 1→0, 3→1, 7→3.
   const brushRadius = Math.floor((brushSize - 1) / 2);
 
@@ -343,6 +363,9 @@ export default function QuillPage() {
 
   // Tap a swatch to fold its mood into the target (toggle on/off).
   const toggleColour = (key: string) => setSelectedColour((prev) => (prev === key ? null : key));
+
+  // Fill the hue slot from a capture (right-click or Hue-band drag) or a mix.
+  const captureHue = (hue: CapturedHue) => setSlot(hue);
 
   // Debounced readout — 700 ms after the last keystroke we ask Claude for the
   // current hue. Latest call wins; in-flight ones are ignored when stale.
@@ -579,12 +602,6 @@ export default function QuillPage() {
   // toggle is on (whole-draft rewrites never splash — it'd cover everything).
   const requestRewrite = () => {
     const sel = editorRef.current?.getSelection() ?? null;
-    const colourCss = selectedColour
-      ? (() => {
-          const c = colourDropByKey(selectedColour);
-          return c ? colourCssOf(c) : NEUTRAL_INK_CSS;
-        })()
-      : NEUTRAL_INK_CSS;
     const coords =
       animateOnRewrite && sel
         ? (editorRef.current?.splashPointsFor(sel.from, sel.to) ?? null)
@@ -594,23 +611,29 @@ export default function QuillPage() {
       span: sel,
       target: composedTarget,
       coords,
-      colourCss,
+      colourCss: swatchCss(selectedColour),
       tooShort: "Write at least 8 words and enter a target before asking for a rewrite.",
     });
   };
 
   // Drag gesture: a swatch dropped on a word — colour-only target (ignores the
   // form), always animated, span sized by the brush (or the selection, which the
-  // editor lets win). The splash scales with the brush size.
+  // editor lets win). The dropped swatch may be a base colour or the hue slot.
   const handleColourDrop = (detail: ColourDropDetail) => {
-    const colour = colourDropByKey(detail.colourKey);
-    if (!colour) return;
+    const resolved =
+      detail.colourKey === SLOT_KEY
+        ? slot && { phrase: slot.phrase, css: capturedHueCss(slot) }
+        : (() => {
+            const c = colourDropByKey(detail.colourKey);
+            return c ? { phrase: c.target, css: colourCssOf(c) } : null;
+          })();
+    if (!resolved) return;
     runRewrite({
       text: detail.span.text,
       span: detail.span,
-      target: colour.target,
+      target: resolved.phrase,
       coords: { origin: detail.origin, ripples: detail.ripples },
-      colourCss: colourCssOf(colour),
+      colourCss: resolved.css,
       scale: BRUSH_SPLASH_SCALE[brushSize] ?? 1,
       tooShort: "Drop on a fuller passage — the rewrite needs at least 8 words around the word.",
     });
@@ -733,6 +756,12 @@ export default function QuillPage() {
                   placeholder="Write a paragraph and watch the ink reveal itself…"
                   onChange={setDraft}
                   onDeriveHue={deriveTextColour}
+                  onCaptureHue={(c) =>
+                    captureHue({
+                      hsl: { hue: c.hue, saturation: c.saturation, lightness: c.lightness },
+                      phrase: c.justification,
+                    })
+                  }
                   onRewriteSelection={rewriteSelection}
                   onSelectionChange={(sel) => setLiveSelection(sel?.text ?? null)}
                   highlightBlock={highlight}
@@ -784,6 +813,9 @@ export default function QuillPage() {
             <RewritePanel
               selectedColour={selectedColour}
               onToggleColour={toggleColour}
+              slot={slot}
+              onCaptureHue={captureHue}
+              onClearSlot={() => setSlot(null)}
               brushSize={brushSize}
               onBrushChange={changeBrushSize}
               selection={widgetSelection}
@@ -1059,12 +1091,26 @@ function HueBand({
               <button
                 type="button"
                 key={seg.id}
+                draggable={!!seg.colour}
+                onDragStart={(e) => {
+                  if (!seg.colour) return;
+                  const hue: CapturedHue = {
+                    hsl: {
+                      hue: seg.colour.hue,
+                      saturation: seg.colour.saturation,
+                      lightness: seg.colour.lightness,
+                    },
+                    phrase: seg.colour.justification,
+                  };
+                  e.dataTransfer.setData(HUE_CAPTURE_MIME, JSON.stringify(hue));
+                  e.dataTransfer.effectAllowed = "copy";
+                }}
                 onMouseEnter={() => enter(i, css ?? null)}
                 onMouseLeave={leave}
                 onFocus={() => enter(i, css ?? null)}
                 onBlur={leave}
                 onClick={() => onActivate?.(i)}
-                title="Jump to this paragraph"
+                title="Jump to this paragraph — or drag its hue into the Rewrite slot"
                 aria-label={
                   seg.colour
                     ? `Paragraph ${i + 1}: ${seg.colour.justification}. Jump to it.`

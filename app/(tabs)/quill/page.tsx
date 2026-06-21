@@ -141,6 +141,8 @@ export default function QuillPage() {
   const [rewriteError, setRewriteError] = useState<string | null>(null);
   const [isRewriting, startRewrite] = useTransition();
   const [highlightPending, setHighlightPending] = useState(false);
+  const [showNudgeReady, setShowNudgeReady] = useState(false);
+  const wasRewritingRef = useRef(false);
   // Colour-drop splash overlay (null when idle). The page owns the two-step
   // timing; the overlay just paints whatever phase it's handed.
   const [splash, setSplash] = useState<SplashState | null>(null);
@@ -156,9 +158,10 @@ export default function QuillPage() {
   // Pre-rewrite snapshots. Accepting a rewrite remounts the editor and wipes
   // TipTap's undo stack — this is the way back.
   const [versions, setVersions] = useState<DraftVersion[]>([]);
-  // Live selection text drives the sidebar indicator; committed selection is
+  // Live selection drives the sidebar indicator + persistent editor mark;
+  // committed selection is
   // frozen at request-time and used to splice the rewrite back in on accept.
-  const [liveSelection, setLiveSelection] = useState<string | null>(null);
+  const [liveSelection, setLiveSelection] = useState<SelectionRange | null>(null);
   const [committedSelection, setCommittedSelection] = useState<SelectionRange | null>(null);
   // Diff state — computed from the active rewrite vs the committed text.
   const diff = useDiff(
@@ -241,6 +244,7 @@ export default function QuillPage() {
     () => computeWritingStats(draft.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ")),
     [draft],
   );
+  const hasDraftText = plainText(draft).length > 0;
   // Markdown export of the draft (F4).
   const markdown = useMemo(() => htmlToMarkdown(draft), [draft]);
 
@@ -278,6 +282,16 @@ export default function QuillPage() {
       setHydrated(true);
     }
   }, []);
+
+  useEffect(() => {
+    const wasRewriting = wasRewritingRef.current;
+
+    if (wasRewriting && !isRewriting && rewrite) {
+      setShowNudgeReady(true);
+    }
+
+    wasRewritingRef.current = isRewriting;
+  }, [isRewriting, rewrite]);
 
   // Mirror every draft change to localStorage — implicit, no UI signal
   // needed since this is the privacy default.
@@ -388,6 +402,11 @@ export default function QuillPage() {
   // Debounced readout — 700 ms after the last keystroke we ask Claude for the
   // current hue. Latest call wins; in-flight ones are ignored when stale.
   useEffect(() => {
+    if (!hasDraftText) {
+      setReadout(null);
+      return;
+    }
+
     let cancelled = false;
     const handle = setTimeout(() => {
       startReadout(async () => {
@@ -403,7 +422,7 @@ export default function QuillPage() {
       cancelled = true;
       clearTimeout(handle);
     };
-  }, [draft]);
+  }, [draft, hasDraftText]);
 
   // Debounced counterfactual explanation (#2) — only while the panel is open and
   // in readout mode, so we pay for it on demand. Same 700 ms window; latest wins.
@@ -576,6 +595,7 @@ export default function QuillPage() {
   }) => {
     if (splash) return; // a splash is mid-flight — ignore until it clears
     setCommittedSelection(opts.span);
+    setShowNudgeReady(false);
     setRewriteError(null);
     setRewrite(null);
     if (opts.coords) {
@@ -677,6 +697,7 @@ export default function QuillPage() {
       setEditorKey((k) => k + 1);
     }
     setRewrite(null);
+    setShowNudgeReady(false);
     setCommittedSelection(null);
     setLiveSelection(null);
   };
@@ -689,12 +710,14 @@ export default function QuillPage() {
     setDraft(version.html);
     setRewrite(null);
     setRewriteError(null);
+    setShowNudgeReady(false);
     setEditorKey((k) => k + 1);
   };
 
   const rejectRewrite = () => {
     setRewrite(null);
     setRewriteError(null);
+    setShowNudgeReady(false);
     setCommittedSelection(null);
     setLiveSelection(null);
   };
@@ -728,6 +751,23 @@ export default function QuillPage() {
               className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-ink-bleed to-transparent opacity-60"
             />
             {splash && <ColourSplash splash={splash} />}
+            {(isRewriting || showNudgeReady) && (
+              <div className="pointer-events-none absolute inset-x-0 bottom-5 z-20 flex justify-center">
+                <p className="text-xs italic text-muted-foreground/70">
+                  {isRewriting ? (
+                    <>
+                      <span className="mr-1 inline-block animate-pulse">✦</span>
+                      Rewriting toward target…
+                    </>
+                  ) : (
+                    <>
+                      <span className="mr-1 text-ink-bleed">✓</span>
+                      Nudge ready
+                    </>
+                  )}
+                </p>
+              </div>
+            )}
             <CardContent className="p-6 sm:p-8">
               {rewrite && (
                 <div>
@@ -742,7 +782,7 @@ export default function QuillPage() {
                   />
                   {/* One block-flow prose container mirroring the editor exactly,
                       so before/diff/after paragraphs collapse margins uniformly. */}
-                  <div className="mt-4 min-h-[400px] w-full font-serif text-lg leading-relaxed text-ink-deep">
+                  <div className="mt-4 max-h-[min(430px,calc(100vh-31rem))] min-h-[260px] w-full overflow-y-auto overscroll-contain px-3 pt-8 pb-8 font-serif text-lg leading-relaxed text-ink-deep">
                     {blockBefore.map((para) => (
                       <p key={para} className="my-3 first:mt-0 text-ink-deep/40 select-none">
                         {para}
@@ -781,8 +821,10 @@ export default function QuillPage() {
                     })
                   }
                   onRewriteSelection={rewriteSelection}
-                  onSelectionChange={(sel) => setLiveSelection(sel?.text ?? null)}
+                  onSelectionChange={setLiveSelection}
                   highlightBlock={highlight}
+                  pendingRewriteRange={isRewriting ? committedSelection : liveSelection}
+                  pendingRewriteLoading={isRewriting && !!committedSelection}
                   onColourDrop={handleColourDrop}
                   brushRadius={brushRadius}
                 />
@@ -805,8 +847,9 @@ export default function QuillPage() {
           {panelVisible("hue") && (
             <HueReadout
               targetActive={targetActive}
+              hasText={hasDraftText}
               wordCount={countWords(draft)}
-              readout={readout}
+              readout={hasDraftText ? readout : null}
               isPending={isPending}
               explain={explain}
               onToggleExplain={() => setExplain((v) => !v)}
@@ -852,7 +895,7 @@ export default function QuillPage() {
               onRequest={requestRewrite}
               isPending={isRewriting}
               hasRewrite={rewrite !== null}
-              selectionText={liveSelection}
+              selectionText={liveSelection?.text ?? null}
               onClearSelection={() => setLiveSelection(null)}
               error={rewriteError}
             />
@@ -992,6 +1035,7 @@ function plainText(html: string): string {
 
 function HueReadout({
   targetActive,
+  hasText,
   wordCount,
   readout,
   isPending,
@@ -999,6 +1043,7 @@ function HueReadout({
   onToggleExplain,
 }: {
   targetActive: boolean;
+  hasText: boolean;
   wordCount: number;
   readout: TextColour | null;
   isPending: boolean;
@@ -1014,7 +1059,7 @@ function HueReadout({
     <Card>
       <CardContent className="flex flex-col gap-3 p-5">
         <div className="flex items-center gap-3">
-          <HueSwatch swatchCss={swatchCss} />
+          <HueSwatch swatchCss={swatchCss} showWave={hasText} />
 
           <div className="flex min-w-0 flex-col">
             <span className="text-xs uppercase tracking-wider text-muted-foreground">
@@ -1521,16 +1566,21 @@ function relativeTime(d: Date): string {
  * Path notes — viewBox is 48×48 to match the rendered size:
  *  - The wave path is 96 wide (two visible widths) so the translate
  *    animation has fresh wave coming in from the right.
- *  - Quadratic-bezier sine with 24-px period (two crests per visible
- *    width) and 4-px amplitude around a baseline at y=30 — keeps the
- *    grey area roughly the top 60 % of the circle.
+ *  - Quadratic-bezier sine with 24-px period (two strong curves per
+ *    visible width) and 4-px amplitude around a baseline at y=30 —
+ *    keeps the grey area roughly the top 60 % of the circle.
  *  - The gradient repeats the rainbow twice (0..50 % is one full sweep,
  *    50..100 % the same again) so when the wave translates by exactly
  *    -48 px, the colours at any fixed canvas x are identical to t=0
  *    and the loop is seamless.
  */
-function HueSwatch({ swatchCss }: { swatchCss: string | undefined }) {
+function HueSwatch({ swatchCss, showWave }: { swatchCss: string | undefined; showWave: boolean }) {
   const hasHue = !!swatchCss;
+  const wavePath =
+    "M0,30 Q6,26 12,30 T24,30 T36,30 T48,30 T60,30 T72,30 T84,30 T96,30 L96,48 L0,48 Z";
+  const emptyWavePath =
+    "M-18,30 Q-12,26 -6,30 T6,30 T18,30 T30,30 T42,30 T54,30 T66,30 T78,30 T90,30 T102,30 L102,48 L-18,48 Z";
+
   return (
     <div
       aria-label="Your current hue"
@@ -1541,7 +1591,52 @@ function HueSwatch({ swatchCss }: { swatchCss: string | undefined }) {
         aria-hidden="true"
         viewBox="0 0 48 48"
         preserveAspectRatio="none"
-        className="absolute inset-0 size-full"
+        className={cn(
+          "absolute inset-0 size-full transition-all duration-1000",
+          showWave || hasHue ? "scale-105 opacity-0 blur-[1px]" : "scale-100 opacity-100 blur-0",
+        )}
+      >
+        <title>Empty hue placeholder</title>
+        <defs>
+          <linearGradient id="hue-empty-drop" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="hsl(252, 60%, 76%)" />
+            <stop offset="100%" stopColor="hsl(252, 48%, 48%)" />
+          </linearGradient>
+          <linearGradient id="hue-empty-wave" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="hsl(252, 55%, 68%)" stopOpacity="0.78" />
+            <stop offset="100%" stopColor="hsl(252, 48%, 46%)" stopOpacity="0.52" />
+          </linearGradient>
+        </defs>
+        <path
+          className={cn("inklings-hue-empty-wave", showWave && "inklings-hue-purple-wave-dissolve")}
+          fill="url(#hue-empty-wave)"
+          d={emptyWavePath}
+        />
+        <g
+          className={cn("inklings-hue-empty-drop", showWave && "inklings-hue-empty-drop-dissolve")}
+        >
+          <path
+            d="M24 16 C21.8 19.2 20.4 21.5 20.4 23.7 C20.4 26 22 27.8 24 27.8 C26 27.8 27.6 26 27.6 23.7 C27.6 21.5 26.2 19.2 24 16 Z"
+            fill="url(#hue-empty-drop)"
+          />
+          <path
+            d="M23.1 19.4 C22.2 21 21.8 22.3 21.8 23.5"
+            fill="none"
+            stroke="hsl(252, 75%, 86%)"
+            strokeLinecap="round"
+            strokeOpacity="0.42"
+            strokeWidth="0.8"
+          />
+        </g>
+      </svg>
+      <svg
+        aria-hidden="true"
+        viewBox="0 0 48 48"
+        preserveAspectRatio="none"
+        className={cn(
+          "absolute inset-0 size-full transition-opacity delay-200 duration-[900ms]",
+          showWave ? "opacity-100" : "opacity-0",
+        )}
       >
         <title>Rainbow wave loading indicator</title>
         <defs>
@@ -1562,10 +1657,7 @@ function HueSwatch({ swatchCss }: { swatchCss: string | undefined }) {
           </linearGradient>
         </defs>
         <g className="inklings-wave-flow">
-          <path
-            fill="url(#hue-wave-rainbow)"
-            d="M0,30 Q6,26 12,30 T24,30 T36,30 T48,30 T60,30 T72,30 T84,30 T96,30 L96,48 L0,48 Z"
-          />
+          <path fill="url(#hue-wave-rainbow)" d={wavePath} />
         </g>
       </svg>
       <span

@@ -36,11 +36,11 @@ export const COLOUR_DROPS: ColourDrop[] = [
     hsl: { hue: 30, saturation: 80, lightness: 55 },
   },
   {
-    key: "amber",
-    label: "Amber",
+    key: "yellow",
+    label: "Yellow",
     // Heller's most ambivalent colour: optimism, but also envy. Kept honest.
     target: "bright, optimistic",
-    hsl: { hue: 48, saturation: 82, lightness: 58 },
+    hsl: { hue: 55, saturation: 82, lightness: 57 },
   },
   {
     key: "green",

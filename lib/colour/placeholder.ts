@@ -42,20 +42,26 @@ export function hueFor(bookId: string, source: HueSource, override?: HSLOverride
   const hue = (base + SOURCE_OFFSET[source]) % 360;
   return {
     rgb: hslToRgb(hue, 60, 55),
-    css: `oklch(0.7 0.16 ${hue.toFixed(0)})`,
+    css: `hsl(${hue.toFixed(0)} 60% 55%)`,
     hue,
   };
 }
 
-/** Pure HSL→display conversion shared by every real-source deriver. */
+// Saturation cap for the ink-on-paper feel — high-chroma colours read as neon
+// against the paper. Only saturation is clamped: lightness is left untouched so
+// the achromatic agents keep their extremes (near-white ~92, near-black ~22).
+const INK_MAX_SATURATION = 60;
+
+/** Pure HSL→display conversion shared by every real-source deriver. The CSS is a
+ *  native hsl() string so it matches the HSL exactly — feeding HSL hue degrees
+ *  into an oklch() string renders a completely different colour (the wheels don't
+ *  align: HSL 65° yellow ≈ OKLCH 110°, while OKLCH 65° is orange). Saturation is
+ *  muted toward ink; the input hue/lightness are preserved. */
 export function hueFromHSL(hue: number, saturation: number, lightness: number): Hue {
-  // Approximate HSL → OKLCH for the CSS string (close enough across our
-  // muted ink palette; we don't need a perceptually-perfect transform).
-  const oklchL = (lightness / 100).toFixed(2);
-  const oklchC = ((saturation / 100) * 0.22).toFixed(3);
+  const s = Math.min(saturation, INK_MAX_SATURATION);
   return {
-    rgb: hslToRgb(hue, saturation, lightness),
-    css: `oklch(${oklchL} ${oklchC} ${hue.toFixed(0)})`,
+    rgb: hslToRgb(hue, s, lightness),
+    css: `hsl(${hue.toFixed(0)} ${s}% ${lightness}%)`,
     hue,
   };
 }

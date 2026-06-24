@@ -17,12 +17,12 @@ import { ArcChart } from "@/components/quill/arc-chart";
 import {
   type CapturedHue,
   ColourSplash,
+  type CustomSwatch,
   capturedHueCss,
   colourCssOf,
   colourDropByKey,
   HUE_CAPTURE_MIME,
   NEUTRAL_INK_CSS,
-  SLOT_KEY,
   type SplashState,
 } from "@/components/quill/colour-drop";
 import { DiffActions, DiffText } from "@/components/quill/diff-view";
@@ -152,9 +152,10 @@ export default function QuillPage() {
   const [selectedColour, setSelectedColour] = useState<string | null>(null);
   const [brushSize, setBrushSize] = useState(3);
   const [animateOnRewrite, setAnimateOnRewrite] = useState(true);
-  // The one custom-hue slot: a hue extracted from a passage (right-click capture
-  // or a Hue-band drag) or mixed from the bases. Acts as a 7th swatch.
-  const [slot, setSlot] = useState<CapturedHue | null>(null);
+  // User-made swatches: hues extracted from a passage (right-click capture or a
+  // Hue-band drag) or mixed in the beaker. They sit in the grid beside the
+  // predefined pigments, draggable and tappable like any other.
+  const [customSwatches, setCustomSwatches] = useState<CustomSwatch[]>([]);
   // Pre-rewrite snapshots. Accepting a rewrite remounts the editor and wipes
   // TipTap's undo stack — this is the way back.
   const [versions, setVersions] = useState<DraftVersion[]>([]);
@@ -221,20 +222,20 @@ export default function QuillPage() {
   const composedTarget = useMemo(() => {
     const colourPhrase = !selectedColour
       ? undefined
-      : selectedColour === SLOT_KEY
-        ? slot?.phrase
-        : colourDropByKey(selectedColour)?.target;
+      : (colourDropByKey(selectedColour)?.target ??
+        customSwatches.find((w) => w.id === selectedColour)?.phrase);
     const words = widgetsToTarget(widgetSelection, target);
     return [colourPhrase, words].filter(Boolean).join("; ");
-  }, [selectedColour, slot, widgetSelection, target]);
+  }, [selectedColour, customSwatches, widgetSelection, target]);
 
-  // CSS for a swatch key (base or the slot), for the splash colour. Falls back
-  // to neutral ink when nothing resolves.
+  // CSS for a swatch key (predefined pigment or a custom swatch id), for the
+  // splash colour. Falls back to neutral ink when nothing resolves.
   const swatchCss = (key: string | null): string => {
     if (!key) return NEUTRAL_INK_CSS;
-    if (key === SLOT_KEY) return slot ? capturedHueCss(slot) : NEUTRAL_INK_CSS;
     const c = colourDropByKey(key);
-    return c ? colourCssOf(c) : NEUTRAL_INK_CSS;
+    if (c) return colourCssOf(c);
+    const w = customSwatches.find((w) => w.id === key);
+    return w ? capturedHueCss(w) : NEUTRAL_INK_CSS;
   };
   // Brush size (sentences) → window radius each side: 1→0, 3→1, 7→3.
   const brushRadius = Math.floor((brushSize - 1) / 2);
@@ -378,11 +379,23 @@ export default function QuillPage() {
   // Tap a swatch to fold its mood into the target (toggle on/off).
   const toggleColour = (key: string) => setSelectedColour((prev) => (prev === key ? null : key));
 
-  // Fill the hue slot from a capture (right-click or Hue-band drag) or a mix.
-  const captureHue = (hue: CapturedHue) => setSlot(hue);
+  // Add a new custom swatch from a capture (right-click / Hue-band drag) or a mix.
+  const addSwatch = (hue: CapturedHue) =>
+    setCustomSwatches((s) => [...s, { ...hue, id: crypto.randomUUID() }]);
 
-  // Drop a text selection into the slot — derive its hue, then capture it.
-  const captureHueFromText = (text: string) => {
+  // Replace an existing custom swatch's hue (a hue/text dropped onto it).
+  const replaceSwatch = (id: string, hue: CapturedHue) =>
+    setCustomSwatches((s) => s.map((w) => (w.id === id ? { ...w, ...hue } : w)));
+
+  // Remove a custom swatch; deselect it if it was the composed colour.
+  const removeSwatch = (id: string) => {
+    setCustomSwatches((s) => s.filter((w) => w.id !== id));
+    setSelectedColour((prev) => (prev === id ? null : prev));
+  };
+
+  // Drop a text selection into a swatch — derive its hue, then capture it into
+  // the given swatch (`targetId`) or, with none, a new one.
+  const captureHueFromText = (text: string, targetId?: string) => {
     const id = toast.loading("Reading the hue…");
     deriveTextColour(text)
       .then((c) => {
@@ -390,10 +403,12 @@ export default function QuillPage() {
           toast.error("Selection too short to read a hue", { id });
           return;
         }
-        captureHue({
+        const hue = {
           hsl: { hue: c.hue, saturation: c.saturation, lightness: c.lightness },
           phrase: c.justification,
-        });
+        };
+        if (targetId) replaceSwatch(targetId, hue);
+        else addSwatch(hue);
         toast.success(`Captured — ${c.justification}`, { id });
       })
       .catch(() => toast.error("Couldn't read the hue", { id }));
@@ -658,13 +673,13 @@ export default function QuillPage() {
   // form), always animated, span sized by the brush (or the selection, which the
   // editor lets win). The dropped swatch may be a base colour or the hue slot.
   const handleColourDrop = (detail: ColourDropDetail) => {
-    const resolved =
-      detail.colourKey === SLOT_KEY
-        ? slot && { phrase: slot.phrase, css: capturedHueCss(slot) }
-        : (() => {
-            const c = colourDropByKey(detail.colourKey);
-            return c ? { phrase: c.target, css: colourCssOf(c) } : null;
-          })();
+    const pigment = colourDropByKey(detail.colourKey);
+    const custom = customSwatches.find((w) => w.id === detail.colourKey);
+    const resolved = pigment
+      ? { phrase: pigment.target, css: colourCssOf(pigment) }
+      : custom
+        ? { phrase: custom.phrase, css: capturedHueCss(custom) }
+        : null;
     if (!resolved) return;
     runRewrite({
       text: detail.span.text,
@@ -815,7 +830,7 @@ export default function QuillPage() {
                   onChange={setDraft}
                   onDeriveHue={deriveTextColour}
                   onCaptureHue={(c) =>
-                    captureHue({
+                    addSwatch({
                       hsl: { hue: c.hue, saturation: c.saturation, lightness: c.lightness },
                       phrase: c.justification,
                     })
@@ -874,10 +889,11 @@ export default function QuillPage() {
             <RewritePanel
               selectedColour={selectedColour}
               onToggleColour={toggleColour}
-              slot={slot}
-              onCaptureHue={captureHue}
+              customSwatches={customSwatches}
+              onAddHue={addSwatch}
+              onReplaceHue={replaceSwatch}
+              onRemoveSwatch={removeSwatch}
               onCaptureText={captureHueFromText}
-              onClearSlot={() => setSlot(null)}
               brushSize={brushSize}
               onBrushChange={changeBrushSize}
               selection={widgetSelection}
@@ -1174,7 +1190,7 @@ function HueBand({
                 onFocus={() => enter(i, css ?? null)}
                 onBlur={leave}
                 onClick={() => onActivate?.(i)}
-                title="Jump to this paragraph — or drag its hue into the Rewrite slot"
+                title="Jump to this paragraph — or drag its hue onto a Rewrite swatch"
                 aria-label={
                   seg.colour
                     ? `Paragraph ${i + 1}: ${seg.colour.justification}. Jump to it.`

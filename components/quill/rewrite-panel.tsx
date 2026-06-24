@@ -1,16 +1,16 @@
 "use client";
 
-import { Brush, ChevronDown, FlaskConical, Loader2, Pipette, Sparkles, X } from "lucide-react";
-import { useState } from "react";
+import { Brush, Check, ChevronDown, Loader2, Plus, Sparkles, X } from "lucide-react";
+import { useMemo, useState } from "react";
 import {
+  ALL_PIGMENTS,
   blendHues,
   type CapturedHue,
-  COLOUR_DROPS,
+  type CustomSwatch,
   capturedHueCss,
   colourCssOf,
   HUE_CAPTURE_MIME,
   mixPhrase,
-  SLOT_KEY,
 } from "@/components/quill/colour-drop";
 import { COLOUR_DROP_MIME } from "@/components/quill/editor";
 import { TargetWidgets } from "@/components/quill/target-widgets";
@@ -41,20 +41,21 @@ function countWords(s: string): number {
 }
 
 /**
- * The fused rewrite widget. Three stacked parts: a collapsible colour area
- * (draggable mood swatches + brush size), a collapsible words area (style facets
- * + free-text brief), and a fixed footer (intensity, the animate toggle and the
- * rewrite button). Colour and words compose into one target — colour is optional.
- * Dragging a swatch onto the prose is the quick gesture; clicking one toggles it
- * into the composed target instead.
+ * The fused rewrite widget. Three stacked parts: a collapsible colour area (one
+ * pigment grid + the beaker that mixes new hues), a collapsible words area (style
+ * facets + free-text brief), and a fixed footer (intensity, the animate toggle
+ * and the rewrite button). Colour and words compose into one target — colour is
+ * optional. Dragging a swatch onto the prose is the quick gesture; clicking one
+ * toggles it into the composed target instead.
  */
 export function RewritePanel({
   selectedColour,
   onToggleColour,
-  slot,
-  onCaptureHue,
+  customSwatches,
+  onAddHue,
+  onReplaceHue,
+  onRemoveSwatch,
   onCaptureText,
-  onClearSlot,
   brushSize,
   onBrushChange,
   selection,
@@ -76,10 +77,11 @@ export function RewritePanel({
 }: {
   selectedColour: string | null;
   onToggleColour: (key: string) => void;
-  slot: CapturedHue | null;
-  onCaptureHue: (hue: CapturedHue) => void;
-  onCaptureText: (text: string) => void;
-  onClearSlot: () => void;
+  customSwatches: CustomSwatch[];
+  onAddHue: (hue: CapturedHue) => void;
+  onReplaceHue: (id: string, hue: CapturedHue) => void;
+  onRemoveSwatch: (id: string) => void;
+  onCaptureText: (text: string, targetId?: string) => void;
   brushSize: number;
   onBrushChange: (n: number) => void;
   selection: WidgetSelection;
@@ -102,6 +104,60 @@ export function RewritePanel({
   const [colourOpen, setColourOpen] = useState(true);
   const [wordsOpen, setWordsOpen] = useState(true);
 
+  // Mix mode: the beaker is open and grid taps add parts instead of toggling the
+  // target. `recipe` is parts keyed by pigment key / custom-swatch id; `pour`
+  // retriggers the falling-droplet animation (token bump) in the tapped colour.
+  const [mixOpen, setMixOpen] = useState(false);
+  const [recipe, setRecipe] = useState<Record<string, number>>({});
+  const [pour, setPour] = useState<{ token: number; css: string }>({ token: 0, css: "" });
+
+  // Every source you can pour a part of: the predefined pigments + your own
+  // swatches. Keyed uniformly so the recipe and blend treat them the same.
+  const mixSources = useMemo(
+    () => [
+      ...ALL_PIGMENTS.map((c) => ({ key: c.key, hsl: c.hsl, phrase: c.target, css: colourCssOf(c) })),
+      ...customSwatches.map((w) => ({
+        key: w.id,
+        hsl: w.hsl,
+        phrase: w.phrase,
+        css: capturedHueCss(w),
+      })),
+    ],
+    [customSwatches],
+  );
+
+  const addPart = (key: string) => {
+    const src = mixSources.find((s) => s.key === key);
+    if (!src) return;
+    setRecipe((r) => ({ ...r, [key]: (r[key] ?? 0) + 1 }));
+    setPour((p) => ({ token: p.token + 1, css: src.css }));
+  };
+  const removePart = (key: string) =>
+    setRecipe((r) => {
+      const n = (r[key] ?? 0) - 1;
+      const next = { ...r };
+      if (n <= 0) delete next[key];
+      else next[key] = n;
+      return next;
+    });
+
+  const mixEntries = mixSources.filter((s) => (recipe[s.key] ?? 0) > 0);
+  const blend = blendHues(mixEntries.map((s) => ({ hsl: s.hsl, weight: recipe[s.key] ?? 0 })));
+  const mixWords = mixPhrase(mixEntries.map((s) => ({ phrase: s.phrase, parts: recipe[s.key] ?? 0 })));
+  const totalParts = mixEntries.reduce((n, s) => n + (recipe[s.key] ?? 0), 0);
+  const blendCss = blend ? hueFromHSL(blend.hue, blend.saturation, blend.lightness).css : undefined;
+
+  const startMix = () => setMixOpen(true);
+  const closeMix = () => {
+    setRecipe({});
+    setMixOpen(false);
+  };
+  const acceptMix = () => {
+    if (blend) onAddHue({ hsl: blend, phrase: mixWords });
+    closeMix();
+  };
+  const onTap = (key: string) => (mixOpen ? addPart(key) : onToggleColour(key));
+
   const effectiveWordCount = selectionText ? countWords(selectionText) : wordCount;
   const canAsk = effectiveWordCount >= 3 && composedTarget.trim().length > 0 && !isPending;
   const buttonLabel = selectionText
@@ -113,35 +169,38 @@ export function RewritePanel({
   return (
     <Card>
       <CardContent className="flex flex-col gap-3 p-5">
-        {/* §1 — colour: the swatch strip stays visible even collapsed so it's
-            always draggable; collapsing only hides the brush row + helper. */}
+        {/* §1 — colour: one grid of pigments + your own swatches, and the beaker
+            that mixes new ones. Collapsing hides the brush row + helper only. */}
         <section className="flex flex-col gap-2">
           <SectionHeader
             label="Colour"
             open={colourOpen}
             onToggle={() => setColourOpen((v) => !v)}
           />
-          <div className="flex items-center justify-between gap-1">
-            {COLOUR_DROPS.map((c) => (
-              <Swatch
-                key={c.key}
-                css={colourCssOf(c)}
-                dragKey={c.key}
-                title={`${c.label} — ${c.target}. Drag onto a word, or tap to add to the target.`}
-                ariaLabel={`${c.label}: ${c.target}`}
-                active={selectedColour === c.key}
-                onToggle={() => onToggleColour(c.key)}
-              />
-            ))}
-            <HueSlot
-              slot={slot}
-              active={selectedColour === SLOT_KEY}
-              onToggle={() => onToggleColour(SLOT_KEY)}
-              onCapture={onCaptureHue}
-              onCaptureText={onCaptureText}
-              onClear={onClearSlot}
+          <SwatchGrid
+            customSwatches={customSwatches}
+            selectedColour={selectedColour}
+            mixOpen={mixOpen}
+            recipe={recipe}
+            onTap={onTap}
+            onRemovePart={removePart}
+            onStartMix={startMix}
+            onRemoveSwatch={onRemoveSwatch}
+            onReplaceHue={onReplaceHue}
+            onAddHue={onAddHue}
+            onCaptureText={onCaptureText}
+          />
+          {mixOpen && (
+            <Beaker
+              fillCss={blendCss}
+              totalParts={totalParts}
+              phrase={mixWords}
+              pour={pour}
+              canPour={!!blend}
+              onAccept={acceptMix}
+              onCancel={closeMix}
             />
-          </div>
+          )}
           {colourOpen && (
             <>
               <div className="flex items-center justify-between gap-2">
@@ -170,11 +229,10 @@ export function RewritePanel({
                   ))}
                 </div>
               </div>
-              <InkBeaker onPour={onCaptureHue} />
               <p className="text-[11px] italic leading-snug text-muted-foreground">
                 Drag a colour onto a word for an instant nudge, or tap one to fold its mood into the
-                target. The slot holds a hue you capture from your own prose — right-click a passage
-                → Capture, or drag a segment from the Hue band.
+                target. Press <Plus className="inline size-3" /> to mix a new hue — or drop a
+                selection (or a Hue-band segment) onto a swatch to capture one from your prose.
               </p>
             </>
           )}
@@ -304,24 +362,226 @@ function SectionHeader({
   );
 }
 
+/** The unified swatch grid — predefined pigments and the writer's own swatches
+ *  with no separation, then a + to mix a new one. Six per row. Out of mix mode a
+ *  tap folds the colour into the target; in mix mode a tap pours a part. */
+function SwatchGrid({
+  customSwatches,
+  selectedColour,
+  mixOpen,
+  recipe,
+  onTap,
+  onRemovePart,
+  onStartMix,
+  onRemoveSwatch,
+  onReplaceHue,
+  onAddHue,
+  onCaptureText,
+}: {
+  customSwatches: CustomSwatch[];
+  selectedColour: string | null;
+  mixOpen: boolean;
+  recipe: Record<string, number>;
+  onTap: (key: string) => void;
+  onRemovePart: (key: string) => void;
+  onStartMix: () => void;
+  onRemoveSwatch: (id: string) => void;
+  onReplaceHue: (id: string, hue: CapturedHue) => void;
+  onAddHue: (hue: CapturedHue) => void;
+  onCaptureText: (text: string, targetId?: string) => void;
+}) {
+  return (
+    <div className="grid grid-cols-6 gap-1.5">
+      {ALL_PIGMENTS.map((c) => (
+        <div key={c.key} className="flex items-center justify-center">
+          <Swatch
+            css={colourCssOf(c)}
+            dragKey={c.key}
+            title={`${c.label} — ${c.target}. Drag onto a word${
+              mixOpen ? ", or tap to add a part" : ", or tap to add to the target"
+            }.`}
+            ariaLabel={`${c.label}: ${c.target}`}
+            active={!mixOpen && selectedColour === c.key}
+            badge={mixOpen ? recipe[c.key] : undefined}
+            onToggle={() => onTap(c.key)}
+            onRemovePart={mixOpen ? () => onRemovePart(c.key) : undefined}
+          />
+        </div>
+      ))}
+      {customSwatches.map((w) => (
+        <CustomCell
+          key={w.id}
+          swatch={w}
+          selectedColour={selectedColour}
+          mixOpen={mixOpen}
+          recipe={recipe}
+          onTap={onTap}
+          onRemovePart={onRemovePart}
+          onRemoveSwatch={onRemoveSwatch}
+          onReplaceHue={onReplaceHue}
+          onCaptureText={onCaptureText}
+        />
+      ))}
+      <PlusCell
+        mixOpen={mixOpen}
+        onStartMix={onStartMix}
+        onAddHue={onAddHue}
+        onCaptureText={onCaptureText}
+      />
+    </div>
+  );
+}
+
+/** Shared drop handling for swatches that accept a captured hue — a precomputed
+ *  hue from the Hue band (JSON) or a raw text selection to derive one from. */
+function useHueDrop(onHue: (h: CapturedHue) => void, onText: (t: string) => void) {
+  const [over, setOver] = useState(false);
+  const onDragOver = (e: React.DragEvent) => {
+    const t = e.dataTransfer.types;
+    if (t.includes(HUE_CAPTURE_MIME) || t.includes("text/plain")) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy"; // copy, so a dragged editor selection isn't moved out
+      setOver(true);
+    }
+  };
+  const onDrop = (e: React.DragEvent) => {
+    setOver(false);
+    const raw = e.dataTransfer.getData(HUE_CAPTURE_MIME);
+    if (raw) {
+      e.preventDefault();
+      try {
+        onHue(JSON.parse(raw) as CapturedHue);
+      } catch {
+        // Ignore a malformed payload — nothing to capture.
+      }
+      return;
+    }
+    const text = e.dataTransfer.getData("text/plain").trim();
+    if (text) {
+      e.preventDefault();
+      onText(text);
+    }
+  };
+  return { over, handlers: { onDragOver, onDragLeave: () => setOver(false), onDrop } };
+}
+
+/** A custom swatch cell — a swatch with a remove button, that also accepts a hue
+ *  or text drop to replace its hue (the same capture gesture, per swatch). */
+function CustomCell({
+  swatch,
+  selectedColour,
+  mixOpen,
+  recipe,
+  onTap,
+  onRemovePart,
+  onRemoveSwatch,
+  onReplaceHue,
+  onCaptureText,
+}: {
+  swatch: CustomSwatch;
+  selectedColour: string | null;
+  mixOpen: boolean;
+  recipe: Record<string, number>;
+  onTap: (key: string) => void;
+  onRemovePart: (key: string) => void;
+  onRemoveSwatch: (id: string) => void;
+  onReplaceHue: (id: string, hue: CapturedHue) => void;
+  onCaptureText: (text: string, targetId?: string) => void;
+}) {
+  const { over, handlers } = useHueDrop(
+    (h) => onReplaceHue(swatch.id, h),
+    (t) => onCaptureText(t, swatch.id),
+  );
+  return (
+    <span
+      className={cn(
+        "group relative flex items-center justify-center rounded-full",
+        over && "ring-2 ring-ink-deep ring-offset-1 ring-offset-card",
+      )}
+      {...handlers}
+    >
+      <Swatch
+        css={capturedHueCss(swatch)}
+        dragKey={swatch.id}
+        title={`Your hue — ${swatch.phrase}. Drag onto a word${
+          mixOpen ? ", or tap to add a part" : ", or tap to add to the target"
+        }. Drop a selection here to replace it.`}
+        ariaLabel={`Custom hue: ${swatch.phrase}`}
+        active={!mixOpen && selectedColour === swatch.id}
+        badge={mixOpen ? recipe[swatch.id] : undefined}
+        onToggle={() => onTap(swatch.id)}
+        onRemovePart={mixOpen ? () => onRemovePart(swatch.id) : undefined}
+      />
+      {!mixOpen && (
+        <button
+          type="button"
+          aria-label="Remove this swatch"
+          onClick={() => onRemoveSwatch(swatch.id)}
+          className="absolute -right-0.5 -top-0.5 flex size-3.5 items-center justify-center rounded-full border border-border bg-card text-muted-foreground opacity-0 shadow-sm transition-opacity hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100"
+        >
+          <X className="size-2.5" />
+        </button>
+      )}
+    </span>
+  );
+}
+
+/** The + cell — tap to open the beaker (mix mode), or drop a hue / selection to
+ *  capture it straight into a new swatch. */
+function PlusCell({
+  mixOpen,
+  onStartMix,
+  onAddHue,
+  onCaptureText,
+}: {
+  mixOpen: boolean;
+  onStartMix: () => void;
+  onAddHue: (hue: CapturedHue) => void;
+  onCaptureText: (text: string, targetId?: string) => void;
+}) {
+  const { over, handlers } = useHueDrop(onAddHue, (t) => onCaptureText(t));
+  return (
+    <div className="flex items-center justify-center" {...handlers}>
+      <button
+        type="button"
+        aria-pressed={mixOpen}
+        onClick={onStartMix}
+        title="Mix a new hue — or drop a selection / Hue-band segment to capture one"
+        className={cn(
+          "flex size-9 items-center justify-center rounded-full border border-dashed transition-colors",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+          over || mixOpen
+            ? "border-ink-deep bg-ink-deep/10 text-ink-deep"
+            : "border-border text-muted-foreground hover:text-foreground",
+        )}
+      >
+        <Plus className="size-4" />
+      </button>
+    </div>
+  );
+}
+
 /** A mood swatch: draggable (the quick gesture) and clickable (toggle into the
- *  composed target). The two don't conflict — a click never starts a drag.
- *  Generic over base colours and the custom hue slot — both carry a css + a
- *  drag key + a phrase. */
+ *  composed target, or pour a part in mix mode). In mix mode a count badge shows
+ *  its parts and right-click removes one. */
 function Swatch({
   css,
   dragKey,
   title,
   ariaLabel,
   active,
+  badge,
   onToggle,
+  onRemovePart,
 }: {
   css: string;
   dragKey: string;
   title: string;
   ariaLabel: string;
   active: boolean;
+  badge?: number;
   onToggle: () => void;
+  onRemovePart?: () => void;
 }) {
   return (
     <button
@@ -333,209 +593,87 @@ function Swatch({
         e.dataTransfer.effectAllowed = "copy";
       }}
       onClick={onToggle}
+      onContextMenu={
+        onRemovePart
+          ? (e) => {
+              e.preventDefault();
+              onRemovePart();
+            }
+          : undefined
+      }
       title={title}
       aria-label={ariaLabel}
       className={cn(
-        "size-7 shrink-0 cursor-grab rounded-full border shadow-inner transition-transform",
+        "relative size-9 shrink-0 cursor-grab rounded-full border shadow-inner transition-transform",
         "hover:scale-110 active:cursor-grabbing",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
         active ? "border-ink-deep ring-2 ring-ink-deep/50" : "border-border",
       )}
       style={{ backgroundColor: css }}
-    />
-  );
-}
-
-/** The custom hue slot — one holder for an extracted or mixed hue. Empty, it's a
- *  drop target for a hue dragged from the band; filled, it's a swatch like any
- *  other (drag to apply, tap to fold into the target) with a clear button. */
-function HueSlot({
-  slot,
-  active,
-  onToggle,
-  onCapture,
-  onCaptureText,
-  onClear,
-}: {
-  slot: CapturedHue | null;
-  active: boolean;
-  onToggle: () => void;
-  onCapture: (hue: CapturedHue) => void;
-  onCaptureText: (text: string) => void;
-  onClear: () => void;
-}) {
-  const [over, setOver] = useState(false);
-
-  const onDragOver = (e: React.DragEvent) => {
-    const t = e.dataTransfer.types;
-    if (t.includes(HUE_CAPTURE_MIME) || t.includes("text/plain")) {
-      e.preventDefault();
-      e.dataTransfer.dropEffect = "copy"; // copy, so a dragged editor selection isn't moved out
-      setOver(true);
-    }
-  };
-  const onDrop = (e: React.DragEvent) => {
-    setOver(false);
-    // A precomputed hue from the band, or a raw text selection we derive a hue from.
-    const raw = e.dataTransfer.getData(HUE_CAPTURE_MIME);
-    if (raw) {
-      e.preventDefault();
-      try {
-        onCapture(JSON.parse(raw) as CapturedHue);
-      } catch {
-        // Ignore a malformed payload — nothing to capture.
-      }
-      return;
-    }
-    const text = e.dataTransfer.getData("text/plain").trim();
-    if (text) {
-      e.preventDefault();
-      onCaptureText(text);
-    }
-  };
-
-  if (!slot) {
-    return (
-      // biome-ignore lint/a11y/noStaticElementInteractions: pointer-only drop target; capture is also reachable via right-click → Capture hue
-      <div
-        onDragOver={onDragOver}
-        onDragLeave={() => setOver(false)}
-        onDrop={onDrop}
-        title="Drop a selection or a Hue-band segment here to capture its hue (or right-click text → Capture hue)"
-        className={cn(
-          "flex size-7 shrink-0 items-center justify-center rounded-full border border-dashed transition-colors",
-          over
-            ? "border-ink-deep bg-ink-deep/10 text-ink-deep"
-            : "border-border text-muted-foreground",
-        )}
-      >
-        <Pipette className="size-3.5" />
-      </div>
-    );
-  }
-
-  return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: wrapper only extends the drop zone; the swatch + clear button are the interactive controls
-    <span
-      className="relative inline-flex"
-      onDragOver={onDragOver}
-      onDragLeave={() => setOver(false)}
-      onDrop={onDrop}
     >
-      <Swatch
-        css={capturedHueCss(slot)}
-        dragKey={SLOT_KEY}
-        title={`Captured hue — ${slot.phrase}. Drag onto a word, or tap to add to the target.`}
-        ariaLabel={`Captured hue: ${slot.phrase}`}
-        active={active}
-        onToggle={onToggle}
-      />
-      <button
-        type="button"
-        aria-label="Clear captured hue"
-        onClick={onClear}
-        className="absolute -right-1 -top-1 flex size-3.5 items-center justify-center rounded-full border border-border bg-card text-muted-foreground shadow-sm hover:text-foreground"
-      >
-        <X className="size-2.5" />
-      </button>
-    </span>
+      {badge && badge > 0 ? (
+        <span className="absolute -right-1 -top-1 flex min-w-4 items-center justify-center rounded-full bg-ink-deep px-0.5 text-[9px] tabular-nums text-ink-paper">
+          {badge}
+        </span>
+      ) : null}
+    </button>
   );
 }
 
-/** The ink beaker — add "parts" of the base colours (click +1, right-click −1),
- *  see the blend + recipe live, and pour it into the hue slot as a mixed swatch.
- *  Reads like the analogy: "two parts calm (blue), one part crimson (love)." */
-function InkBeaker({ onPour }: { onPour: (hue: CapturedHue) => void }) {
-  const [open, setOpen] = useState(false);
-  const [recipe, setRecipe] = useState<Record<string, number>>({});
-
-  const change = (key: string, delta: number) =>
-    setRecipe((r) => {
-      const n = (r[key] ?? 0) + delta;
-      const next = { ...r };
-      if (n <= 0) delete next[key];
-      else next[key] = n;
-      return next;
-    });
-
-  const entries = COLOUR_DROPS.filter((c) => (recipe[c.key] ?? 0) > 0);
-  const blend = blendHues(entries.map((c) => ({ hsl: c.hsl, weight: recipe[c.key] ?? 0 })));
-  const phrase = mixPhrase(entries.map((c) => ({ phrase: c.target, parts: recipe[c.key] ?? 0 })));
-  const previewCss = blend
-    ? hueFromHSL(blend.hue, blend.saturation, blend.lightness).css
-    : undefined;
-
-  const pour = () => {
-    if (!blend) return;
-    onPour({ hsl: blend, phrase });
-    setRecipe({});
-    setOpen(false);
-  };
-
+/** The mixing beaker — ink falls in from the pigment grid above, the liquid
+ *  level rises with the parts and takes the running blend's colour, and the
+ *  recipe reads back as the target meaning. Accept pours it into a new swatch. */
+function Beaker({
+  fillCss,
+  totalParts,
+  phrase,
+  pour,
+  canPour,
+  onAccept,
+  onCancel,
+}: {
+  fillCss: string | undefined;
+  totalParts: number;
+  phrase: string;
+  pour: { token: number; css: string };
+  canPour: boolean;
+  onAccept: () => void;
+  onCancel: () => void;
+}) {
+  // Level rises ~16% a part, capped — a full beaker reads as a strong mix.
+  const level = Math.min(totalParts * 16, 100);
   return (
-    <div className="flex flex-col gap-2">
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-        className="inline-flex items-center gap-1 self-start text-[11px] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none"
-      >
-        <FlaskConical className="size-3.5" /> Mix a hue
-        <ChevronDown className={cn("size-3 transition-transform", open && "rotate-180")} />
-      </button>
-      {open && (
-        <div className="flex flex-col gap-2 rounded-md border border-border/60 p-2">
-          <div className="flex flex-wrap gap-1.5">
-            {COLOUR_DROPS.map((c) => (
-              <button
-                key={c.key}
-                type="button"
-                onClick={() => change(c.key, 1)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  change(c.key, -1);
-                }}
-                title={`${c.label} — click to add a part, right-click to remove`}
-                aria-label={`Add a part of ${c.label}`}
-                className="relative size-6 rounded-full border border-border shadow-inner transition-transform hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-                style={{ backgroundColor: colourCssOf(c) }}
-              >
-                {(recipe[c.key] ?? 0) > 0 && (
-                  <span className="absolute -right-1 -top-1 flex min-w-3.5 items-center justify-center rounded-full bg-ink-deep px-0.5 text-[9px] tabular-nums text-ink-paper">
-                    {recipe[c.key]}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-          {entries.length > 0 ? (
-            <>
-              <div className="flex items-center gap-2">
-                <span
-                  aria-hidden="true"
-                  className="size-6 shrink-0 rounded-full border border-border shadow-inner"
-                  style={{ backgroundColor: previewCss }}
-                />
-                <p className="flex-1 text-[11px] italic leading-snug text-muted-foreground">
-                  {phrase}
-                </p>
-              </div>
-              <div className="flex gap-1.5">
-                <Button size="sm" variant="outline" onClick={pour}>
-                  Pour into slot
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => setRecipe({})}>
-                  Clear
-                </Button>
-              </div>
-            </>
-          ) : (
-            <p className="text-[11px] italic leading-snug text-muted-foreground">
-              Tap colours to add parts — “two parts calm (blue), one part crimson (love)”.
-            </p>
-          )}
-        </div>
+    <div className="flex flex-col gap-2 rounded-md border border-border/60 p-3">
+      <div className="relative mx-auto h-20 w-16 overflow-hidden rounded-b-2xl rounded-t-sm border border-border bg-muted/30">
+        <div
+          className="absolute inset-x-0 bottom-0 transition-[height,background-color] duration-500 ease-out"
+          style={{ height: `${level}%`, backgroundColor: fillCss }}
+        />
+        {pour.token > 0 && (
+          <span
+            key={pour.token}
+            aria-hidden="true"
+            className="inklings-ink-pour absolute left-1/2 top-1 size-3 -translate-x-1/2 rounded-full"
+            style={{ backgroundColor: pour.css }}
+          />
+        )}
+      </div>
+      {totalParts > 0 ? (
+        <p className="text-[11px] italic leading-snug text-muted-foreground">{phrase}</p>
+      ) : (
+        <p className="text-[11px] italic leading-snug text-muted-foreground">
+          Tap colours above — each one falls a part into the beaker. Right-click a colour to take a
+          part back.
+        </p>
       )}
+      <div className="flex gap-1.5">
+        <Button size="sm" variant="outline" onClick={onAccept} disabled={!canPour}>
+          <Check className="size-4" /> Pour into a swatch
+        </Button>
+        <Button size="sm" variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
     </div>
   );
 }

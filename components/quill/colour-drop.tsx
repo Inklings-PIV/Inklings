@@ -17,47 +17,93 @@ export type ColourDrop = {
   hsl: { hue: number; saturation: number; lightness: number };
 };
 
+// The chromatic ring — eight pigments spaced around the hue wheel, aligned to
+// the synaesthetic bands the LLM deriver uses (warm 0–60/330–360, green/nature
+// 60–180, cool 180–270, purple 270–330) and grounded in German colour
+// associations (Eva Heller, "Wie Farben wirken"). Evenly spaced so any hue
+// between two neighbours — yellow included — is reachable by mixing them.
 export const COLOUR_DROPS: ColourDrop[] = [
   {
     key: "crimson",
     label: "Crimson",
     target: "passionate, urgent",
-    hsl: { hue: 350, saturation: 75, lightness: 50 },
+    hsl: { hue: 4, saturation: 75, lightness: 52 },
+  },
+  {
+    key: "orange",
+    label: "Orange",
+    target: "warm, sociable",
+    hsl: { hue: 30, saturation: 80, lightness: 55 },
+  },
+  {
+    key: "amber",
+    label: "Amber",
+    // Heller's most ambivalent colour: optimism, but also envy. Kept honest.
+    target: "bright, optimistic",
+    hsl: { hue: 48, saturation: 82, lightness: 58 },
+  },
+  {
+    key: "green",
+    label: "Green",
+    target: "hopeful, fresh",
+    hsl: { hue: 130, saturation: 55, lightness: 47 },
+  },
+  {
+    key: "teal",
+    label: "Teal",
+    target: "clear, serene",
+    hsl: { hue: 185, saturation: 55, lightness: 46 },
   },
   {
     key: "blue",
     label: "Blue",
     target: "calm, melancholy",
-    hsl: { hue: 215, saturation: 70, lightness: 52 },
-  },
-  {
-    key: "gold",
-    label: "Gold",
-    target: "warm, nostalgic",
-    hsl: { hue: 42, saturation: 85, lightness: 55 },
+    hsl: { hue: 220, saturation: 70, lightness: 52 },
   },
   {
     key: "violet",
     label: "Violet",
     target: "dreamlike, lyrical",
-    hsl: { hue: 275, saturation: 60, lightness: 58 },
+    hsl: { hue: 275, saturation: 55, lightness: 56 },
   },
   {
-    key: "green",
-    label: "Green",
-    target: "fresh, vivid",
-    hsl: { hue: 140, saturation: 55, lightness: 45 },
+    key: "pink",
+    label: "Pink",
+    target: "tender, intimate",
+    hsl: { hue: 330, saturation: 68, lightness: 60 },
+  },
+];
+
+// The achromatic agents — not hues but the weight axis in paint form: shade with
+// black (denser, graver), tint with white (lighter, airier), grey their midpoint.
+// ponytail: locked palette data; the mixer consumes these as tint/shade in #3.
+export const ACHROMATIC_DROPS: ColourDrop[] = [
+  {
+    key: "white",
+    label: "White",
+    target: "spare, unadorned",
+    hsl: { hue: 60, saturation: 6, lightness: 92 },
   },
   {
     key: "grey",
     label: "Grey",
     target: "restrained, plain",
-    hsl: { hue: 220, saturation: 8, lightness: 55 },
+    hsl: { hue: 220, saturation: 6, lightness: 60 },
+  },
+  {
+    key: "black",
+    label: "Black",
+    target: "grave, severe",
+    hsl: { hue: 260, saturation: 10, lightness: 22 },
   },
 ];
 
+/** Every predefined pigment — the chromatic ring plus the achromatic agents.
+ *  The source for the swatch grid and for mixing. */
+export const ALL_PIGMENTS: ColourDrop[] = [...COLOUR_DROPS, ...ACHROMATIC_DROPS];
+
 export function colourDropByKey(key: string): ColourDrop | undefined {
-  return COLOUR_DROPS.find((c) => c.key === key);
+  return ALL_PIGMENTS.find((c) => c.key === key);
 }
 
 /** CSS for a swatch's colour. */
@@ -70,14 +116,12 @@ export function colourCssOf(c: ColourDrop): string {
 export const NEUTRAL_INK_CSS = hueFromHSL(220, 12, 60).css;
 
 // ---------------------------------------------------------------------------
-// Captured / mixed hues — the custom swatch that lives in the "hue slot". A hue
-// extracted from a passage or mixed from the base colours becomes a swatch like
-// any other: an HSL for display + a phrase for what it means to a rewrite.
+// Captured / mixed hues — the writer's own swatches. A hue extracted from a
+// passage or mixed in the beaker becomes a swatch like any other: an HSL for
+// display + a phrase for what it means to a rewrite.
 // ---------------------------------------------------------------------------
 
-/** Drag key the slot swatch carries (vs a base colour's own key). */
-export const SLOT_KEY = "__slot__";
-/** Mime for dragging a paragraph's hue (from the hue band) into the slot. */
+/** Mime for dragging a paragraph's hue (from the hue band) into a swatch. */
 export const HUE_CAPTURE_MIME = "application/x-inklings-hue";
 
 export type CapturedHue = {
@@ -86,11 +130,19 @@ export type CapturedHue = {
   phrase: string;
 };
 
+/** A user-made swatch — a captured or mixed hue, kept in the grid alongside the
+ *  predefined pigments. Its `id` doubles as its drag key and selection key. */
+export type CustomSwatch = CapturedHue & { id: string };
+
 export function capturedHueCss(h: CapturedHue): string {
   return hueFromHSL(h.hsl.hue, h.hsl.saturation, h.hsl.lightness).css;
 }
 
-/** Weighted blend of HSL colours — hue by circular mean, sat/lightness linear. */
+/** Weighted blend of HSL colours. Sat/lightness average linearly, but the hue
+ *  circular mean is weighted by *saturation* too — an achromatic agent (white,
+ *  grey, black: ~0 saturation) carries no real hue, so it must lighten/desaturate
+ *  the blend without dragging its direction. (Without this, green + white pulls
+ *  toward white's nominal 60° and the result reads beige, not pastel green.) */
 export function blendHues(
   parts: { hsl: { hue: number; saturation: number; lightness: number }; weight: number }[],
 ): { hue: number; saturation: number; lightness: number } | null {
@@ -101,14 +153,17 @@ export function blendHues(
   let w = 0;
   for (const p of parts) {
     const r = (p.hsl.hue * Math.PI) / 180;
-    x += Math.cos(r) * p.weight;
-    y += Math.sin(r) * p.weight;
+    const hueWeight = p.weight * p.hsl.saturation;
+    x += Math.cos(r) * hueWeight;
+    y += Math.sin(r) * hueWeight;
     s += p.hsl.saturation * p.weight;
     l += p.hsl.lightness * p.weight;
     w += p.weight;
   }
   if (w === 0) return null;
   return {
+    // x===y===0 only when every part is fully achromatic — the hue is then
+    // meaningless (the blend is a grey), so atan2's 0° fallback is fine.
     hue: ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360,
     saturation: s / w,
     lightness: l / w,

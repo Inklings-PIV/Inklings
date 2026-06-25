@@ -115,7 +115,12 @@ export function RewritePanel({
   // swatches. Keyed uniformly so the recipe and blend treat them the same.
   const mixSources = useMemo(
     () => [
-      ...ALL_PIGMENTS.map((c) => ({ key: c.key, hsl: c.hsl, phrase: c.target, css: colourCssOf(c) })),
+      ...ALL_PIGMENTS.map((c) => ({
+        key: c.key,
+        hsl: c.hsl,
+        phrase: c.target,
+        css: colourCssOf(c),
+      })),
       ...customSwatches.map((w) => ({
         key: w.id,
         hsl: w.hsl,
@@ -143,7 +148,9 @@ export function RewritePanel({
 
   const mixEntries = mixSources.filter((s) => (recipe[s.key] ?? 0) > 0);
   const blend = blendHues(mixEntries.map((s) => ({ hsl: s.hsl, weight: recipe[s.key] ?? 0 })));
-  const mixWords = mixPhrase(mixEntries.map((s) => ({ phrase: s.phrase, parts: recipe[s.key] ?? 0 })));
+  const mixWords = mixPhrase(
+    mixEntries.map((s) => ({ phrase: s.phrase, parts: recipe[s.key] ?? 0 })),
+  );
   const totalParts = mixEntries.reduce((n, s) => n + (recipe[s.key] ?? 0), 0);
   const blendCss = blend ? hueFromHSL(blend.hue, blend.saturation, blend.lightness).css : undefined;
 

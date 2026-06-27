@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitParagraphs } from "@/lib/quill/paragraphs";
+import { assembleParagraphHues, splitParagraphs } from "@/lib/quill/paragraphs";
 
 describe("splitParagraphs", () => {
   it("splits multiple <p> blocks into ordered texts", () => {
@@ -33,5 +33,26 @@ describe("splitParagraphs", () => {
 
   it("returns an empty list for empty input", () => {
     expect(splitParagraphs("")).toEqual([]);
+  });
+});
+
+describe("assembleParagraphHues", () => {
+  const long = "one two three four five six seven eight"; // 8 words → qualifies
+  const short = "too short"; // 2 words → null
+
+  it("maps derived hues onto long paragraphs, nulls the short ones, in order", () => {
+    expect(assembleParagraphHues([long, short, long], ["a", "b"], 8)).toEqual(["a", null, "b"]);
+  });
+
+  it("ignores surplus derived hues", () => {
+    expect(assembleParagraphHues([long], ["a", "b", "c"], 8)).toEqual(["a"]);
+  });
+
+  it("pads with null when the model returns too few", () => {
+    expect(assembleParagraphHues([long, long], ["a"], 8)).toEqual(["a", null]);
+  });
+
+  it("returns all nulls when no paragraph is long enough", () => {
+    expect(assembleParagraphHues([short, short], [], 8)).toEqual([null, null]);
   });
 });

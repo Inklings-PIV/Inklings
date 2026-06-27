@@ -28,3 +28,23 @@ export function splitParagraphs(html: string): string[] {
     .map((chunk) => stripTags(chunk).trim())
     .filter((chunk) => chunk.length > 0);
 }
+
+function countWords(s: string): number {
+  return s.split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * Map hues derived only for the long-enough paragraphs back onto the full
+ * paragraph list: a paragraph with >= `minWords` takes the next derived hue (in
+ * order), a shorter one becomes null ("too short to read"). Defensive against a
+ * mis-counted model response — surplus hues are ignored, a shortfall pads null.
+ * Generic over the hue type so this file stays dependency-free.
+ */
+export function assembleParagraphHues<T>(
+  paragraphs: string[],
+  derived: (T | null)[],
+  minWords: number,
+): (T | null)[] {
+  let next = 0;
+  return paragraphs.map((p) => (countWords(p) >= minWords ? (derived[next++] ?? null) : null));
+}

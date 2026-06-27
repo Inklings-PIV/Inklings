@@ -12,7 +12,7 @@ import type { TargetRewrite } from "@/lib/quill/diff";
 import { type HueSegment, tileInfluences } from "@/lib/quill/explain";
 import { fingerprintDistance } from "@/lib/quill/fingerprint";
 import { clampForModel, MAX_BAND_PARAGRAPHS } from "@/lib/quill/limits";
-import { splitParagraphs } from "@/lib/quill/paragraphs";
+import { assembleParagraphHues, splitParagraphs } from "@/lib/quill/paragraphs";
 import { type ClassicalFeatures, extractClassical } from "@/lib/stylometry/classical";
 import { paragraphValences } from "@/lib/stylometry/valence";
 
@@ -137,17 +137,49 @@ export async function explainHue(rawText: string): Promise<HueSegment[] | null> 
   return tileInfluences(clamped, object.influences);
 }
 
+const DraftHuesSchema = z.object({
+  overall: ResponseSchema,
+  paragraphs: z.array(ResponseSchema),
+});
+
+const DRAFT_HUES_SYSTEM_PROMPT = `${SYSTEM_PROMPT}
+
+You are given the full draft, then a numbered list of its longer paragraphs. Return:
+- "overall": one HSL + justification for the whole draft's feel.
+- "paragraphs": an array with exactly one HSL + justification per numbered paragraph, in the same order. If the list is empty, return [].`;
+
+export type DraftHues = { overall: TextColour; paragraphs: (TextColour | null)[] };
+
 /**
- * Per-paragraph hues for the EmoArc band (B5). Derives a colour for each
- * paragraph in parallel so the writer sees the stylistic arc across the text,
- * not just one global swatch. Paragraphs too short to read return null (the
- * band renders them neutral). Callers pass only the paragraphs they don't
- * already have cached, so a typing burst re-derives at most the edited block.
+ * The whole draft's hue *and* a hue per paragraph, in one model call — the
+ * Readout swatch (B5) and the EmoArc band derived together instead of as two
+ * separate round-trips. Only paragraphs long enough to read ({@link MIN_WORDS}+
+ * words) are sent to the model; {@link assembleParagraphHues} maps the results
+ * back over the full paragraph list, nulling the short ones (the band paints
+ * those neutral). Returns null when the draft as a whole is too short.
  */
-export async function deriveParagraphHues(paragraphs: string[]): Promise<(TextColour | null)[]> {
-  // Cap the fan-out so a very long draft can't trigger an unbounded burst of
-  // model calls; paragraphs past the limit stay neutral in the band.
-  return Promise.all(paragraphs.slice(0, MAX_BAND_PARAGRAPHS).map((p) => deriveTextColour(p)));
+export async function deriveDraftHues(rawText: string): Promise<DraftHues | null> {
+  const text = stripHtml(rawText).trim();
+  if (countWords(text) < MIN_WORDS) return null;
+
+  // Cap the fan-out so a very long draft can't bloat one request; paragraphs
+  // past the limit stay neutral in the band.
+  const paras = splitParagraphs(rawText).slice(0, MAX_BAND_PARAGRAPHS);
+  const qualifying = paras.filter((p) => countWords(p) >= MIN_WORDS);
+  const numbered = qualifying.map((p, i) => `${i + 1}. ${p}`).join("\n\n");
+
+  const { object } = await generateObject({
+    model: anthropic("claude-sonnet-4-6"),
+    schema: DraftHuesSchema,
+    system: DRAFT_HUES_SYSTEM_PROMPT,
+    prompt: `Full text:\n${clampForModel(text)}\n\nParagraphs to colour individually:\n${numbered || "(none)"}`,
+    maxRetries: 2,
+  });
+
+  return {
+    overall: object.overall,
+    paragraphs: assembleParagraphHues(paras, object.paragraphs, MIN_WORDS),
+  };
 }
 
 export type DraftArc = {

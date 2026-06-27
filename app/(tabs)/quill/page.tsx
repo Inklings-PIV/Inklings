@@ -62,8 +62,8 @@ import {
   type DraftArc,
   deleteCloudDraft,
   deriveDraftArc,
+  deriveDraftHues,
   deriveDraftStylometry,
-  deriveParagraphHues,
   deriveTargetColour,
   deriveTextColour,
   explainHue,
@@ -194,10 +194,8 @@ export default function QuillPage() {
   const bandActive = panelVisible("band");
   const targetActive = panelVisible("target");
 
-  // EmoArc hue band (B5). Cache hues by paragraph text so a typing burst only
-  // re-derives the block that actually changed; the band shows the arc across
-  // the whole draft in Readout mode.
-  const hueCacheRef = useRef<Record<string, TextColour | null>>({});
+  // EmoArc hue band (B5) — one hue per paragraph, derived alongside the global
+  // readout in a single call (see the hue effect below), not a second round-trip.
   const [band, setBand] = useState<BandSegment[]>([]);
   // EmoArc band → editor link (#1). Hovering a band segment highlights its
   // paragraph in the editor (tinted in that segment's own hue); clicking one
@@ -435,11 +433,13 @@ export default function QuillPage() {
       .catch(() => toast.error("Couldn't read the hue", { id }));
   };
 
-  // Debounced readout — 700 ms after the last keystroke we ask Claude for the
-  // current hue. Latest call wins; in-flight ones are ignored when stale.
+  // Debounced hue derivation — 700 ms after the last keystroke we ask Claude for
+  // the whole-draft hue (the Readout) AND a hue per paragraph (the EmoArc band)
+  // in a single call. Latest call wins; in-flight ones are ignored when stale.
   useEffect(() => {
     if (!hasDraftText) {
       setReadout(null);
+      setBand([]);
       return;
     }
 
@@ -447,10 +447,21 @@ export default function QuillPage() {
     const handle = setTimeout(() => {
       startReadout(async () => {
         try {
-          const result = await deriveTextColour(draft);
-          if (!cancelled) setReadout(result);
+          const result = await deriveDraftHues(draft);
+          if (cancelled) return;
+          setReadout(result?.overall ?? null);
+          const paras = splitParagraphs(draft);
+          setBand(
+            result
+              ? paras.map((p, i) => ({
+                  id: `${i}:${p.slice(0, 16)}`,
+                  text: p,
+                  colour: result.paragraphs[i] ?? null,
+                }))
+              : [],
+          );
         } catch {
-          // Transient model/network error — keep the last hue rather than crash.
+          // Transient model/network error — keep the last hues rather than crash.
         }
       });
     }, 700);
@@ -534,49 +545,6 @@ export default function QuillPage() {
       clearTimeout(handle);
     };
   }, [draft]);
-
-  // Debounced EmoArc band — 800 ms after the last keystroke, derive a hue per
-  // paragraph (only the uncached ones) and lay them out as an arc. Single-
-  // paragraph drafts fall back to the global swatch, so we only build a band
-  // once there are at least two blocks to compare.
-  useEffect(() => {
-    if (!bandActive) return;
-    let cancelled = false;
-    const handle = setTimeout(async () => {
-      const paras = splitParagraphs(draft);
-      if (paras.length < 2) {
-        if (!cancelled) setBand([]);
-        return;
-      }
-      const cache = hueCacheRef.current;
-      const missing = paras.filter((p) => !(p in cache));
-      if (missing.length > 0) {
-        try {
-          const hues = await deriveParagraphHues(missing);
-          missing.forEach((p, i) => {
-            cache[p] = hues[i] ?? null;
-          });
-        } catch {
-          // Band derivation failed — render what's cached, skip the rest.
-        }
-      }
-      if (cancelled) return;
-      // Prune the cache to the paragraphs currently on screen so it can't grow
-      // without bound over a long editing session.
-      hueCacheRef.current = Object.fromEntries(paras.map((p) => [p, cache[p] ?? null]));
-      setBand(
-        paras.map((p, i) => ({
-          id: `${i}:${p.slice(0, 16)}`,
-          text: p,
-          colour: hueCacheRef.current[p] ?? null,
-        })),
-      );
-    }, 800);
-    return () => {
-      cancelled = true;
-      clearTimeout(handle);
-    };
-  }, [draft, bandActive]);
 
   // Clear the EmoArc highlight whenever the band isn't on screen (mode switch,
   // or the draft dropped below two paragraphs) — the band's own mouse-leave

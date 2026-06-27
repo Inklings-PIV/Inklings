@@ -6,13 +6,12 @@
 export type Zone = "left" | "right";
 export type PanelItem = { key: string; zone: Zone; collapsed?: boolean };
 
-// Every widget that can live in a sidebar, in add-menu order. `band` is a member
-// but renders in the editor column (not a draggable card) until the #3 merge
-// folds it into the hue widget — it has no node in the zone render.
+// Every widget that can live in a sidebar, in add-menu order. The EmoArc hue
+// band is folded into the hue widget (not its own entry) — the hue card shows
+// the global swatch and the per-paragraph arc together.
 export const PANEL_CATALOGUE = [
   { key: "hue", label: "Hue readout" },
   { key: "fingerprint", label: "Style fingerprint" },
-  { key: "band", label: "Hue band" },
   { key: "arc", label: "Story shape" },
   { key: "neighbours", label: "Nearest authors" },
   { key: "version", label: "Versions" },
@@ -28,7 +27,7 @@ export const PANEL_LABELS: Record<string, string> = Object.fromEntries(
 // mode). Everything seeds into the right zone; drag to the left as desired.
 export const PRESET_SEEDS = {
   essentials: ["hue", "save"],
-  analyse: ["hue", "fingerprint", "band", "arc", "neighbours"],
+  analyse: ["hue", "fingerprint", "arc", "neighbours"],
   rewrite: ["target", "version"],
 } as const satisfies Record<string, readonly string[]>;
 

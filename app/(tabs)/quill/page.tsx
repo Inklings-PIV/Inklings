@@ -191,7 +191,6 @@ export default function QuillPage() {
 
   // Panel visibility — a panel is visible iff it's in the layout.
   const panelVisible = (key: string): boolean => layout.some((p) => p.key === key);
-  const bandActive = panelVisible("band");
   const targetActive = panelVisible("target");
 
   // EmoArc hue band (B5) — one hue per paragraph, derived alongside the global
@@ -546,10 +545,11 @@ export default function QuillPage() {
     };
   }, [draft]);
 
-  // Clear the EmoArc highlight whenever the band isn't on screen (mode switch,
-  // or the draft dropped below two paragraphs) — the band's own mouse-leave
-  // can't fire once it has unmounted, so a stale highlight would otherwise stick.
-  const bandVisible = bandActive && band.length >= 2;
+  // The EmoArc strip lives inside the Hue card, so it's on screen only when that
+  // card is present and the draft has at least two paragraphs to compare. Clear
+  // any highlight when it isn't — the strip's own mouse-leave can't fire once it
+  // has unmounted, so a stale highlight would otherwise stick.
+  const bandVisible = panelVisible("hue") && band.length >= 2;
   useEffect(() => {
     if (!bandVisible) setHighlight(null);
   }, [bandVisible]);
@@ -727,8 +727,9 @@ export default function QuillPage() {
   };
 
   // Rendered node per sidebar widget. A null node (no data yet) means the zone
-  // skips that frame until it has something to show. `band` has no node — it
-  // lives in the editor column until the #3 merge folds it into the hue widget.
+  // skips that frame until it has something to show. The EmoArc strip is folded
+  // into the hue node (no separate `band` widget); it appears once the draft has
+  // two-plus paragraphs.
   const panelNodes: Record<string, ReactNode> = {
     hue: (
       <HueReadout
@@ -739,6 +740,10 @@ export default function QuillPage() {
         isPending={isPending}
         explain={explain}
         onToggleExplain={() => setExplain((v) => !v)}
+        band={band}
+        showBand={bandVisible}
+        onBandHover={(index, tint) => setHighlight(index == null ? null : { index, tint })}
+        onBandActivate={(index) => editorRef.current?.focusBlock(index)}
       />
     ),
     fingerprint: fingerprint ? <StyleFingerprint metrics={fingerprint} /> : null,
@@ -821,13 +826,6 @@ export default function QuillPage() {
         {/* Editor is first in the DOM so it sits on top when the grid collapses
             to one column on small screens; col-start re-seats it centre ≥lg. */}
         <div className="flex flex-col gap-4 lg:col-start-2 lg:row-start-1">
-          {bandVisible && (
-            <HueBand
-              segments={band}
-              onHover={(index, tint) => setHighlight(index == null ? null : { index, tint })}
-              onActivate={(index) => editorRef.current?.focusBlock(index)}
-            />
-          )}
           <Card className="relative overflow-hidden bg-card/60">
             <div
               aria-hidden="true"
@@ -1238,6 +1236,10 @@ function HueReadout({
   isPending,
   explain,
   onToggleExplain,
+  band,
+  showBand,
+  onBandHover,
+  onBandActivate,
 }: {
   targetActive: boolean;
   hasText: boolean;
@@ -1246,6 +1248,13 @@ function HueReadout({
   isPending: boolean;
   explain: boolean;
   onToggleExplain: () => void;
+  band: BandSegment[];
+  /** Whether the per-paragraph EmoArc strip has something to show (2+ paragraphs). */
+  showBand: boolean;
+  /** Hovered/focused strip segment + its hue (null on leave) — drives the editor highlight. */
+  onBandHover?: (index: number | null, tint: string | null) => void;
+  /** Clicked strip segment — jumps the editor to that paragraph. */
+  onBandActivate?: (index: number) => void;
 }) {
   const swatchCss = readout
     ? hueFromHSL(readout.hue, readout.saturation, readout.lightness).css
@@ -1281,6 +1290,11 @@ function HueReadout({
             {wordCount} {wordCount === 1 ? "word" : "words"}
           </p>
         )}
+        {showBand && (
+          <div className="border-t border-border/60 pt-3">
+            <HueArcStrip segments={band} onHover={onBandHover} onActivate={onBandActivate} />
+          </div>
+        )}
         {readout && (
           <button
             type="button"
@@ -1304,13 +1318,14 @@ function HueReadout({
 }
 
 /**
- * The EmoArc hue band — a horizontal arc of one hue per paragraph, so the
+ * The EmoArc hue strip — one hue per paragraph, folded into the Hue card so the
  * writer sees how the stylistic temperature rises and falls across the whole
  * draft, not just its average (Amin's "Interactive Emotion Graph"). Hovering a
- * segment dims the rest and surfaces that paragraph's reading below — the band
- * is an index into the text, not just decoration.
+ * segment dims the rest and surfaces that paragraph's reading below; a segment
+ * can be dragged onto a Rewrite swatch to capture its hue. The strip is an index
+ * into the text, not just decoration. Card-less — its host (the Hue card) frames it.
  */
-function HueBand({
+function HueArcStrip({
   segments,
   onHover,
   onActivate,
@@ -1335,68 +1350,68 @@ function HueBand({
   };
 
   return (
-    <Card className="bg-card/60">
-      <CardContent className="flex flex-col gap-2 p-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">Hue band</h2>
-          <span className="text-[11px] tabular-nums text-muted-foreground">
-            {segments.length} paragraphs
-          </span>
-        </div>
-        <div className="flex h-9 gap-0.5">
-          {segments.map((seg, i) => {
-            const css = seg.colour
-              ? hueFromHSL(seg.colour.hue, seg.colour.saturation, seg.colour.lightness).css
-              : undefined;
-            return (
-              <button
-                type="button"
-                key={seg.id}
-                draggable={!!seg.colour}
-                onDragStart={(e) => {
-                  if (!seg.colour) return;
-                  const hue: CapturedHue = {
-                    hsl: {
-                      hue: seg.colour.hue,
-                      saturation: seg.colour.saturation,
-                      lightness: seg.colour.lightness,
-                    },
-                    phrase: seg.colour.justification,
-                  };
-                  e.dataTransfer.setData(HUE_CAPTURE_MIME, JSON.stringify(hue));
-                  e.dataTransfer.effectAllowed = "copy";
-                }}
-                onMouseEnter={() => enter(i, css ?? null)}
-                onMouseLeave={leave}
-                onFocus={() => enter(i, css ?? null)}
-                onBlur={leave}
-                onClick={() => onActivate?.(i)}
-                title="Jump to this paragraph — or drag its hue onto a Rewrite swatch"
-                aria-label={
-                  seg.colour
-                    ? `Paragraph ${i + 1}: ${seg.colour.justification}. Jump to it.`
-                    : `Paragraph ${i + 1}: too short to read. Jump to it.`
-                }
-                className={cn(
-                  "h-full flex-1 rounded-[2px] transition-all duration-200 ease-out",
-                  "first:rounded-l-md last:rounded-r-md focus-visible:outline-none",
-                  hovered === i && "z-10 ring-2 ring-ink-deep/25",
-                  hovered != null && hovered !== i && "opacity-40",
-                )}
-                style={{ backgroundColor: css ?? "var(--muted)" }}
-              />
-            );
-          })}
-        </div>
-        <p className="min-h-4 text-[11px] italic leading-snug text-muted-foreground transition-opacity duration-200">
-          {active
-            ? active.colour
-              ? `"${truncate(active.text)}" — ${active.colour.justification}`
-              : `"${truncate(active.text)}" — too short to read`
-            : "Hover the arc to read each paragraph’s hue."}
-        </p>
-      </CardContent>
-    </Card>
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
+          across paragraphs
+        </h2>
+        <span className="text-[11px] tabular-nums text-muted-foreground">
+          {segments.length} paragraphs
+        </span>
+      </div>
+      <div className="flex h-9 gap-0.5">
+        {segments.map((seg, i) => {
+          const css = seg.colour
+            ? hueFromHSL(seg.colour.hue, seg.colour.saturation, seg.colour.lightness).css
+            : undefined;
+          return (
+            <button
+              type="button"
+              key={seg.id}
+              draggable={!!seg.colour}
+              onDragStart={(e) => {
+                if (!seg.colour) return;
+                const hue: CapturedHue = {
+                  hsl: {
+                    hue: seg.colour.hue,
+                    saturation: seg.colour.saturation,
+                    lightness: seg.colour.lightness,
+                  },
+                  phrase: seg.colour.justification,
+                };
+                e.dataTransfer.setData(HUE_CAPTURE_MIME, JSON.stringify(hue));
+                e.dataTransfer.effectAllowed = "copy";
+              }}
+              onMouseEnter={() => enter(i, css ?? null)}
+              onMouseLeave={leave}
+              onFocus={() => enter(i, css ?? null)}
+              onBlur={leave}
+              onClick={() => onActivate?.(i)}
+              title="Jump to this paragraph — or drag its hue onto a Rewrite swatch"
+              aria-label={
+                seg.colour
+                  ? `Paragraph ${i + 1}: ${seg.colour.justification}. Jump to it.`
+                  : `Paragraph ${i + 1}: too short to read. Jump to it.`
+              }
+              className={cn(
+                "h-full flex-1 rounded-[2px] transition-all duration-200 ease-out",
+                "first:rounded-l-md last:rounded-r-md focus-visible:outline-none",
+                hovered === i && "z-10 ring-2 ring-ink-deep/25",
+                hovered != null && hovered !== i && "opacity-40",
+              )}
+              style={{ backgroundColor: css ?? "var(--muted)" }}
+            />
+          );
+        })}
+      </div>
+      <p className="min-h-4 text-[11px] italic leading-snug text-muted-foreground transition-opacity duration-200">
+        {active
+          ? active.colour
+            ? `"${truncate(active.text)}" — ${active.colour.justification}`
+            : `"${truncate(active.text)}" — too short to read`
+          : "Hover the arc to read each paragraph’s hue."}
+      </p>
+    </div>
   );
 }
 

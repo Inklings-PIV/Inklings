@@ -36,7 +36,7 @@ describe("seedLayout", () => {
   it("seeds every preset panel into the right zone", () => {
     const next = seedLayout("analyse");
     expect(next.every((p) => p.zone === "right")).toBe(true);
-    expect(next.map((p) => p.key)).toEqual(["hue", "fingerprint", "band", "arc", "neighbours"]);
+    expect(next.map((p) => p.key)).toEqual(["hue", "fingerprint", "arc", "neighbours"]);
   });
 });
 

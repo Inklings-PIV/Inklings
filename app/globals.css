@@ -383,6 +383,25 @@
     box-shadow: inset 0 0 0 1px
       color-mix(in oklch, var(--emoarc-tint, var(--ink-bleed)) 24%, transparent);
   }
+  /* Per-paragraph hue rail (#3): a coloured left-accent on each text block in
+     its own EmoArc hue (--hue-rail, set inline by the decoration; transparent
+     where the block is too short to read). Every block is decorated when the
+     rail is on, so the padding is uniform and the text's left edge stays straight
+     whether or not a block has a hue. */
+  .quill-hue-rail {
+    position: relative;
+    padding-left: 0.9rem;
+  }
+  .quill-hue-rail::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.18em;
+    bottom: 0.18em;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--hue-rail, transparent);
+  }
   .quill-pending-rewrite {
     border-radius: 0.18rem;
     background: color-mix(in oklch, var(--ink-bleed) 18%, transparent);
@@ -420,6 +439,9 @@
       transition:
         background-color 200ms ease-out,
         box-shadow 200ms ease-out;
+    }
+    .quill-hue-rail::before {
+      transition: background-color 200ms ease-out;
     }
   }
 }

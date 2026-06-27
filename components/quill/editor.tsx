@@ -108,6 +108,10 @@ type EditorProps = {
    * the ink accent. Pass null to clear the highlight.
    */
   highlightBlock?: { index: number; tint?: string | null } | null;
+  /** Per-paragraph hue rail: one CSS colour per text block (index-aligned to the
+   *  hue band; null = too short to read), painting a left-accent on each block.
+   *  Omit or pass [] to hide the rail. */
+  blockHues?: (string | null)[];
   /** Selection being rewritten by the parent; stays painted while focus moves away. */
   pendingRewriteRange?: SelectionRange | null;
   /** Show local loading feedback beside the pending range. */
@@ -236,6 +240,46 @@ const EmoArcHighlight = Extension.create({
   },
 });
 
+// Per-paragraph hue rail — a coloured left-accent on each text block, in that
+// block's own hue, so the EmoArc reads down the side of the prose in place. The
+// CSS colours (one per block, index-aligned to textblockRanges / the hue band;
+// null = too short to read) live in plugin state, pushed in from React via a
+// meta-only transaction. Decoration.node tracks the blocks as they re-flow, so
+// the accent stays aligned without measuring anything.
+const hueRailKey = new PluginKey<(string | null)[]>("hueRail");
+const HueRail = Extension.create({
+  name: "hueRail",
+  addProseMirrorPlugins() {
+    return [
+      new Plugin<(string | null)[]>({
+        key: hueRailKey,
+        state: {
+          init: () => [],
+          apply(tr, value) {
+            const meta = tr.getMeta(hueRailKey) as (string | null)[] | undefined;
+            return meta === undefined ? value : meta;
+          },
+        },
+        props: {
+          decorations(state) {
+            const hues = hueRailKey.getState(state);
+            if (!hues || hues.length === 0) return null;
+            // Decorate every block (transparent where there's no hue) so the
+            // reserved left space is uniform and the text edge stays straight.
+            const decos = textblockRanges(state.doc).map((r, i) =>
+              Decoration.node(r.from - 1, r.to + 1, {
+                class: "quill-hue-rail",
+                style: `--hue-rail:${hues[i] ?? "transparent"}`,
+              }),
+            );
+            return DecorationSet.create(state.doc, decos);
+          },
+        },
+      }),
+    ];
+  },
+});
+
 // Keeps a selected passage visually connected to the loading rewrite after
 // focus leaves the editor and the browser's native selection paint disappears.
 const PendingRewriteHighlight = Extension.create({
@@ -301,6 +345,7 @@ export function Editor({
   onCaptureHue,
   onRewriteSelection,
   highlightBlock,
+  blockHues,
   pendingRewriteRange,
   pendingRewriteLoading = false,
   onColourDrop,
@@ -315,7 +360,7 @@ export function Editor({
   // once on mount) can call the current closure.
   const readHueRef = useRef<() => void>(() => undefined);
   const editor = useEditor({
-    extensions: [StarterKit, FocusActiveBlock, EmoArcHighlight, PendingRewriteHighlight],
+    extensions: [StarterKit, FocusActiveBlock, EmoArcHighlight, HueRail, PendingRewriteHighlight],
     content: initialContent,
     onSelectionUpdate: ({ editor: ed }) => {
       const { from, to, empty } = ed.state.selection;
@@ -524,6 +569,20 @@ export function Editor({
     const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     el?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "nearest" });
   }, [editor, highlightIndex, highlightTint]);
+
+  // Push the per-paragraph hue rail into the plugin (meta-only, no doc change).
+  // The ref-guard skips re-dispatching when the colours haven't changed — doc
+  // edits re-flow the decorations on their own via props.decorations, so we only
+  // dispatch when the hue values themselves change (and never loop on re-render).
+  const railRef = useRef<string>("");
+  useEffect(() => {
+    if (!editor) return;
+    const hues = blockHues ?? [];
+    const key = hues.join("|");
+    if (key === railRef.current) return;
+    railRef.current = key;
+    editor.view.dispatch(editor.state.tr.setMeta(hueRailKey, hues));
+  }, [editor, blockHues]);
 
   // ProseMirror keeps its range when the editor loses DOM focus, so the highlight
   // vanishes but the selection (and the Rewrite button's target) silently lives

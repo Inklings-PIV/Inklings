@@ -196,6 +196,16 @@ export default function QuillPage() {
   // EmoArc hue band (B5) — one hue per paragraph, derived alongside the global
   // readout in a single call (see the hue effect below), not a second round-trip.
   const [band, setBand] = useState<BandSegment[]>([]);
+  // Opt-in hue rail: the band's per-paragraph colours drawn as a left-accent
+  // down the side of the editor text, in place. Derived from `band`.
+  const [showRail, setShowRail] = useState(false);
+  const blockHues = useMemo(
+    () =>
+      band.map((s) =>
+        s.colour ? hueFromHSL(s.colour.hue, s.colour.saturation, s.colour.lightness).css : null,
+      ),
+    [band],
+  );
   // EmoArc band → editor link (#1). Hovering a band segment highlights its
   // paragraph in the editor (tinted in that segment's own hue); clicking one
   // jumps to it. The editor handle lets the click select the block imperatively.
@@ -744,6 +754,8 @@ export default function QuillPage() {
         showBand={bandVisible}
         onBandHover={(index, tint) => setHighlight(index == null ? null : { index, tint })}
         onBandActivate={(index) => editorRef.current?.focusBlock(index)}
+        showRail={showRail}
+        onToggleRail={() => setShowRail((v) => !v)}
       />
     ),
     fingerprint: fingerprint ? <StyleFingerprint metrics={fingerprint} /> : null,
@@ -904,6 +916,7 @@ export default function QuillPage() {
                   onRewriteSelection={rewriteSelection}
                   onSelectionChange={setLiveSelection}
                   highlightBlock={highlight}
+                  blockHues={showRail && bandVisible ? blockHues : undefined}
                   pendingRewriteRange={isRewriting ? committedSelection : liveSelection}
                   pendingRewriteLoading={isRewriting && !!committedSelection}
                   onColourDrop={handleColourDrop}
@@ -1240,6 +1253,8 @@ function HueReadout({
   showBand,
   onBandHover,
   onBandActivate,
+  showRail,
+  onToggleRail,
 }: {
   targetActive: boolean;
   hasText: boolean;
@@ -1255,6 +1270,9 @@ function HueReadout({
   onBandHover?: (index: number | null, tint: string | null) => void;
   /** Clicked strip segment — jumps the editor to that paragraph. */
   onBandActivate?: (index: number) => void;
+  /** Whether the per-paragraph hue rail is painted beside the editor text. */
+  showRail: boolean;
+  onToggleRail: () => void;
 }) {
   const swatchCss = readout
     ? hueFromHSL(readout.hue, readout.saturation, readout.lightness).css
@@ -1291,8 +1309,22 @@ function HueReadout({
           </p>
         )}
         {showBand && (
-          <div className="border-t border-border/60 pt-3">
+          <div className="flex flex-col gap-2 border-t border-border/60 pt-3">
             <HueArcStrip segments={band} onHover={onBandHover} onActivate={onBandActivate} />
+            <button
+              type="button"
+              aria-pressed={showRail}
+              onClick={onToggleRail}
+              className={cn(
+                "inline-flex h-7 items-center gap-1.5 self-start rounded-md border px-2 text-[11px] transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                showRail
+                  ? "border-ink-deep bg-ink-deep text-ink-paper"
+                  : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
+              )}
+            >
+              {showRail ? "Hide from text" : "Show beside text"}
+            </button>
           </div>
         )}
         {readout && (

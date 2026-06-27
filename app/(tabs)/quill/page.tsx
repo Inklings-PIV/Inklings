@@ -1391,7 +1391,8 @@ function HueArcStrip({
           {segments.length} paragraphs
         </span>
       </div>
-      <div className="flex h-9 gap-0.5">
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer-only cleanup; keyboard clears via each button's onBlur. Leave lives on the row, not per-segment, so crossing the gap between buttons keeps the last highlight instead of flickering to null. */}
+      <div className="flex h-9 gap-0.5" onMouseLeave={leave}>
         {segments.map((seg, i) => {
           const css = seg.colour
             ? hueFromHSL(seg.colour.hue, seg.colour.saturation, seg.colour.lightness).css
@@ -1415,7 +1416,6 @@ function HueArcStrip({
                 e.dataTransfer.effectAllowed = "copy";
               }}
               onMouseEnter={() => enter(i, css ?? null)}
-              onMouseLeave={leave}
               onFocus={() => enter(i, css ?? null)}
               onBlur={leave}
               onClick={() => onActivate?.(i)}

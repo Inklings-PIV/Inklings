@@ -692,7 +692,7 @@ export function Editor({
             onDragOver={handleColourDragOver}
             onDrop={handleColourDrop}
             className={cn(
-              "relative max-h-[min(540px,calc(100vh-24rem))] overflow-y-auto overscroll-contain pr-2 pb-8",
+              "relative max-h-[min(540px,calc(100vh-24rem))] overflow-y-auto pr-2 pb-8",
               focusMode && [
                 "[&_.ProseMirror>*]:opacity-35 [&_.ProseMirror>*]:transition-opacity [&_.ProseMirror>*]:duration-300",
                 "[&_.quill-focus-active]:!opacity-100",

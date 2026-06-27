@@ -7,11 +7,12 @@ import {
   Cloud,
   CloudOff,
   Download,
+  GripVertical,
   History,
   Lightbulb,
 } from "lucide-react";
 import { Popover } from "radix-ui";
-import { useEffect, useMemo, useRef, useState, useTransition } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { ArcChart } from "@/components/quill/arc-chart";
 import {
@@ -43,6 +44,16 @@ import { type FingerprintMetric, toFingerprint } from "@/lib/quill/fingerprint";
 import { type DraftVersion, pushVersion } from "@/lib/quill/history";
 import { htmlToMarkdown } from "@/lib/quill/markdown";
 import { nameToHsl } from "@/lib/quill/named-colours";
+import {
+  PANEL_CATALOGUE,
+  PANEL_LABELS,
+  type PanelItem,
+  PRESET_LABELS,
+  type PresetName,
+  reorderPanels,
+  resolveLayout,
+  type Zone,
+} from "@/lib/quill/panel-layout";
 import { splitParagraphs } from "@/lib/quill/paragraphs";
 import { computeWritingStats, type WritingStats } from "@/lib/quill/stats";
 import { type WidgetSelection, widgetsToTarget } from "@/lib/quill/widgets";
@@ -72,40 +83,30 @@ type BandSegment = { id: string; text: string; colour: TextColour | null };
 const LOCAL_DRAFT_KEY = "inklings-quill-draft";
 const CLOUD_PREF_KEY = "inklings-quill-cloud-save";
 const CLOUD_SAVE_DEBOUNCE_MS = 2000;
-const PANEL_PRESET_KEY = "inklings-quill-panel-preset";
-const PANEL_CUSTOM_KEY = "inklings-quill-panel-custom";
+const PANEL_LAYOUT_KEY = "inklings-quill-panel-layout";
 const BRUSH_SIZE_KEY = "inklings-quill-brush-size";
 const ANIMATE_KEY = "inklings-quill-animate-rewrite";
+// Drag MIME for panel reordering — distinct from HUE_CAPTURE_MIME so a hue drag
+// never reads as a panel drop (and vice versa).
+const PANEL_MIME = "application/x-inklings-panel";
 
 // Splash blot size multiplier per brush size — a bigger brush throws more ink.
 const BRUSH_SPLASH_SCALE: Record<number, number> = { 1: 0.7, 3: 1, 7: 1.4 };
 
-type PanelPreset = "essentials" | "analyse" | "rewrite" | "custom";
-
-// Which optional panels each preset activates.
-const PANEL_PRESETS: Record<Exclude<PanelPreset, "custom">, readonly string[]> = {
-  essentials: ["hue", "save"],
-  analyse: ["hue", "fingerprint", "band", "arc", "neighbours"],
-  rewrite: ["target", "version"],
-};
-
-const CUSTOM_PANEL_OPTIONS = [
-  { key: "hue", label: "Hue readout" },
-  { key: "fingerprint", label: "Style fingerprint" },
-  { key: "band", label: "Hue band" },
-  { key: "arc", label: "Story shape" },
-  { key: "neighbours", label: "Nearest authors" },
-  { key: "version", label: "Versions" },
-  { key: "target", label: "Rewrite" },
-  { key: "save", label: "Save to scribe" },
-] as const;
-
-// Default custom panels — on for new users; existing saved sets load from localStorage.
-const DEFAULT_CUSTOM_PANELS = ["hue", "save"];
+type DropTarget = { zone: Zone; beforeKey: string | null };
 
 export default function QuillPage() {
-  const [panelPreset, setPanelPreset] = useState<PanelPreset>("essentials");
-  const [customPanels, setCustomPanels] = useState<Set<string>>(new Set());
+  // Sidebar widgets — one saved layout per preset. Each preset is a workspace
+  // (Essentials / Analyse / Rewrite); switching presets loads that workspace's
+  // layout (or its seed if untouched), and every edit persists to the active
+  // one. Starts empty on Essentials so SSR and the first client render match
+  // (both fall back to the Essentials seed) before localStorage hydration runs.
+  const [workspaces, setWorkspaces] = useState<Record<string, PanelItem[]>>({});
+  const [activePreset, setActivePreset] = useState<PresetName>("essentials");
+  const layout = resolveLayout(workspaces, activePreset);
+  // Live drag state for panel reordering.
+  const [dragKey, setDragKey] = useState<string | null>(null);
+  const [dropAt, setDropAt] = useState<DropTarget | null>(null);
   // Local-first per the #45 privacy decision — the draft lives in
   // localStorage by default and only round-trips to the server when the
   // writer opts in via the SaveSettings toggle below.
@@ -188,11 +189,8 @@ export default function QuillPage() {
   // or we restore a draft from storage.
   const [editorKey, setEditorKey] = useState(0);
 
-  // Panel visibility — resolved from preset each render.
-  const panelVisible = (key: string): boolean => {
-    if (panelPreset === "custom") return customPanels.has(key);
-    return PANEL_PRESETS[panelPreset].includes(key);
-  };
+  // Panel visibility — a panel is visible iff it's in the layout.
+  const panelVisible = (key: string): boolean => layout.some((p) => p.key === key);
   const bandActive = panelVisible("band");
   const targetActive = panelVisible("target");
 
@@ -255,15 +253,19 @@ export default function QuillPage() {
     try {
       const localDraft = window.localStorage.getItem(LOCAL_DRAFT_KEY) ?? "";
       const cloudPref = window.localStorage.getItem(CLOUD_PREF_KEY) === "true";
-      const savedPreset = (window.localStorage.getItem(PANEL_PRESET_KEY) ??
-        "essentials") as PanelPreset;
-      const savedCustom = JSON.parse(
-        window.localStorage.getItem(PANEL_CUSTOM_KEY) ?? JSON.stringify(DEFAULT_CUSTOM_PANELS),
-      ) as string[];
+      const savedLayout = window.localStorage.getItem(PANEL_LAYOUT_KEY);
       setDraft(localDraft);
       setCloudSave(cloudPref);
-      setPanelPreset(savedPreset);
-      setCustomPanels(new Set(savedCustom));
+      if (savedLayout) {
+        const parsed = JSON.parse(savedLayout) as {
+          active?: string;
+          workspaces?: Record<string, PanelItem[]>;
+        };
+        if (parsed?.workspaces) setWorkspaces(parsed.workspaces);
+        if (parsed?.active && parsed.active in PRESET_LABELS) {
+          setActivePreset(parsed.active as PresetName);
+        }
+      }
       const savedBrush = Number(window.localStorage.getItem(BRUSH_SIZE_KEY));
       if ([1, 3, 7].includes(savedBrush)) setBrushSize(savedBrush);
       const savedAnimate = window.localStorage.getItem(ANIMATE_KEY);
@@ -335,27 +337,46 @@ export default function QuillPage() {
     }
   };
 
-  const changePanelPreset = (preset: PanelPreset) => {
-    setPanelPreset(preset);
+  const persistState = (nextWorkspaces: Record<string, PanelItem[]>, nextActive: PresetName) => {
+    setWorkspaces(nextWorkspaces);
+    setActivePreset(nextActive);
     try {
-      window.localStorage.setItem(PANEL_PRESET_KEY, preset);
+      window.localStorage.setItem(
+        PANEL_LAYOUT_KEY,
+        JSON.stringify({ active: nextActive, workspaces: nextWorkspaces }),
+      );
     } catch {
       // Storage can throw in private mode / quota-full; we tolerate it.
     }
   };
 
-  const toggleCustomPanel = (key: string) => {
-    setCustomPanels((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      try {
-        window.localStorage.setItem(PANEL_CUSTOM_KEY, JSON.stringify([...next]));
-      } catch {
-        // Storage can throw in private mode / quota-full; we tolerate it.
-      }
-      return next;
-    });
+  // Save `next` as the active workspace's layout.
+  const persistLayout = (next: PanelItem[]) =>
+    persistState({ ...workspaces, [activePreset]: next }, activePreset);
+
+  // Switch to a preset's workspace — loads its saved layout, or seeds the
+  // suggested default the first time (resolveLayout supplies the fallback).
+  const applyPreset = (preset: PresetName) => persistState(workspaces, preset);
+
+  // Add a panel (to the right zone) or remove it from the layout.
+  const togglePanel = (key: string) =>
+    persistLayout(
+      panelVisible(key)
+        ? layout.filter((p) => p.key !== key)
+        : [...layout, { key, zone: "right" as const }],
+    );
+
+  const toggleCollapse = (key: string) =>
+    persistLayout(layout.map((p) => (p.key === key ? { ...p, collapsed: !p.collapsed } : p)));
+
+  // Commit a drag — move the dragged panel to the drop target's zone/position.
+  const commitDrop = (zone: Zone) => {
+    if (dragKey) {
+      const beforeKey = dropAt?.zone === zone ? dropAt.beforeKey : null;
+      persistLayout(reorderPanels(layout, dragKey, zone, beforeKey));
+    }
+    setDragKey(null);
+    setDropAt(null);
   };
 
   const changeBrushSize = (size: number) => {
@@ -737,8 +758,85 @@ export default function QuillPage() {
     setLiveSelection(null);
   };
 
+  // Rendered node per sidebar widget. A null node (no data yet) means the zone
+  // skips that frame until it has something to show. `band` has no node — it
+  // lives in the editor column until the #3 merge folds it into the hue widget.
+  const panelNodes: Record<string, ReactNode> = {
+    hue: (
+      <HueReadout
+        targetActive={targetActive}
+        hasText={hasDraftText}
+        wordCount={countWords(draft)}
+        readout={hasDraftText ? readout : null}
+        isPending={isPending}
+        explain={explain}
+        onToggleExplain={() => setExplain((v) => !v)}
+      />
+    ),
+    fingerprint: fingerprint ? <StyleFingerprint metrics={fingerprint} /> : null,
+    arc: arc ? (
+      <ArcChart
+        arc={arc}
+        onHover={(paragraphIndex) =>
+          setHighlight(paragraphIndex == null ? null : { index: paragraphIndex, tint: null })
+        }
+      />
+    ) : null,
+    neighbours: neighbours.length > 0 ? <NeighbourAuthors neighbours={neighbours} /> : null,
+    version: <VersionHistory versions={versions} onRestore={restoreVersion} />,
+    target: (
+      <div className="flex flex-col gap-4">
+        <RewritePanel
+          selectedColour={selectedColour}
+          onToggleColour={toggleColour}
+          customSwatches={customSwatches}
+          onAddHue={addSwatch}
+          onReplaceHue={replaceSwatch}
+          onRemoveSwatch={removeSwatch}
+          onCaptureText={captureHueFromText}
+          brushSize={brushSize}
+          onBrushChange={changeBrushSize}
+          selection={widgetSelection}
+          onWidgetChange={(key, value) => setWidgetSelection((prev) => ({ ...prev, [key]: value }))}
+          target={target}
+          onTargetChange={setTarget}
+          composedTarget={composedTarget}
+          intensity={intensity}
+          onIntensityChange={setIntensity}
+          animate={animateOnRewrite}
+          onAnimateChange={changeAnimate}
+          wordCount={countWords(draft)}
+          onRequest={requestRewrite}
+          isPending={isRewriting}
+          hasRewrite={rewrite !== null}
+          selectionText={liveSelection?.text ?? null}
+          onClearSelection={() => setLiveSelection(null)}
+          error={rewriteError}
+        />
+        <DriftMeter readout={readout} target={targetColour} />
+      </div>
+    ),
+    save: (
+      <SaveSettings cloudSave={cloudSave} cloudSavedAt={cloudSavedAt} onToggle={toggleCloudSave} />
+    ),
+  };
+
+  const zoneProps = {
+    nodes: panelNodes,
+    dragKey,
+    dropAt,
+    onDragStart: setDragKey,
+    onDragEnd: () => {
+      setDragKey(null);
+      setDropAt(null);
+    },
+    onDropTarget: (zone: Zone, beforeKey: string | null) => setDropAt({ zone, beforeKey }),
+    onCommit: commitDrop,
+    onToggleCollapse: toggleCollapse,
+  };
+
   return (
-    <div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-6 sm:py-8">
+    <div className="mx-auto w-full max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
       <header className="flex flex-wrap items-start justify-between gap-3 sm:items-end sm:gap-4">
         <div className="min-w-0">
           <h1 className="font-display text-2xl tracking-tight text-ink-deep sm:text-3xl">
@@ -751,8 +849,10 @@ export default function QuillPage() {
         {stats.words > 0 && <ExportControls markdown={markdown} />}
       </header>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-[1fr_280px]">
-        <div className="flex flex-col gap-4">
+      <div className="mt-6 grid gap-6 lg:grid-cols-[260px_minmax(0,1fr)_260px]">
+        {/* Editor is first in the DOM so it sits on top when the grid collapses
+            to one column on small screens; col-start re-seats it centre ≥lg. */}
+        <div className="flex flex-col gap-4 lg:col-start-2 lg:row-start-1">
           {bandVisible && (
             <HueBand
               segments={band}
@@ -852,112 +952,51 @@ export default function QuillPage() {
           )}
         </div>
 
-        <aside className="flex flex-col gap-4">
+        <PanelZone
+          zone="left"
+          className="lg:col-start-1 lg:row-start-1"
+          items={layout.filter((p) => p.zone === "left")}
+          {...zoneProps}
+        />
+
+        <div className="flex flex-col gap-4 lg:col-start-3 lg:row-start-1">
           <PanelSelector
-            preset={panelPreset}
-            customPanels={customPanels}
-            onPresetChange={changePanelPreset}
-            onCustomToggle={toggleCustomPanel}
+            active={activePreset}
+            layout={layout}
+            onApply={applyPreset}
+            onToggle={togglePanel}
           />
-          {panelVisible("hue") && (
-            <HueReadout
-              targetActive={targetActive}
-              hasText={hasDraftText}
-              wordCount={countWords(draft)}
-              readout={hasDraftText ? readout : null}
-              isPending={isPending}
-              explain={explain}
-              onToggleExplain={() => setExplain((v) => !v)}
-            />
-          )}
-          {panelVisible("fingerprint") && fingerprint && <StyleFingerprint metrics={fingerprint} />}
-          {panelVisible("arc") && arc && (
-            <ArcChart
-              arc={arc}
-              onHover={(paragraphIndex) =>
-                setHighlight(paragraphIndex == null ? null : { index: paragraphIndex, tint: null })
-              }
-            />
-          )}
-          {panelVisible("neighbours") && neighbours.length > 0 && (
-            <NeighbourAuthors neighbours={neighbours} />
-          )}
-          {panelVisible("version") && (
-            <VersionHistory versions={versions} onRestore={restoreVersion} />
-          )}
-          {panelVisible("target") && (
-            <RewritePanel
-              selectedColour={selectedColour}
-              onToggleColour={toggleColour}
-              customSwatches={customSwatches}
-              onAddHue={addSwatch}
-              onReplaceHue={replaceSwatch}
-              onRemoveSwatch={removeSwatch}
-              onCaptureText={captureHueFromText}
-              brushSize={brushSize}
-              onBrushChange={changeBrushSize}
-              selection={widgetSelection}
-              onWidgetChange={(key, value) =>
-                setWidgetSelection((prev) => ({ ...prev, [key]: value }))
-              }
-              target={target}
-              onTargetChange={setTarget}
-              composedTarget={composedTarget}
-              intensity={intensity}
-              onIntensityChange={setIntensity}
-              animate={animateOnRewrite}
-              onAnimateChange={changeAnimate}
-              wordCount={countWords(draft)}
-              onRequest={requestRewrite}
-              isPending={isRewriting}
-              hasRewrite={rewrite !== null}
-              selectionText={liveSelection?.text ?? null}
-              onClearSelection={() => setLiveSelection(null)}
-              error={rewriteError}
-            />
-          )}
-          {panelVisible("target") && <DriftMeter readout={readout} target={targetColour} />}
-          {panelVisible("save") && (
-            <SaveSettings
-              cloudSave={cloudSave}
-              cloudSavedAt={cloudSavedAt}
-              onToggle={toggleCloudSave}
-            />
-          )}
-        </aside>
+          <PanelZone zone="right" items={layout.filter((p) => p.zone === "right")} {...zoneProps} />
+        </div>
       </div>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Panel selector — preset tabs + custom toggles at the top of the sidebar
+// Panel selector — one tab per workspace (preset) + an add/remove menu.
+// Switching tabs loads that workspace's saved layout (or its seed); edits
+// persist to the active workspace, so each preset keeps its own arrangement.
 // ---------------------------------------------------------------------------
 
-const PRESET_LABELS: Record<PanelPreset, string> = {
-  essentials: "Essentials",
-  analyse: "Analyse",
-  rewrite: "Rewrite",
-  custom: "Custom",
-};
-
 function PanelSelector({
-  preset,
-  customPanels,
-  onPresetChange,
-  onCustomToggle,
+  active,
+  layout,
+  onApply,
+  onToggle,
 }: {
-  preset: PanelPreset;
-  customPanels: Set<string>;
-  onPresetChange: (p: PanelPreset) => void;
-  onCustomToggle: (key: string) => void;
+  active: PresetName;
+  layout: PanelItem[];
+  onApply: (preset: PresetName) => void;
+  onToggle: (key: string) => void;
 }) {
-  const presets = Object.keys(PRESET_LABELS) as PanelPreset[];
+  const presets = Object.keys(PRESET_LABELS) as PresetName[];
+  const has = (key: string) => layout.some((p) => p.key === key);
   return (
     <div className="flex flex-col gap-2">
       <div
         role="tablist"
-        aria-label="Panel preset"
+        aria-label="Workspace"
         className="flex gap-0.5 rounded-lg border border-border bg-muted/40 p-0.5"
       >
         {presets.map((p) => (
@@ -965,12 +1004,13 @@ function PanelSelector({
             key={p}
             type="button"
             role="tab"
-            aria-selected={preset === p}
-            onClick={() => onPresetChange(p)}
+            aria-selected={active === p}
+            onClick={() => onApply(p)}
+            title={`Switch to your ${PRESET_LABELS[p]} workspace`}
             className={cn(
               "flex-1 rounded-md py-1 text-xs transition-colors",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-              preset === p
+              active === p
                 ? "bg-card text-ink-deep shadow-sm"
                 : "text-muted-foreground hover:text-foreground",
             )}
@@ -979,52 +1019,225 @@ function PanelSelector({
           </button>
         ))}
       </div>
-      {preset === "custom" && (
-        <Popover.Root>
-          <Popover.Trigger
-            className={cn(
-              "flex items-center justify-between rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors",
-              "hover:bg-muted hover:text-foreground",
-              "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-            )}
+      <Popover.Root>
+        <Popover.Trigger
+          className={cn(
+            "flex items-center justify-between rounded-md border border-border px-2.5 py-1 text-xs text-muted-foreground transition-colors",
+            "hover:bg-muted hover:text-foreground",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+          )}
+        >
+          <span className="flex items-center gap-1.5">
+            Panels
+            <ChevronDown className="size-3" />
+          </span>
+          <span className="tabular-nums">{layout.length} active</span>
+        </Popover.Trigger>
+        <Popover.Portal>
+          <Popover.Content
+            align="start"
+            sideOffset={4}
+            className="z-50 flex w-[var(--radix-popover-trigger-width)] flex-col rounded-md border border-border bg-card p-1 shadow-md"
           >
-            <span className="flex items-center gap-1.5">
-              Panels
-              <ChevronDown className="size-3" />
-            </span>
-            <span className="tabular-nums">{customPanels.size} active</span>
-          </Popover.Trigger>
-          <Popover.Portal>
-            <Popover.Content
-              align="start"
-              sideOffset={4}
-              className="z-50 flex w-[var(--radix-popover-trigger-width)] flex-col rounded-md border border-border bg-card p-1 shadow-md"
-            >
-              {CUSTOM_PANEL_OPTIONS.map((opt) => {
-                const on = customPanels.has(opt.key);
-                return (
-                  <button
-                    key={opt.key}
-                    type="button"
-                    aria-pressed={on}
-                    onClick={() => onCustomToggle(opt.key)}
-                    className={cn(
-                      "flex items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors",
-                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-                      on
-                        ? "text-ink-bleed"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                    )}
-                  >
-                    <Check className={cn("size-3.5 shrink-0", !on && "opacity-0")} />
-                    {opt.label}
-                  </button>
-                );
-              })}
-            </Popover.Content>
-          </Popover.Portal>
-        </Popover.Root>
+            {PANEL_CATALOGUE.map((opt) => {
+              const on = has(opt.key);
+              return (
+                <button
+                  key={opt.key}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => onToggle(opt.key)}
+                  className={cn(
+                    "flex items-center gap-2 rounded px-2 py-1.5 text-left text-xs transition-colors",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                    on
+                      ? "text-ink-bleed"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                >
+                  <Check className={cn("size-3.5 shrink-0", !on && "opacity-0")} />
+                  {opt.label}
+                </button>
+              );
+            })}
+          </Popover.Content>
+        </Popover.Portal>
+      </Popover.Root>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Panel zones — one drop target per side. Renders each layout item (that has a
+// node) in a draggable frame; native HTML5 DnD, no library. Drop position comes
+// from the frame the cursor is over (its top/bottom half → before this / the
+// next), or the zone's empty space (→ append).
+// ---------------------------------------------------------------------------
+
+type ZoneHandlers = {
+  nodes: Record<string, ReactNode>;
+  dragKey: string | null;
+  dropAt: DropTarget | null;
+  onDragStart: (key: string) => void;
+  onDragEnd: () => void;
+  onDropTarget: (zone: Zone, beforeKey: string | null) => void;
+  onCommit: (zone: Zone) => void;
+  onToggleCollapse: (key: string) => void;
+};
+
+function PanelZone({
+  zone,
+  className,
+  items,
+  nodes,
+  dragKey,
+  dropAt,
+  onDragStart,
+  onDragEnd,
+  onDropTarget,
+  onCommit,
+  onToggleCollapse,
+}: ZoneHandlers & { zone: Zone; className?: string; items: PanelItem[] }) {
+  const isPanelDrag = (e: React.DragEvent) => e.dataTransfer.types.includes(PANEL_MIME);
+  const visible = items.filter((it) => nodes[it.key]);
+  return (
+    <aside
+      aria-label={`${zone} widgets`}
+      className={cn("flex flex-col gap-4", className)}
+      onDragOver={(e) => {
+        if (!isPanelDrag(e)) return;
+        e.preventDefault();
+        onDropTarget(zone, null); // over empty space / below the last → append
+      }}
+      onDrop={(e) => {
+        if (!isPanelDrag(e)) return;
+        e.preventDefault();
+        onCommit(zone);
+      }}
+    >
+      {visible.length === 0 && (
+        <div
+          className={cn(
+            "hidden rounded-lg border border-dashed p-6 text-center text-xs lg:block",
+            dragKey
+              ? "border-ink-bleed/60 text-ink-bleed"
+              : "border-border/50 text-muted-foreground/60",
+          )}
+        >
+          {dragKey ? "Drop here" : "Drag a widget here"}
+        </div>
       )}
+      {visible.map((it, i) => (
+        <PanelFrame
+          key={it.key}
+          item={it}
+          dragging={dragKey === it.key}
+          showLineBefore={dropAt?.zone === zone && dropAt.beforeKey === it.key}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          onHalf={(before) => onDropTarget(zone, before ? it.key : (visible[i + 1]?.key ?? null))}
+          onToggleCollapse={onToggleCollapse}
+        >
+          {nodes[it.key]}
+        </PanelFrame>
+      ))}
+      {dropAt?.zone === zone && dropAt.beforeKey === null && visible.length > 0 && (
+        <div aria-hidden="true" className="-mt-2 h-0.5 rounded-full bg-ink-bleed" />
+      )}
+    </aside>
+  );
+}
+
+function PanelFrame({
+  item,
+  dragging,
+  showLineBefore,
+  onDragStart,
+  onDragEnd,
+  onHalf,
+  onToggleCollapse,
+  children,
+}: {
+  item: PanelItem;
+  dragging: boolean;
+  showLineBefore: boolean;
+  onDragStart: (key: string) => void;
+  onDragEnd: () => void;
+  onHalf: (before: boolean) => void;
+  onToggleCollapse: (key: string) => void;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const label = PANEL_LABELS[item.key] ?? item.key;
+
+  // Only the grip is draggable, so dragging never fights clicks/selection in the
+  // card's own controls; setDragImage gives the ghost the whole card's shape.
+  const handle = (
+    <button
+      type="button"
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData(PANEL_MIME, item.key);
+        e.dataTransfer.effectAllowed = "move";
+        if (ref.current) e.dataTransfer.setDragImage(ref.current, 16, 16);
+        onDragStart(item.key);
+      }}
+      onDragEnd={onDragEnd}
+      aria-label={`Move ${label}`}
+      className="cursor-grab rounded p-0.5 text-muted-foreground/70 hover:text-foreground active:cursor-grabbing"
+    >
+      <GripVertical className="size-3.5" />
+    </button>
+  );
+  const collapseBtn = (
+    <button
+      type="button"
+      onClick={() => onToggleCollapse(item.key)}
+      aria-label={item.collapsed ? `Expand ${label}` : `Collapse ${label}`}
+      aria-expanded={!item.collapsed}
+      className="rounded p-0.5 text-muted-foreground/70 hover:text-foreground"
+    >
+      <ChevronDown
+        className={cn("size-3.5 transition-transform", item.collapsed && "-rotate-90")}
+      />
+    </button>
+  );
+
+  return (
+    <div>
+      {showLineBefore && (
+        <div aria-hidden="true" className="-mb-2 h-0.5 rounded-full bg-ink-bleed" />
+      )}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer-only drop target for panel reordering; the grip is a real focusable button and add/remove stays keyboard-reachable via the Panels menu */}
+      <div
+        ref={ref}
+        onDragOver={(e) => {
+          if (!e.dataTransfer.types.includes(PANEL_MIME)) return;
+          e.preventDefault();
+          e.stopPropagation(); // keep the precise before-key, not the zone's append
+          const r = e.currentTarget.getBoundingClientRect();
+          onHalf(e.clientY < r.top + r.height / 2);
+        }}
+        className={cn("group relative transition-opacity", dragging && "opacity-40")}
+      >
+        {item.collapsed ? (
+          <div className="flex items-center justify-between rounded-lg border border-border bg-card px-3 py-2">
+            <span className="text-xs text-muted-foreground">{label}</span>
+            <div className="flex items-center gap-0.5">
+              {collapseBtn}
+              {handle}
+            </div>
+          </div>
+        ) : (
+          <>
+            <div className="pointer-events-none absolute right-2 top-2 z-10 flex items-center gap-0.5 rounded-md bg-card/80 px-0.5 opacity-0 backdrop-blur-sm transition-opacity group-hover:pointer-events-auto group-hover:opacity-100">
+              {collapseBtn}
+              {handle}
+            </div>
+            {children}
+          </>
+        )}
+      </div>
     </div>
   );
 }

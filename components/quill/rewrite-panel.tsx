@@ -1,7 +1,17 @@
 "use client";
 
-import { Brush, Check, ChevronDown, Loader2, Plus, Sparkles, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import {
+  BookOpen,
+  Brush,
+  Check,
+  ChevronDown,
+  Loader2,
+  Palette,
+  Plus,
+  Sparkles,
+  X,
+} from "lucide-react";
+import { type ReactNode, useMemo, useState } from "react";
 import {
   ALL_PIGMENTS,
   blendHues,
@@ -31,9 +41,9 @@ const INTENSITY_LABELS: Record<number, string> = {
 // Brush = how many sentences the colour drop covers. Selection always wins over
 // this; it only governs a drop point. The brush icon grows with the size.
 const BRUSH_SIZES = [
-  { size: 1, iconClass: "size-3", title: "Fine — just the sentence" },
-  { size: 3, iconClass: "size-4", title: "Medium — sentence ± 1" },
-  { size: 7, iconClass: "size-5", title: "Broad — sentence ± 3" },
+  { size: 1, iconClass: "size-3", title: "Sentence — only the sentence you drop on" },
+  { size: 3, iconClass: "size-4", title: "Nearby passage — sentence plus nearby context" },
+  { size: 7, iconClass: "size-5", title: "Wider passage — a broader section around the drop" },
 ] as const;
 
 function countWords(s: string): number {
@@ -41,14 +51,14 @@ function countWords(s: string): number {
 }
 
 /**
- * The fused rewrite widget. Three stacked parts: a collapsible colour area (one
- * pigment grid + the beaker that mixes new hues), a collapsible words area (style
- * facets + free-text brief), and a fixed footer (intensity, the animate toggle
- * and the rewrite button). Colour and words compose into one target — colour is
- * optional. Dragging a swatch onto the prose is the quick gesture; clicking one
- * toggles it into the composed target instead.
+ * The fused rewrite widget. Colour and Words are separate accordion sections
+ * controlled by the page's right rail state. Colour is optional; dragging a
+ * swatch onto the prose is the quick gesture, while tapping one folds it into
+ * the composed target.
  */
 export function RewritePanel({
+  openPanel,
+  onOpenPanelChange,
   selectedColour,
   onToggleColour,
   customSwatches,
@@ -65,8 +75,6 @@ export function RewritePanel({
   composedTarget,
   intensity,
   onIntensityChange,
-  animate,
-  onAnimateChange,
   wordCount,
   onRequest,
   isPending,
@@ -75,6 +83,8 @@ export function RewritePanel({
   onClearSelection,
   error,
 }: {
+  openPanel: "colour" | "words" | null;
+  onOpenPanelChange: (panel: "colour" | "words" | null) => void;
   selectedColour: string | null;
   onToggleColour: (key: string) => void;
   customSwatches: CustomSwatch[];
@@ -91,8 +101,6 @@ export function RewritePanel({
   composedTarget: string;
   intensity: number;
   onIntensityChange: (n: number) => void;
-  animate: boolean;
-  onAnimateChange: (b: boolean) => void;
   wordCount: number;
   onRequest: () => void;
   isPending: boolean;
@@ -101,8 +109,8 @@ export function RewritePanel({
   onClearSelection: () => void;
   error: string | null;
 }) {
-  const [colourOpen, setColourOpen] = useState(true);
-  const [wordsOpen, setWordsOpen] = useState(true);
+  const colourOpen = openPanel === "colour";
+  const wordsOpen = openPanel === "words";
 
   // Mix mode: the beaker is open and grid taps add parts instead of toggling the
   // target. `recipe` is parts keyed by pigment key / custom-swatch id; `pour`
@@ -174,45 +182,45 @@ export function RewritePanel({
       : "Suggest a nudge";
 
   return (
-    <Card>
-      <CardContent className="flex flex-col gap-3 p-5">
-        {/* §1 — colour: one grid of pigments + your own swatches, and the beaker
-            that mixes new ones. Collapsing hides the brush row + helper only. */}
-        <section className="flex flex-col gap-2">
+    <>
+      <Card>
+        <CardContent className="flex flex-col gap-2.5 p-4">
           <SectionHeader
             label="Colour"
+            description="Drag a colour onto text, or tap one to aim the nudge."
+            icon={<Palette className="size-4" />}
             open={colourOpen}
-            onToggle={() => setColourOpen((v) => !v)}
+            onToggle={() => onOpenPanelChange(colourOpen ? null : "colour")}
           />
-          <SwatchGrid
-            customSwatches={customSwatches}
-            selectedColour={selectedColour}
-            mixOpen={mixOpen}
-            recipe={recipe}
-            onTap={onTap}
-            onRemovePart={removePart}
-            onStartMix={startMix}
-            onRemoveSwatch={onRemoveSwatch}
-            onReplaceHue={onReplaceHue}
-            onAddHue={onAddHue}
-            onCaptureText={onCaptureText}
-          />
-          {mixOpen && (
-            <Beaker
-              fillCss={blendCss}
-              totalParts={totalParts}
-              phrase={mixWords}
-              pour={pour}
-              canPour={!!blend}
-              onAccept={acceptMix}
-              onCancel={closeMix}
-            />
-          )}
           {colourOpen && (
             <>
-              <div className="flex items-center justify-between gap-2">
+              <SwatchGrid
+                customSwatches={customSwatches}
+                selectedColour={selectedColour}
+                mixOpen={mixOpen}
+                recipe={recipe}
+                onTap={onTap}
+                onRemovePart={removePart}
+                onStartMix={startMix}
+                onRemoveSwatch={onRemoveSwatch}
+                onReplaceHue={onReplaceHue}
+                onAddHue={onAddHue}
+                onCaptureText={onCaptureText}
+              />
+              {mixOpen && (
+                <Beaker
+                  fillCss={blendCss}
+                  totalParts={totalParts}
+                  phrase={mixWords}
+                  pour={pour}
+                  canPour={!!blend}
+                  onAccept={acceptMix}
+                  onCancel={closeMix}
+                />
+              )}
+              <div className="flex items-center justify-between gap-2 pt-1">
                 <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                  Brush
+                  Brush range
                 </span>
                 <div className="flex items-center gap-0.5 rounded-md border border-border bg-muted/40 p-0.5">
                   {BRUSH_SIZES.map((b) => (
@@ -237,17 +245,23 @@ export function RewritePanel({
                 </div>
               </div>
               <p className="text-[11px] italic leading-snug text-muted-foreground">
-                Drag a colour onto a word for an instant nudge, or tap one to fold its mood into the
-                target. Press <Plus className="inline size-3" /> to mix a new hue — or drop a
-                selection (or a Hue-band segment) onto a swatch to capture one from your prose.
+                Tap a colour to add its mood, or drag it onto prose for a local nudge. Use{" "}
+                <Plus className="inline size-3" /> to mix or capture a hue.
               </p>
             </>
           )}
-        </section>
+        </CardContent>
+      </Card>
 
-        {/* §2 — words: style facets + a free-text brief. */}
-        <section className="flex flex-col gap-2 border-t border-border/60 pt-3">
-          <SectionHeader label="Words" open={wordsOpen} onToggle={() => setWordsOpen((v) => !v)} />
+      <Card>
+        <CardContent className="flex flex-col gap-2.5 p-4">
+          <SectionHeader
+            label="Words"
+            description="Build a target in words, then nudge when ready."
+            icon={<BookOpen className="size-4" />}
+            open={wordsOpen}
+            onToggle={() => onOpenPanelChange(wordsOpen ? null : "words")}
+          />
           {wordsOpen && (
             <>
               <TargetWidgets selection={selection} onChange={onWidgetChange} />
@@ -259,113 +273,118 @@ export function RewritePanel({
                   type="text"
                   value={target}
                   onChange={(e) => onTargetChange(e.target.value)}
-                  placeholder="warm, melancholy · Hemingway-like · lush, baroque"
+                  placeholder="warm, melancholy · Hemingway-like · lush"
                   className="h-9 rounded-md border border-border bg-card px-3 text-sm placeholder:text-muted-foreground focus:ring-2 focus:ring-ring/40 focus:outline-none"
                 />
               </label>
+              <div className="border-t border-border/60" />
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-xs uppercase tracking-wider text-muted-foreground">
+                    intensity
+                  </span>
+                  <span className="text-xs text-ink-bleed">{INTENSITY_LABELS[intensity]}</span>
+                </div>
+                <input
+                  type="range"
+                  min={1}
+                  max={5}
+                  step={1}
+                  value={intensity}
+                  onChange={(e) => onIntensityChange(Number(e.target.value))}
+                  className="w-full accent-ink-bleed"
+                  aria-label="Rewrite intensity"
+                />
+                <div className="flex justify-between text-[10px] text-muted-foreground">
+                  <span>Whisper</span>
+                  <span>Full</span>
+                </div>
+              </div>
+              {selectionText && (
+                <div className="flex items-center gap-1 rounded-md bg-ink-bleed/10 px-2 py-1 text-[11px] text-ink-bleed">
+                  <span className="min-w-0 flex-1 truncate italic">
+                    &ldquo;
+                    {selectionText.length > 48 ? `${selectionText.slice(0, 48)}…` : selectionText}
+                    &rdquo;
+                  </span>
+                  <button
+                    type="button"
+                    aria-label="Clear selection"
+                    onClick={onClearSelection}
+                    className="shrink-0 rounded p-0.5 hover:bg-ink-bleed/20 transition-colors"
+                  >
+                    <X className="size-3" />
+                  </button>
+                </div>
+              )}
+              <Button
+                size="sm"
+                variant={canAsk ? "default" : "outline"}
+                onClick={onRequest}
+                disabled={!canAsk}
+                className={cn(
+                  "w-full",
+                  canAsk && "bg-ink-bleed text-ink-paper hover:bg-ink-bleed/90",
+                )}
+              >
+                {isPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Sparkles className="size-4" />
+                )}
+                {buttonLabel}
+              </Button>
+              {isPending && (
+                <p className="text-[11px] italic text-muted-foreground">Claude is rewriting…</p>
+              )}
+              {error && <p className="text-[11px] italic text-destructive">{error}</p>}
             </>
           )}
-        </section>
-
-        {/* §3 — fixed footer. */}
-        <div className="flex flex-col gap-3 border-t border-border/60 pt-3">
-          {composedTarget ? (
-            <p className="text-[11px] leading-snug text-muted-foreground">
-              Aiming for: <span className="italic">{composedTarget}</span>
-            </p>
-          ) : (
-            <p className="text-[11px] italic leading-snug text-muted-foreground">
-              Pick a colour, facets, a brief — or any mix. Claude rewrites toward the combination.
-            </p>
-          )}
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-baseline justify-between">
-              <span className="text-xs uppercase tracking-wider text-muted-foreground">
-                intensity
-              </span>
-              <span className="text-xs text-ink-bleed">{INTENSITY_LABELS[intensity]}</span>
-            </div>
-            <input
-              type="range"
-              min={1}
-              max={5}
-              step={1}
-              value={intensity}
-              onChange={(e) => onIntensityChange(Number(e.target.value))}
-              className="w-full accent-ink-bleed"
-              aria-label="Rewrite intensity"
-            />
-            <div className="flex justify-between text-[10px] text-muted-foreground">
-              <span>Whisper</span>
-              <span>Full</span>
-            </div>
-          </div>
-          <label className="flex cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={animate}
-              onChange={(e) => onAnimateChange(e.target.checked)}
-              className="size-3.5 cursor-pointer accent-ink-bleed"
-            />
-            Splash animation on rewrite
-          </label>
-          {selectionText && (
-            <div className="flex items-center gap-1 rounded-md bg-ink-bleed/10 px-2 py-1 text-[11px] text-ink-bleed">
-              <span className="min-w-0 flex-1 truncate italic">
-                &ldquo;
-                {selectionText.length > 48 ? `${selectionText.slice(0, 48)}…` : selectionText}
-                &rdquo;
-              </span>
-              <button
-                type="button"
-                aria-label="Clear selection"
-                onClick={onClearSelection}
-                className="shrink-0 rounded p-0.5 hover:bg-ink-bleed/20 transition-colors"
-              >
-                <X className="size-3" />
-              </button>
-            </div>
-          )}
-          <Button size="sm" variant="outline" onClick={onRequest} disabled={!canAsk}>
-            {isPending ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Sparkles className="size-4" />
-            )}
-            {buttonLabel}
-          </Button>
-          {isPending && (
-            <p className="text-[11px] italic text-muted-foreground">Claude is rewriting…</p>
-          )}
-          {error && <p className="text-[11px] italic text-destructive">{error}</p>}
-        </div>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </>
   );
 }
 
 function SectionHeader({
   label,
+  description,
+  icon,
   open,
   onToggle,
 }: {
   label: string;
+  description: string;
+  icon: ReactNode;
   open: boolean;
   onToggle: () => void;
 }) {
   return (
-    <button
-      type="button"
-      aria-expanded={open}
-      onClick={onToggle}
-      className="flex items-center justify-between text-[10px] tracking-widest text-muted-foreground uppercase transition-colors hover:text-foreground focus-visible:outline-none"
-    >
-      {label}
-      <ChevronDown
-        aria-hidden="true"
-        className={cn("size-3.5 transition-transform", open && "rotate-180")}
-      />
-    </button>
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 gap-2">
+        <span className="mt-0.5 shrink-0 text-muted-foreground" aria-hidden="true">
+          {icon}
+        </span>
+        <div className="min-w-0">
+          <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">{label}</h2>
+          <p className="mt-1 text-[11px] italic leading-snug text-muted-foreground">
+            {description}
+          </p>
+        </div>
+      </div>
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-label={`${open ? "Collapse" : "Expand"} ${label}`}
+        onClick={onToggle}
+        className="shrink-0 cursor-pointer rounded-md p-1 text-muted-foreground transition-all hover:bg-muted/60 hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+      >
+        <ChevronDown
+          aria-hidden="true"
+          className={cn("size-3.5 transition-transform", open && "rotate-180")}
+        />
+      </button>
+    </div>
   );
 }
 

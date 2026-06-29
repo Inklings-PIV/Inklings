@@ -91,6 +91,8 @@ type EditorProps = {
   onChange?: (html: string) => void;
   /** Called whenever the selection changes — null when cursor only. */
   onSelectionChange?: (sel: SelectionRange | null) => void;
+  /** Called with the top-level text blocks currently visible in the editor scrollport. */
+  onVisibleBlocksChange?: (indices: number[]) => void;
   /** Visible placeholder when the editor is empty. */
   placeholder?: string;
   className?: string;
@@ -108,6 +110,10 @@ type EditorProps = {
    * the ink accent. Pass null to clear the highlight.
    */
   highlightBlock?: { index: number; tint?: string | null } | null;
+  /** Per-paragraph hue rail: one CSS colour per text block (index-aligned to the
+   *  hue band; null = too short to read), painting a left-accent on each block.
+   *  Omit or pass [] to hide the rail. */
+  blockHues?: (string | null)[];
   /** Selection being rewritten by the parent; stays painted while focus moves away. */
   pendingRewriteRange?: SelectionRange | null;
   /** Show local loading feedback beside the pending range. */
@@ -236,6 +242,41 @@ const EmoArcHighlight = Extension.create({
   },
 });
 
+// Per-paragraph hue rail — a coloured left-accent on each text block, in that
+// block's own hue. The CSS colours are pushed in from React via a meta-only
+// transaction, so the decoration reflows with the document without measuring.
+const hueRailKey = new PluginKey<(string | null)[]>("hueRail");
+const HueRail = Extension.create({
+  name: "hueRail",
+  addProseMirrorPlugins() {
+    return [
+      new Plugin<(string | null)[]>({
+        key: hueRailKey,
+        state: {
+          init: () => [],
+          apply(tr, value) {
+            const meta = tr.getMeta(hueRailKey) as (string | null)[] | undefined;
+            return meta === undefined ? value : meta;
+          },
+        },
+        props: {
+          decorations(state) {
+            const hues = hueRailKey.getState(state);
+            if (!hues || hues.length === 0) return null;
+            const decos = textblockRanges(state.doc).map((r, i) =>
+              Decoration.node(r.from - 1, r.to + 1, {
+                class: "quill-hue-rail",
+                style: `--hue-rail:${hues[i] ?? "transparent"}`,
+              }),
+            );
+            return DecorationSet.create(state.doc, decos);
+          },
+        },
+      }),
+    ];
+  },
+});
+
 // Keeps a selected passage visually connected to the loading rewrite after
 // focus leaves the editor and the browser's native selection paint disappears.
 const PendingRewriteHighlight = Extension.create({
@@ -295,12 +336,14 @@ export function Editor({
   initialContent = "",
   onChange,
   onSelectionChange,
+  onVisibleBlocksChange,
   placeholder,
   className,
   onDeriveHue,
   onCaptureHue,
   onRewriteSelection,
   highlightBlock,
+  blockHues,
   pendingRewriteRange,
   pendingRewriteLoading = false,
   onColourDrop,
@@ -311,11 +354,12 @@ export function Editor({
   const [hasSelection, setHasSelection] = useState(false);
   // Focus mode dims every block but the one holding the caret.
   const [focusMode, setFocusMode] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
   // Holds the latest "read the hue" handler so the editor's keymap (captured
   // once on mount) can call the current closure.
   const readHueRef = useRef<() => void>(() => undefined);
   const editor = useEditor({
-    extensions: [StarterKit, FocusActiveBlock, EmoArcHighlight, PendingRewriteHighlight],
+    extensions: [StarterKit, FocusActiveBlock, EmoArcHighlight, HueRail, PendingRewriteHighlight],
     content: initialContent,
     onSelectionUpdate: ({ editor: ed }) => {
       const { from, to, empty } = ed.state.selection;
@@ -525,6 +569,17 @@ export function Editor({
     el?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "nearest" });
   }, [editor, highlightIndex, highlightTint]);
 
+  // Push the per-paragraph hue rail into the plugin (meta-only, no doc change).
+  const railRef = useRef<string>("");
+  useEffect(() => {
+    if (!editor) return;
+    const hues = blockHues ?? [];
+    const key = hues.join("|");
+    if (key === railRef.current) return;
+    railRef.current = key;
+    editor.view.dispatch(editor.state.tr.setMeta(hueRailKey, hues));
+  }, [editor, blockHues]);
+
   // ProseMirror keeps its range when the editor loses DOM focus, so the highlight
   // vanishes but the selection (and the Rewrite button's target) silently lives
   // on. Collapse it on any pointer-down outside the editor, except on interactive
@@ -561,6 +616,47 @@ export function Editor({
     const reduce = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
     el?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "nearest" });
   }, [editor, pendingRewriteRange, pendingRewriteLoading]);
+
+  useEffect(() => {
+    if (!editor || !onVisibleBlocksChange) return;
+    const scrollEl = scrollRef.current;
+    if (!scrollEl) return;
+    let frame = 0;
+    let last = "";
+
+    const publishVisibleBlocks = () => {
+      frame = 0;
+      const viewport = scrollEl.getBoundingClientRect();
+      const visible = textblockRanges(editor.state.doc)
+        .map((range, index) => {
+          const at = editor.view.domAtPos(range.from).node;
+          const el = at instanceof HTMLElement ? at : at.parentElement;
+          if (!el) return null;
+          const rect = el.getBoundingClientRect();
+          return rect.bottom > viewport.top && rect.top < viewport.bottom ? index : null;
+        })
+        .filter((index): index is number => index !== null);
+      const key = visible.join(",");
+      if (key !== last) {
+        last = key;
+        onVisibleBlocksChange(visible);
+      }
+    };
+
+    const schedule = () => {
+      if (frame) return;
+      frame = window.requestAnimationFrame(publishVisibleBlocks);
+    };
+
+    schedule();
+    scrollEl.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      scrollEl.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+    };
+  }, [editor, onVisibleBlocksChange]);
 
   useImperativeHandle(
     ref,
@@ -630,6 +726,7 @@ export function Editor({
         <ContextMenuTrigger asChild>
           {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer-only colour-drop zone over the editable area; the same rewrite is keyboard-reachable via the Rewrite panel */}
           <div
+            ref={scrollRef}
             onDragOver={handleColourDragOver}
             onDrop={handleColourDrop}
             className={cn(

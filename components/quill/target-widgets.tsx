@@ -40,7 +40,7 @@ export function TargetWidgets({
                 key={option.value}
                 value={option.value}
                 title={option.phrase}
-                className="h-7 min-w-0 flex-1 px-1 text-xs"
+                className="h-7 min-w-0 flex-1 cursor-pointer px-1 text-xs"
               >
                 {option.label}
               </ToggleGroupItem>

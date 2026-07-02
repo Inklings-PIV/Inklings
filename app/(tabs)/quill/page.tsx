@@ -6,10 +6,14 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
-  ClipboardCopy,
+  Clipboard,
   Download,
+  Eye,
+  EyeOff,
   History,
   Lightbulb,
+  Pencil,
+  Trash2,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
@@ -113,8 +117,8 @@ export default function QuillPage() {
   // timing; the overlay just paints whatever phase it's handed.
   const [splash, setSplash] = useState<SplashState | null>(null);
   // Fused rewrite controls: an optionally-selected mood colour folded into the
-  // target, the brush size (sentences a colour drop covers), and whether a
-  // button-triggered rewrite plays the splash. Brush + animate persist.
+  // target, the brush size (sentence / passage / whole) for colour drops, and
+  // whether a button-triggered rewrite plays the splash. Brush + animate persist.
   const [selectedColour, setSelectedColour] = useState<string | null>(null);
   const [brushSize, setBrushSize] = useState(3);
   const [animateOnRewrite, setAnimateOnRewrite] = useState(true);
@@ -125,8 +129,10 @@ export default function QuillPage() {
   // Pre-rewrite snapshots. Accepting a rewrite remounts the editor and wipes
   // TipTap's undo stack — this is the way back.
   const [versions, setVersions] = useState<DraftVersion[]>([]);
+  const [versionLabels, setVersionLabels] = useState<Record<string, string>>({});
+  const [currentVersionKey, setCurrentVersionKey] = useState<string | null>(null);
   const [leftPanel, setLeftPanel] = useState<LeftPanel>("hue");
-  const [rightPanel, setRightPanel] = useState<RightPanel>("words");
+  const [rightPanel, setRightPanel] = useState<RightPanel>("colour");
   // Live selection drives the sidebar indicator + persistent editor mark;
   // committed selection is
   // frozen at request-time and used to splice the rewrite back in on accept.
@@ -163,6 +169,7 @@ export default function QuillPage() {
   // the whole draft in Readout mode.
   const hueCacheRef = useRef<Record<string, TextColour | null>>({});
   const [band, setBand] = useState<BandSegment[]>([]);
+  const [bandPending, setBandPending] = useState(false);
   const [showRail, setShowRail] = useState(false);
   const blockHues = useMemo(
     () =>
@@ -204,9 +211,6 @@ export default function QuillPage() {
     const w = customSwatches.find((w) => w.id === key);
     return w ? capturedHueCss(w) : NEUTRAL_INK_CSS;
   };
-  // Brush size (sentences) → window radius each side: 1→0, 3→1, 7→3.
-  const brushRadius = Math.floor((brushSize - 1) / 2);
-
   // Live writing stats (F1) — cheap, derived from the draft's plain text.
   const stats = useMemo(
     () => computeWritingStats(draft.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ")),
@@ -265,6 +269,10 @@ export default function QuillPage() {
     }
   }, [draft, hydrated]);
 
+  useEffect(() => {
+    if (versions.length === 0 && rightPanel === "versions") setRightPanel("colour");
+  }, [versions.length, rightPanel]);
+
   // Debounced cloud autosave when the toggle is on. The 2 s wait keeps a
   // burst of typing from firing dozens of writes.
   useEffect(() => {
@@ -292,6 +300,55 @@ export default function QuillPage() {
 
   // Tap a swatch to fold its mood into the target (toggle on/off).
   const toggleColour = (key: string) => setSelectedColour((prev) => (prev === key ? null : key));
+
+  const renameVersionLabel = (key: string, label: string) => {
+    const next = label.trim();
+    setVersionLabels((labels) => {
+      const copy = { ...labels };
+      if (next) copy[key] = next;
+      else delete copy[key];
+      return copy;
+    });
+  };
+
+  const deleteVersion = (version: DraftVersion) => {
+    const key = versionKey(version);
+    const index = versions.findIndex((entry) => versionKey(entry) === key);
+    if (index === -1) return;
+
+    const isOriginal = index === versions.length - 1;
+    const isCurrent = currentVersionKey === key || draft === version.html;
+    const nextVersions = versions.filter((entry) => versionKey(entry) !== key);
+
+    if (isOriginal) {
+      setDraft("");
+      setEditorKey((k) => k + 1);
+      setCurrentVersionKey(null);
+    } else if (isCurrent) {
+      const previousVersion = versions[index + 1] ?? nextVersions[nextVersions.length - 1] ?? null;
+      if (previousVersion) {
+        setDraft(previousVersion.html);
+        setCurrentVersionKey(versionKey(previousVersion));
+        setEditorKey((k) => k + 1);
+      } else {
+        setDraft("");
+        setCurrentVersionKey(null);
+        setEditorKey((k) => k + 1);
+      }
+    }
+
+    setVersions(nextVersions);
+    setVersionLabels((labels) => {
+      const copy = { ...labels };
+      delete copy[key];
+      return copy;
+    });
+    setRewrite(null);
+    setRewriteError(null);
+    setShowNudgeReady(false);
+    setCommittedSelection(null);
+    setLiveSelection(null);
+  };
 
   // Add a new custom swatch from a capture (right-click / Hue-band drag) or a mix.
   const addSwatch = (hue: CapturedHue) =>
@@ -414,10 +471,15 @@ export default function QuillPage() {
   // paragraph (only the uncached ones) and lay them out in the Hue card.
   useEffect(() => {
     let cancelled = false;
+    const parasBeforeDebounce = splitParagraphs(draft);
+    setBandPending(parasBeforeDebounce.length >= 2);
     const handle = setTimeout(async () => {
       const paras = splitParagraphs(draft);
       if (paras.length < 2) {
-        if (!cancelled) setBand([]);
+        if (!cancelled) {
+          setBand([]);
+          setBandPending(false);
+        }
         return;
       }
       const cache = hueCacheRef.current;
@@ -443,6 +505,7 @@ export default function QuillPage() {
           colour: hueCacheRef.current[p] ?? null,
         })),
       );
+      setBandPending(false);
     }, 800);
     return () => {
       cancelled = true;
@@ -551,19 +614,21 @@ export default function QuillPage() {
       coords: { origin: detail.origin, ripples: detail.ripples },
       colourCss: resolved.css,
       scale: BRUSH_SPLASH_SCALE[brushSize] ?? 1,
-      tooShort: "Drop on a fuller passage — the rewrite needs at least 8 words around the word.",
+      tooShort: "Write a little more before dropping a colour — rewrites need at least 8 words.",
     });
   };
 
   const acceptRewrite = (text: string) => {
     // Snapshot the draft being replaced — the remount below wipes TipTap undo.
-    setVersions((stack) =>
-      pushVersion(stack, { html: draft, sourceTarget: composedTarget, takenAt: Date.now() }),
-    );
+    const takenAt = Date.now();
+    const previousVersion: DraftVersion = { html: draft, sourceTarget: "", takenAt };
+    let acceptedHtml: string | null = null;
     if (committedSelection) {
       // The editor splices as an open ProseMirror slice, so the rewrite merges
       // at the cut points (no host-paragraph splitting), whatever the span.
-      editorRef.current?.replaceRange(committedSelection.from, committedSelection.to, text);
+      acceptedHtml =
+        editorRef.current?.replaceRange(committedSelection.from, committedSelection.to, text) ??
+        null;
     } else {
       const asBlocks = text
         .split(/\n\s*\n+/)
@@ -571,9 +636,19 @@ export default function QuillPage() {
         .filter(Boolean)
         .map((p) => `<p>${escapeHtml(p)}</p>`)
         .join("");
+      acceptedHtml = asBlocks;
       setDraft(asBlocks);
       setEditorKey((k) => k + 1);
     }
+    const acceptedVersion = acceptedHtml
+      ? { html: acceptedHtml, sourceTarget: composedTarget, takenAt: takenAt + 1 }
+      : null;
+    setVersions((stack) => {
+      let next = pushVersionOnce(stack, previousVersion);
+      if (acceptedVersion) next = pushVersionOnce(next, acceptedVersion);
+      return next;
+    });
+    if (acceptedVersion) setCurrentVersionKey(versionKey(acceptedVersion));
     setRewrite(null);
     setShowNudgeReady(false);
     setCommittedSelection(null);
@@ -581,11 +656,19 @@ export default function QuillPage() {
   };
 
   const restoreVersion = (version: DraftVersion) => {
+    const key = versionKey(version);
+    if (currentVersionKey === key || draft === version.html) {
+      setCurrentVersionKey(key);
+      return;
+    }
     // The current draft becomes a version too, so a restore is reversible.
     setVersions((stack) =>
-      pushVersion(stack, { html: draft, sourceTarget: "", takenAt: Date.now() }),
+      stack.some((entry) => entry.html === draft)
+        ? [...stack]
+        : pushVersion(stack, { html: draft, sourceTarget: "", takenAt: Date.now() }),
     );
     setDraft(version.html);
+    setCurrentVersionKey(key);
     setRewrite(null);
     setRewriteError(null);
     setShowNudgeReady(false);
@@ -616,6 +699,7 @@ export default function QuillPage() {
             onToggleExplain={() => setExplain((v) => !v)}
             band={band}
             showBand={bandVisible}
+            bandPending={bandPending}
             onBandHover={(index, tint) => setHighlight(index == null ? null : { index, tint })}
             onBandActivate={(index) => editorRef.current?.focusBlock(index)}
             showRail={showRail}
@@ -736,7 +820,7 @@ export default function QuillPage() {
                     pendingRewriteRange={isRewriting ? committedSelection : liveSelection}
                     pendingRewriteLoading={isRewriting && !!committedSelection}
                     onColourDrop={handleColourDrop}
-                    brushRadius={brushRadius}
+                    brushSize={brushSize}
                   />
                 </div>
               </CardContent>
@@ -746,14 +830,21 @@ export default function QuillPage() {
         </main>
 
         <aside className="order-3 flex flex-col gap-3 xl:pt-[4.75rem]">
-          <VersionHistory
-            open={rightPanel === "versions"}
-            onToggleOpen={() =>
-              setRightPanel((panel) => (panel === "versions" ? null : "versions"))
-            }
-            versions={versions}
-            onRestore={restoreVersion}
-          />
+          {versions.length > 0 && (
+            <VersionHistory
+              open={rightPanel === "versions"}
+              onToggleOpen={() =>
+                setRightPanel((panel) => (panel === "versions" ? null : "versions"))
+              }
+              versions={versions}
+              currentHtml={draft}
+              labels={versionLabels}
+              currentKey={currentVersionKey}
+              onRestore={restoreVersion}
+              onRename={renameVersionLabel}
+              onDelete={deleteVersion}
+            />
+          )}
           <RewritePanel
             openPanel={rightPanel === "colour" || rightPanel === "words" ? rightPanel : null}
             onOpenPanelChange={(panel) => setRightPanel(panel)}
@@ -821,6 +912,7 @@ function HueReadout({
   onToggleExplain,
   band,
   showBand,
+  bandPending,
   onBandHover,
   onBandActivate,
   showRail,
@@ -837,6 +929,7 @@ function HueReadout({
   onToggleExplain: () => void;
   band: BandSegment[];
   showBand: boolean;
+  bandPending: boolean;
   onBandHover?: (index: number | null, tint: string | null) => void;
   onBandActivate?: (index: number) => void;
   showRail: boolean;
@@ -877,41 +970,36 @@ function HueReadout({
                     ? "Reading the ink…"
                     : "Keep writing."}
             </p>
-            <div className="flex min-h-7 items-center justify-between gap-3">
-              {wordCount > 0 ? (
-                <p className="text-[11px] tabular-nums text-muted-foreground">
-                  {wordCount} {wordCount === 1 ? "word" : "words"}
-                </p>
-              ) : (
-                <span aria-hidden="true" />
-              )}
-              {readout && (
-                <button
-                  type="button"
-                  aria-pressed={explain}
-                  onClick={onToggleExplain}
-                  className={cn(
-                    "inline-flex h-7 items-center gap-1.5 rounded-md border px-2 text-[11px] transition-colors",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-                    explain
-                      ? "border-ink-deep bg-ink-deep text-ink-paper"
-                      : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
-                  )}
-                >
-                  <Lightbulb className="size-3.5" />
-                  {explain ? "Hide why" : "Why this colour?"}
-                </button>
-              )}
-            </div>
-            {showBand && (
+            {readout && (
+              <button
+                type="button"
+                aria-pressed={explain}
+                onClick={onToggleExplain}
+                className={cn(
+                  "inline-flex h-7 items-center gap-1.5 self-start rounded-md border px-2 text-[11px] transition-colors",
+                  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                  explain
+                    ? "border-ink-deep bg-ink-deep text-ink-paper"
+                    : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
+                )}
+              >
+                <Lightbulb className="size-3.5" />
+                {explain ? "Hide why" : "Why this colour?"}
+              </button>
+            )}
+            {(showBand || bandPending) && (
               <div className="flex flex-col gap-2 border-t border-border/60 pt-3">
-                <HueArcStrip
-                  segments={band}
-                  onHover={onBandHover}
-                  onActivate={onBandActivate}
-                  showRail={showRail}
-                  onToggleRail={onToggleRail}
-                />
+                {showBand ? (
+                  <HueArcStrip
+                    segments={band}
+                    onHover={onBandHover}
+                    onActivate={onBandActivate}
+                    showRail={showRail}
+                    onToggleRail={onToggleRail}
+                  />
+                ) : (
+                  <HueArcStripShimmer showRail={showRail} onToggleRail={onToggleRail} />
+                )}
               </div>
             )}
           </>
@@ -943,6 +1031,67 @@ function CollapseButton({
         className={cn("size-3.5 transition-transform", open && "rotate-180")}
       />
     </button>
+  );
+}
+
+function HueArcStripShimmer({
+  showRail,
+  onToggleRail,
+}: {
+  showRail: boolean;
+  onToggleRail: () => void;
+}) {
+  const pieces = [
+    { id: "opening", width: "flex-[1.2]" },
+    { id: "turn", width: "flex-[0.9]" },
+    { id: "middle", width: "flex-[1.4]" },
+    { id: "lift", width: "flex-[1]" },
+    { id: "tail", width: "flex-[0.8]" },
+  ];
+  return (
+    <div className="flex flex-col gap-2" aria-busy="true" aria-live="polite">
+      <div className="flex items-center justify-between">
+        <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
+          across paragraphs
+        </h2>
+        <button
+          type="button"
+          aria-pressed={showRail}
+          aria-label={
+            showRail ? "Hide paragraph hues beside text" : "Show paragraph hues beside text"
+          }
+          title={showRail ? "Hide beside text" : "Show beside text"}
+          onClick={onToggleRail}
+          className={cn(
+            "inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border transition-all",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-95",
+            showRail
+              ? "border-ink-deep bg-ink-deep text-ink-paper hover:bg-ink-deep/90"
+              : "border-border text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+          )}
+        >
+          {showRail ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
+        </button>
+      </div>
+      <div className="flex h-9 gap-0.5 overflow-hidden rounded-md">
+        {pieces.map((piece, index) => (
+          <div
+            key={piece.id}
+            className={cn(
+              "relative h-full overflow-hidden bg-muted/60",
+              piece.width,
+              index === 0 && "rounded-l-md",
+              index === pieces.length - 1 && "rounded-r-md",
+            )}
+          >
+            <div className="absolute inset-0 -translate-x-full animate-[inklings-shimmer_1.4s_ease-in-out_infinite] bg-gradient-to-r from-transparent via-ink-bleed/18 to-transparent" />
+          </div>
+        ))}
+      </div>
+      <p className="text-[11px] italic leading-snug text-muted-foreground">
+        Reading paragraph hues…
+      </p>
+    </div>
   );
 }
 
@@ -993,33 +1142,24 @@ function HueArcStrip({
         <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
           across paragraphs
         </h2>
-        <div className="flex items-center gap-1.5 text-[11px] tabular-nums text-muted-foreground">
-          {pageCount > 1 && (
-            <button
-              type="button"
-              aria-label="Show previous paragraphs"
-              disabled={!hasPrevious}
-              onClick={() => setPage((value) => Math.max(0, value - 1))}
-              className="rounded p-0.5 transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-            >
-              <ChevronLeft aria-hidden="true" className="size-3.5" />
-            </button>
+        <button
+          type="button"
+          aria-pressed={showRail}
+          aria-label={
+            showRail ? "Hide paragraph hues beside text" : "Show paragraph hues beside text"
+          }
+          title={showRail ? "Hide beside text" : "Show beside text"}
+          onClick={onToggleRail}
+          className={cn(
+            "inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border transition-all",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 active:scale-95",
+            showRail
+              ? "border-ink-deep bg-ink-deep text-ink-paper hover:bg-ink-deep/90"
+              : "border-border text-muted-foreground hover:bg-muted/60 hover:text-foreground",
           )}
-          <span>
-            {start + 1}-{end}
-          </span>
-          {pageCount > 1 && (
-            <button
-              type="button"
-              aria-label="Show next paragraphs"
-              disabled={!hasNext}
-              onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}
-              className="rounded p-0.5 transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
-            >
-              <ChevronRight aria-hidden="true" className="size-3.5" />
-            </button>
-          )}
-        </div>
+        >
+          {showRail ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
+        </button>
       </div>
       {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer-only cleanup; keyboard clears via each button's onBlur. Leave lives on the row, not per-segment, so crossing the gap between buttons keeps the last highlight instead of flickering to null. */}
       <div className="flex h-9 gap-0.5" onMouseLeave={leave}>
@@ -1067,7 +1207,37 @@ function HueArcStrip({
           );
         })}
       </div>
-      <div className="flex items-start justify-between gap-5">
+      <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
+        <div className="flex items-center gap-1.5 tabular-nums">
+          <span>
+            {start + 1}-{end}
+          </span>
+          <span className="opacity-60">of {segments.length}</span>
+        </div>
+        {pageCount > 1 && (
+          <div className="flex items-center gap-0.5">
+            <button
+              type="button"
+              aria-label="Show previous paragraphs"
+              disabled={!hasPrevious}
+              onClick={() => setPage((value) => Math.max(0, value - 1))}
+              className="rounded p-0.5 transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            >
+              <ChevronLeft aria-hidden="true" className="size-3.5" />
+            </button>
+            <button
+              type="button"
+              aria-label="Show next paragraphs"
+              disabled={!hasNext}
+              onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}
+              className="rounded p-0.5 transition-colors hover:text-foreground disabled:pointer-events-none disabled:opacity-30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+            >
+              <ChevronRight aria-hidden="true" className="size-3.5" />
+            </button>
+          </div>
+        )}
+      </div>
+      <div className="flex items-start">
         <p className="min-h-4 min-w-0 flex-1 text-[11px] italic leading-snug text-muted-foreground transition-opacity duration-200">
           {active
             ? active.colour
@@ -1075,20 +1245,6 @@ function HueArcStrip({
               : `"${truncate(active.text)}" — too short to read`
             : "Hover the strip to read each paragraph’s hue."}
         </p>
-        <button
-          type="button"
-          aria-pressed={showRail}
-          onClick={onToggleRail}
-          className={cn(
-            "inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-[11px] transition-colors",
-            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-            showRail
-              ? "border-ink-deep bg-ink-deep text-ink-paper"
-              : "border-border text-muted-foreground hover:bg-accent hover:text-foreground",
-          )}
-        >
-          {showRail ? "Hide from text" : "Show beside text"}
-        </button>
       </div>
     </div>
   );
@@ -1118,9 +1274,9 @@ function ExportControls({ markdown }: { markdown: string }) {
     toast.success("Downloaded inkling-draft.md");
   };
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex items-center gap-2">
       <Button size="sm" variant="outline" onClick={copy} title="Copy the draft as Markdown">
-        <ClipboardCopy className="size-3.5" /> Copy .md
+        <Clipboard className="size-3.5" /> Copy
       </Button>
       <Button
         size="sm"
@@ -1128,7 +1284,7 @@ function ExportControls({ markdown }: { markdown: string }) {
         onClick={download}
         title="Download the draft as a .md file"
       >
-        <Download className="size-3.5" />
+        <Download className="size-3.5" /> Download
       </Button>
     </div>
   );
@@ -1316,13 +1472,54 @@ function VersionHistory({
   open,
   onToggleOpen,
   versions,
+  currentHtml,
+  labels,
+  currentKey,
   onRestore,
+  onRename,
+  onDelete,
 }: {
   open: boolean;
   onToggleOpen: () => void;
   versions: DraftVersion[];
+  currentHtml: string;
+  labels: Record<string, string>;
+  currentKey: string | null;
   onRestore: (version: DraftVersion) => void;
+  onRename: (key: string, label: string) => void;
+  onDelete: (version: DraftVersion) => void;
 }) {
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editingLabel, setEditingLabel] = useState("");
+  const editingInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (editingKey) editingInputRef.current?.focus();
+  }, [editingKey]);
+
+  const startEditing = (key: string, label: string) => {
+    setEditingKey(key);
+    setEditingLabel(label);
+  };
+
+  const saveEditing = () => {
+    if (editingKey) onRename(editingKey, editingLabel);
+    setEditingKey(null);
+    setEditingLabel("");
+  };
+
+  const rows = versions.map((version, index) => {
+    const chronologicalIndex = versions.length - 1 - index;
+    const key = versionKey(version);
+    return {
+      key,
+      fallback: chronologicalIndex === 0 ? "Original" : `Version ${chronologicalIndex}`,
+      time: formatVersionTime(version.takenAt),
+      current: currentKey === key || (!currentKey && version.html === currentHtml),
+      restore: version,
+    };
+  });
+
   return (
     <Card>
       <CardContent className="flex flex-col gap-2.5 p-4">
@@ -1333,9 +1530,6 @@ function VersionHistory({
               <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
                 Versions
               </h2>
-              <p className="mt-1 text-[11px] italic leading-snug text-muted-foreground">
-                Drafts replaced by a rewrite land here — click one to bring it back.
-              </p>
             </div>
           </div>
           <button
@@ -1351,37 +1545,121 @@ function VersionHistory({
             />
           </button>
         </div>
-        {open && versions.length > 0 && (
-          <ul className="flex flex-col gap-1.5">
-            {versions.map((version) => (
-              <li key={`${version.takenAt}:${version.html.length}`}>
-                <button
-                  type="button"
-                  onClick={() => onRestore(version)}
-                  title="Restore this draft (the current draft is kept as a version)"
+        {open && rows.length > 0 && (
+          <ul className="flex flex-col gap-1">
+            {rows.map((row) => {
+              const label = labels[row.key] ?? row.fallback;
+              const editing = editingKey === row.key;
+              const restore = row.restore;
+              return (
+                <li
+                  key={row.key}
                   className={cn(
-                    "flex w-full items-baseline justify-between gap-2 rounded-sm px-1 py-0.5 text-left text-xs",
-                    "transition-colors hover:bg-muted/60 hover:text-ink-deep",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+                    "group relative grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-1.5 py-1 transition-colors",
+                    row.current ? "bg-ink-bleed/12 ring-1 ring-ink-bleed/20" : "hover:bg-muted/50",
+                    restore && !editing && "cursor-pointer",
                   )}
                 >
-                  <span className="truncate text-ink-deep">
-                    {version.sourceTarget ? `toward "${version.sourceTarget}"` : "snapshot"}
-                  </span>
-                  <span className="shrink-0 tabular-nums text-muted-foreground">
-                    {new Date(version.takenAt).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </span>
-                </button>
-              </li>
-            ))}
+                  {restore && !editing && (
+                    <button
+                      type="button"
+                      onClick={() => onRestore(restore)}
+                      title="Restore this draft (the current draft is kept as a version)"
+                      aria-label={`Restore ${label}`}
+                      className="absolute inset-0 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                    />
+                  )}
+                  <div className={cn("min-w-0", restore && !editing && "pointer-events-none")}>
+                    {editing ? (
+                      <input
+                        type="text"
+                        value={editingLabel}
+                        onChange={(e) => setEditingLabel(e.target.value)}
+                        onBlur={saveEditing}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            saveEditing();
+                          }
+                          if (e.key === "Escape") {
+                            e.preventDefault();
+                            setEditingKey(null);
+                            setEditingLabel("");
+                          }
+                        }}
+                        aria-label="Version name"
+                        className="h-6 w-full rounded-none border-0 border-b border-ink-bleed/70 bg-transparent px-0 text-xs text-ink-deep focus:outline-none focus:ring-0"
+                        ref={editingInputRef}
+                      />
+                    ) : (
+                      <span
+                        className={cn(
+                          "block truncate text-xs",
+                          row.current ? "text-ink-bleed" : "text-ink-deep",
+                        )}
+                      >
+                        {label}
+                      </span>
+                    )}
+                  </div>
+                  <div className="pointer-events-none flex items-center gap-0.5">
+                    <span className="shrink-0 tabular-nums text-[11px] text-muted-foreground">
+                      {row.time}
+                    </span>
+                    {!editing && (
+                      <>
+                        <button
+                          type="button"
+                          aria-label={`Rename ${label}`}
+                          title="Rename version"
+                          onClick={() => startEditing(row.key, label)}
+                          className="pointer-events-auto relative z-10 rounded p-1 text-muted-foreground opacity-70 transition-all hover:bg-muted hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                        >
+                          <Pencil aria-hidden="true" className="size-3" />
+                        </button>
+                        {restore && row.current && (
+                          <button
+                            type="button"
+                            aria-label={`Delete ${label}`}
+                            title="Delete version"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDelete(restore);
+                            }}
+                            className="pointer-events-auto relative z-10 rounded p-1 text-muted-foreground opacity-70 transition-all hover:bg-destructive/10 hover:text-destructive group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+                          >
+                            <Trash2 aria-hidden="true" className="size-3" />
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
       </CardContent>
     </Card>
   );
+}
+
+function versionKey(version: DraftVersion): string {
+  return `${version.takenAt}:${version.html.length}`;
+}
+
+function formatVersionTime(takenAt: number): string {
+  return new Date(takenAt).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+}
+
+function pushVersionOnce(stack: readonly DraftVersion[], version: DraftVersion): DraftVersion[] {
+  if (stack.some((entry) => entry.html === version.html)) return [...stack];
+  return pushVersion(stack, version);
 }
 
 function escapeHtml(s: string): string {

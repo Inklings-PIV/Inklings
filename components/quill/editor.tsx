@@ -42,7 +42,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu";
 import { hueFromHSL } from "@/lib/colour/placeholder";
-import { sentenceWindowAt, textblockRanges } from "@/lib/quill/blocks";
+import { sentenceWindowAtMinWords, textblockRanges } from "@/lib/quill/blocks";
 import { NUDGE_PRESETS } from "@/lib/quill/nudge-presets";
 import { cn } from "@/lib/utils";
 
@@ -120,9 +120,8 @@ type EditorProps = {
   pendingRewriteLoading?: boolean;
   /** A colour swatch was dropped on the prose — resolved span + splash coords. */
   onColourDrop?: (detail: ColourDropDetail) => void;
-  /** Sentences each side of the drop point to include in the rewrite window
-   *  (0 = just the dropped-on sentence). Drives the colour-drop brush size. */
-  brushRadius?: number;
+  /** Colour-drop brush size: 1 = sentence, 3 = current passage, 7 = whole draft. */
+  brushSize?: number;
 };
 
 /** Splash geometry for a range: the centre point and sampled points across it. */
@@ -139,7 +138,7 @@ export type EditorHandle = {
   getSelection: () => SelectionRange | null;
   /** Replace the range [from, to] with rewritten prose (paragraphs split on
    *  blank lines), merging at the cut points instead of splitting host blocks. */
-  replaceRange: (from: number, to: number, text: string) => void;
+  replaceRange: (from: number, to: number, text: string) => string | null;
   /** Splash coords (viewport px) for an arbitrary range — used to animate a
    *  rewrite triggered from the panel rather than a drop. */
   splashPointsFor: (from: number, to: number) => SplashPoints | null;
@@ -148,6 +147,7 @@ export type EditorHandle = {
 // Sample points (viewport px) evenly across a range, so the secondary splashes
 // trace the words about to change. Shared by the drop handler and splashPointsFor.
 const RIPPLE_STEPS = 5;
+const MIN_COLOUR_DROP_WORDS = 8;
 function sampleRipples(view: EditorView, from: number, to: number): { x: number; y: number }[] {
   return Array.from({ length: RIPPLE_STEPS + 1 }, (_, i) => {
     const p = Math.min(to, Math.max(from, Math.round(from + ((to - from) * i) / RIPPLE_STEPS)));
@@ -170,6 +170,19 @@ function openness(
     openStart: $from.parentOffset > 0,
     openEnd: $to.parentOffset < $to.parent.content.size,
   };
+}
+
+function passageAt(doc: ProseMirrorNode, pos: number): { from: number; to: number } | null {
+  const blocks = textblockRanges(doc);
+  return blocks.find((block) => pos >= block.from && pos <= block.to) ?? null;
+}
+
+function wholeDraftRange(doc: ProseMirrorNode): { from: number; to: number } | null {
+  const blocks = textblockRanges(doc);
+  const first = blocks[0];
+  const last = blocks[blocks.length - 1];
+  if (!first || !last) return null;
+  return { from: first.from, to: last.to };
 }
 
 // Marks the top-level block holding the caret with `quill-focus-active`, so
@@ -347,11 +360,12 @@ export function Editor({
   pendingRewriteRange,
   pendingRewriteLoading = false,
   onColourDrop,
-  brushRadius = 1,
+  brushSize = 3,
 }: EditorProps & { ref?: Ref<EditorHandle> }) {
   // Track selection emptiness so the right-click menu can disable
   // selection-only actions; updated on every selection change.
   const [hasSelection, setHasSelection] = useState(false);
+  const [hasText, setHasText] = useState(initialContent.trim().length > 0);
   // Focus mode dims every block but the one holding the caret.
   const [focusMode, setFocusMode] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -408,6 +422,9 @@ export function Editor({
       },
     },
     onUpdate: ({ editor: ed }) => {
+      const nextHasText = !ed.isEmpty;
+      setHasText(nextHasText);
+      if (!nextHasText) setFocusMode(false);
       onChange?.(ed.getHTML());
     },
   });
@@ -509,8 +526,8 @@ export function Editor({
 
   // Resolve a dropped swatch to the span to rewrite + the splash coordinates. An
   // active text selection wins over the brush — the drop rewrites exactly the
-  // selected text; otherwise it's the brush-sized sentence window at the drop
-  // point. We preventDefault so ProseMirror's own drop handling never sees it.
+  // selected text. Without a selection the brush maps to sentence / current
+  // passage / whole draft. We preventDefault so ProseMirror never sees the drop.
   const handleColourDrop = (e: React.DragEvent) => {
     if (!editor) return;
     const colourKey = e.dataTransfer.getData(COLOUR_DROP_MIME);
@@ -529,9 +546,14 @@ export function Editor({
     } else {
       const at = view.posAtCoords({ left: e.clientX, top: e.clientY });
       if (!at) return;
-      const window = sentenceWindowAt(doc, at.pos, brushRadius);
-      if (!window) return;
-      ({ from, to } = window);
+      const brushRange =
+        brushSize <= 1
+          ? sentenceWindowAtMinWords(doc, at.pos, MIN_COLOUR_DROP_WORDS)
+          : brushSize <= 3
+            ? passageAt(doc, at.pos)
+            : wholeDraftRange(doc);
+      if (!brushRange) return;
+      ({ from, to } = brushRange);
       origin = { x: e.clientX, y: e.clientY };
     }
     const span: SelectionRange = {
@@ -687,14 +709,14 @@ export function Editor({
         };
       },
       replaceRange(from: number, to: number, text: string) {
-        if (!editor) return;
+        if (!editor) return null;
         const { schema } = editor.state;
         const paras = text
           .split(/\n\s*\n+/)
           .map((p) => p.trim())
           .filter(Boolean);
         const paragraph = schema.nodes.paragraph;
-        if (paras.length === 0 || !paragraph) return;
+        if (paras.length === 0 || !paragraph) return null;
         // A slice open at both ends (textblock depth 1) fits like a paste: the
         // first paragraph merges into the block at `from`, internal breaks split,
         // the last merges into the block at `to`. Handles in-paragraph, whole-
@@ -702,6 +724,7 @@ export function Editor({
         const nodes = paras.map((t) => paragraph.create(null, schema.text(t)));
         const slice = new Slice(Fragment.fromArray(nodes), 1, 1);
         editor.view.dispatch(editor.state.tr.replaceRange(from, to, slice));
+        return editor.getHTML();
       },
       splashPointsFor(from: number, to: number) {
         if (!editor) return null;
@@ -716,11 +739,18 @@ export function Editor({
   // Keep the keymap pointed at the current readHue closure.
   readHueRef.current = readHue;
 
+  useEffect(() => {
+    if (!editor) return;
+    setHasText(!editor.isEmpty);
+  }, [editor]);
+
   return (
     <div className={cn("flex flex-col gap-3", className)}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         {editor && <EditorToolbar editor={editor} />}
-        <FocusToggle active={focusMode} onToggle={() => setFocusMode((v) => !v)} />
+        {editor && hasText && (
+          <FocusToggle active={focusMode} onToggle={() => setFocusMode((v) => !v)} />
+        )}
       </div>
       <ContextMenu>
         <ContextMenuTrigger asChild>

@@ -38,13 +38,15 @@ const INTENSITY_LABELS: Record<number, string> = {
   5: "Full",
 };
 
-// Brush = how many sentences the colour drop covers. Selection always wins over
-// this; it only governs a drop point. The brush icon grows with the size.
-const BRUSH_SIZES = [
-  { size: 1, iconClass: "size-3", title: "Sentence — only the sentence you drop on" },
-  { size: 3, iconClass: "size-4", title: "Nearby passage — sentence plus nearby context" },
-  { size: 7, iconClass: "size-5", title: "Wider passage — a broader section around the drop" },
-] as const;
+const BRUSH_LABELS: Record<number, string> = {
+  1: "Sentence",
+  3: "Passage",
+  7: "Whole draft",
+};
+
+// Brush = how much prose a colour drop covers when there is no selected text.
+// Selection always wins over this; it only governs a drop point.
+const BRUSH_SIZES = [1, 3, 7] as const;
 
 function countWords(s: string): number {
   return s.split(/\s+/).filter(Boolean).length;
@@ -151,6 +153,7 @@ export function RewritePanel({
       const next = { ...r };
       if (n <= 0) delete next[key];
       else next[key] = n;
+      setPour({ token: 0, css: "" });
       return next;
     });
 
@@ -180,6 +183,7 @@ export function RewritePanel({
     : hasRewrite
       ? "Try another nudge"
       : "Suggest a nudge";
+  const brushIndex = brushSize <= 1 ? 0 : brushSize <= 3 ? 1 : 2;
 
   return (
     <>
@@ -187,7 +191,7 @@ export function RewritePanel({
         <CardContent className="flex flex-col gap-2.5 p-4">
           <SectionHeader
             label="Colour"
-            description="Drag a colour onto text, or tap one to aim the nudge."
+            description="Tap a colour to set the target. Drag it onto a sentence, passage, or selection."
             icon={<Palette className="size-4" />}
             open={colourOpen}
             onToggle={() => onOpenPanelChange(colourOpen ? null : "colour")}
@@ -218,34 +222,31 @@ export function RewritePanel({
                   onCancel={closeMix}
                 />
               )}
-              <div className="flex items-center justify-between gap-2 pt-1">
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                  Brush range
-                </span>
-                <div className="flex items-center gap-0.5 rounded-md border border-border bg-muted/40 p-0.5">
-                  {BRUSH_SIZES.map((b) => (
-                    <button
-                      key={b.size}
-                      type="button"
-                      aria-pressed={brushSize === b.size}
-                      aria-label={b.title}
-                      title={b.title}
-                      onClick={() => onBrushChange(b.size)}
-                      className={cn(
-                        "inline-flex size-7 items-center justify-center rounded transition-colors",
-                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-                        brushSize === b.size
-                          ? "bg-card text-ink-deep shadow-sm"
-                          : "text-muted-foreground hover:text-foreground",
-                      )}
-                    >
-                      <Brush className={b.iconClass} />
-                    </button>
-                  ))}
+              <div className="flex flex-col gap-1.5 pt-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <Brush className="size-3.5" />
+                    Brush range
+                  </span>
+                  <span className="text-xs text-ink-bleed">{BRUSH_LABELS[brushSize]}</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={BRUSH_SIZES.length - 1}
+                  step={1}
+                  value={brushIndex}
+                  onChange={(e) => onBrushChange(BRUSH_SIZES[Number(e.target.value)] ?? 3)}
+                  className="w-full accent-ink-bleed"
+                  aria-label="Brush range"
+                />
+                <div className="flex justify-between text-[10px] text-muted-foreground">
+                  <span>Small</span>
+                  <span>Big</span>
                 </div>
               </div>
               <p className="text-[11px] italic leading-snug text-muted-foreground">
-                Tap a colour to add its mood, or drag it onto prose for a local nudge. Use{" "}
+                Brush range controls how much prose is affected when no text is selected. Use{" "}
                 <Plus className="inline size-3" /> to mix or capture a hue.
               </p>
             </>
@@ -325,6 +326,7 @@ export function RewritePanel({
                 className={cn(
                   "w-full",
                   canAsk && "bg-ink-bleed text-ink-paper hover:bg-ink-bleed/90",
+                  canAsk && "cursor-pointer",
                 )}
               >
                 {isPending ? (
@@ -574,11 +576,12 @@ function PlusCell({
         onClick={onStartMix}
         title="Mix a new hue — or drop a selection / Hue-band segment to capture one"
         className={cn(
-          "flex size-9 items-center justify-center rounded-full border border-dashed transition-colors",
+          "flex size-9 cursor-pointer items-center justify-center rounded-full border border-dashed transition-colors",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-          over || mixOpen
-            ? "border-ink-deep bg-ink-deep/10 text-ink-deep"
-            : "border-border text-muted-foreground hover:text-foreground",
+          mixOpen
+            ? "border-border/60 text-muted-foreground/70 hover:text-muted-foreground"
+            : "border-foreground/80 text-foreground hover:border-foreground hover:bg-muted/30",
+          over && "border-ink-deep bg-ink-deep/10 text-ink-deep",
         )}
       >
         <Plus className="size-4" />
@@ -588,8 +591,8 @@ function PlusCell({
 }
 
 /** A mood swatch: draggable (the quick gesture) and clickable (toggle into the
- *  composed target, or pour a part in mix mode). In mix mode a count badge shows
- *  its parts and right-click removes one. */
+ *  composed target, or pour a part in mix mode). In mix mode the count chip
+ *  removes one part, with right-click kept as a backup. */
 function Swatch({
   css,
   dragKey,
@@ -610,39 +613,50 @@ function Swatch({
   onRemovePart?: () => void;
 }) {
   return (
-    <button
-      type="button"
-      draggable
-      aria-pressed={active}
-      onDragStart={(e) => {
-        e.dataTransfer.setData(COLOUR_DROP_MIME, dragKey);
-        e.dataTransfer.effectAllowed = "copy";
-      }}
-      onClick={onToggle}
-      onContextMenu={
-        onRemovePart
-          ? (e) => {
-              e.preventDefault();
-              onRemovePart();
-            }
-          : undefined
-      }
-      title={title}
-      aria-label={ariaLabel}
-      className={cn(
-        "relative size-9 shrink-0 cursor-grab rounded-full border shadow-inner transition-transform",
-        "hover:scale-110 active:cursor-grabbing",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-        active ? "border-ink-deep ring-2 ring-ink-deep/50" : "border-border",
-      )}
-      style={{ backgroundColor: css }}
-    >
+    <span className="relative flex size-9 shrink-0 items-center justify-center">
+      <button
+        type="button"
+        draggable
+        aria-pressed={active}
+        onDragStart={(e) => {
+          e.dataTransfer.setData(COLOUR_DROP_MIME, dragKey);
+          e.dataTransfer.effectAllowed = "copy";
+        }}
+        onClick={onToggle}
+        onContextMenu={
+          onRemovePart
+            ? (e) => {
+                e.preventDefault();
+                onRemovePart();
+              }
+            : undefined
+        }
+        title={title}
+        aria-label={ariaLabel}
+        className={cn(
+          "size-9 cursor-grab rounded-full border shadow-inner transition-transform",
+          "hover:scale-110 active:cursor-grabbing",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+          active ? "border-ink-deep ring-2 ring-ink-deep/50" : "border-border",
+        )}
+        style={{ backgroundColor: css }}
+      />
       {badge && badge > 0 ? (
-        <span className="absolute -right-1 -top-1 flex min-w-4 items-center justify-center rounded-full bg-ink-deep px-0.5 text-[9px] tabular-nums text-ink-paper">
+        <button
+          type="button"
+          aria-label={`Remove one part from ${ariaLabel}`}
+          title="Remove one part from this mix"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemovePart?.();
+          }}
+          className="absolute -right-2 -top-2 flex h-5 min-w-7 cursor-pointer items-center justify-center gap-1 rounded-full border border-border/70 bg-background/90 px-1.5 text-[10px] font-semibold tabular-nums text-foreground shadow-md shadow-black/30 backdrop-blur transition-transform hover:scale-105 hover:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+        >
           {badge}
-        </span>
+          <X className="size-3 stroke-[3]" />
+        </button>
       ) : null}
-    </button>
+    </span>
   );
 }
 
@@ -666,38 +680,112 @@ function Beaker({
   onAccept: () => void;
   onCancel: () => void;
 }) {
-  // Level rises ~16% a part, capped — a full beaker reads as a strong mix.
-  const level = Math.min(totalParts * 16, 100);
+  const liquidCss = fillCss ?? "var(--muted)";
+  const dropCss = pour.css || "hsl(252, 55%, 68%)";
+  const isMixed = totalParts > 0;
+  const liquidLevel = isMixed ? 53 - Math.min(totalParts - 1, 4) * 2.25 : 53;
+  const wavePath = (y: number) =>
+    `M-50,${y} Q-40,${y + 6.5} -30,${y} Q-20,${y - 6.5} -10,${y} Q0,${y + 6.5} 10,${y} Q20,${y - 6.5} 30,${y} Q40,${y + 6.5} 50,${y} Q60,${y - 6.5} 70,${y} Q80,${y + 6.5} 90,${y} Q100,${y - 6.5} 110,${y} Q120,${y + 6.5} 130,${y} L130,80 L-50,80 Z`;
+  const dropPath =
+    "M40 32 C37.8 35.2 36.4 37.5 36.4 39.7 C36.4 42 38 43.8 40 43.8 C42 43.8 43.6 42 43.6 39.7 C43.6 37.5 42.2 35.2 40 32 Z";
   return (
     <div className="flex flex-col gap-2 rounded-md border border-border/60 p-3">
-      <div className="relative mx-auto h-20 w-16 overflow-hidden rounded-b-2xl rounded-t-sm border border-border bg-muted/30">
-        <div
-          className="absolute inset-x-0 bottom-0 transition-[height,background-color] duration-500 ease-out"
-          style={{ height: `${level}%`, backgroundColor: fillCss }}
-        />
-        {pour.token > 0 && (
-          <span
-            key={pour.token}
-            aria-hidden="true"
-            className="inklings-ink-pour absolute left-1/2 top-1 size-3 -translate-x-1/2 rounded-full"
-            style={{ backgroundColor: pour.css }}
+      <div className="relative mx-auto size-20">
+        <svg viewBox="0 0 80 80" role="img" aria-label="Colour mix pool" className="size-20">
+          <defs>
+            <clipPath id="mix-pool-clip">
+              <circle cx="40" cy="40" r="30" />
+            </clipPath>
+            <linearGradient id="mix-empty-liquid" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--muted)" stopOpacity="0.4" />
+              <stop offset="100%" stopColor="var(--muted)" stopOpacity="0.26" />
+            </linearGradient>
+            <linearGradient id="mix-empty-drop" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="hsl(252, 60%, 76%)" />
+              <stop offset="100%" stopColor="hsl(252, 48%, 48%)" />
+            </linearGradient>
+            <linearGradient id="mix-empty-stroke" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="hsl(252, 55%, 68%)" />
+              <stop offset="100%" stopColor="hsl(252, 48%, 46%)" />
+            </linearGradient>
+          </defs>
+          <circle
+            cx="40"
+            cy="40"
+            r="30"
+            fill="var(--card)"
+            stroke="var(--border)"
+            strokeWidth="2"
           />
-        )}
+          <g clipPath="url(#mix-pool-clip)">
+            <rect x="0" y="0" width="80" height="80" fill="var(--card)" />
+            <g>
+              <path
+                d={wavePath(liquidLevel)}
+                fill={isMixed ? liquidCss : "url(#mix-empty-liquid)"}
+                className="transition-all duration-500"
+              />
+            </g>
+          </g>
+          <circle
+            cx="40"
+            cy="40"
+            r="30"
+            fill="none"
+            stroke="var(--border)"
+            strokeOpacity="1"
+            strokeWidth="2"
+            className="transition-colors duration-500"
+          />
+          {!isMixed && (
+            <path
+              d={wavePath(liquidLevel)}
+              fill="none"
+              stroke="url(#mix-empty-stroke)"
+              strokeOpacity="0.7"
+              strokeWidth="1.5"
+              clipPath="url(#mix-pool-clip)"
+            />
+          )}
+          {!isMixed && (
+            <path className="inklings-hue-empty-drop" d={dropPath} fill="url(#mix-empty-drop)" />
+          )}
+          {pour.token > 0 && (
+            <path
+              key={pour.token}
+              className={cn(
+                totalParts === 1 ? "inklings-mix-first-drop" : "inklings-mix-drop-pour",
+              )}
+              d={dropPath}
+              fill={dropCss}
+            />
+          )}
+        </svg>
       </div>
       {totalParts > 0 ? (
         <p className="text-[11px] italic leading-snug text-muted-foreground">{phrase}</p>
       ) : (
         <p className="text-[11px] italic leading-snug text-muted-foreground">
-          Tap colours above — each one falls a part into the beaker. Right-click a colour to take a
-          part back.
+          Tap the colours above to mix the hue — each one falls a part into the beaker.
         </p>
       )}
-      <div className="flex gap-1.5">
-        <Button size="sm" variant="outline" onClick={onAccept} disabled={!canPour}>
-          <Check className="size-4" /> Pour into a swatch
-        </Button>
-        <Button size="sm" variant="ghost" onClick={onCancel}>
+      <div className="flex justify-end gap-1.5">
+        <Button
+          size="sm"
+          variant={totalParts > 0 ? "secondary" : "outline"}
+          onClick={onCancel}
+          className="cursor-pointer"
+        >
           Cancel
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onAccept}
+          disabled={!canPour}
+          className={cn(canPour ? "cursor-pointer" : "cursor-not-allowed")}
+        >
+          <Check className="size-4" /> Add to palette
         </Button>
       </div>
     </div>

@@ -61,7 +61,6 @@ function countWords(s: string): number {
 export function RewritePanel({
   openPanel,
   onOpenPanelChange,
-  selectedColour,
   onToggleColour,
   customSwatches,
   onAddHue,
@@ -87,7 +86,6 @@ export function RewritePanel({
 }: {
   openPanel: "colour" | "words" | null;
   onOpenPanelChange: (panel: "colour" | "words" | null) => void;
-  selectedColour: string | null;
   onToggleColour: (key: string) => void;
   customSwatches: CustomSwatch[];
   onAddHue: (hue: CapturedHue) => void;
@@ -200,7 +198,6 @@ export function RewritePanel({
             <>
               <SwatchGrid
                 customSwatches={customSwatches}
-                selectedColour={selectedColour}
                 mixOpen={mixOpen}
                 recipe={recipe}
                 onTap={onTap}
@@ -215,7 +212,7 @@ export function RewritePanel({
                 <Beaker
                   fillCss={blendCss}
                   totalParts={totalParts}
-                  phrase={mixWords}
+                  parts={mixEntries.map((s) => ({ phrase: s.phrase, count: recipe[s.key] ?? 0 }))}
                   pour={pour}
                   canPour={!!blend}
                   onAccept={acceptMix}
@@ -395,7 +392,6 @@ function SectionHeader({
  *  tap folds the colour into the target; in mix mode a tap pours a part. */
 function SwatchGrid({
   customSwatches,
-  selectedColour,
   mixOpen,
   recipe,
   onTap,
@@ -407,7 +403,6 @@ function SwatchGrid({
   onCaptureText,
 }: {
   customSwatches: CustomSwatch[];
-  selectedColour: string | null;
   mixOpen: boolean;
   recipe: Record<string, number>;
   onTap: (key: string) => void;
@@ -429,7 +424,7 @@ function SwatchGrid({
               mixOpen ? ", or tap to add a part" : ", or tap to add to the target"
             }.`}
             ariaLabel={`${c.label}: ${c.target}`}
-            active={!mixOpen && selectedColour === c.key}
+            active={false}
             badge={mixOpen ? recipe[c.key] : undefined}
             onToggle={() => onTap(c.key)}
             onRemovePart={mixOpen ? () => onRemovePart(c.key) : undefined}
@@ -440,7 +435,6 @@ function SwatchGrid({
         <CustomCell
           key={w.id}
           swatch={w}
-          selectedColour={selectedColour}
           mixOpen={mixOpen}
           recipe={recipe}
           onTap={onTap}
@@ -497,7 +491,6 @@ function useHueDrop(onHue: (h: CapturedHue) => void, onText: (t: string) => void
  *  or text drop to replace its hue (the same capture gesture, per swatch). */
 function CustomCell({
   swatch,
-  selectedColour,
   mixOpen,
   recipe,
   onTap,
@@ -507,7 +500,6 @@ function CustomCell({
   onCaptureText,
 }: {
   swatch: CustomSwatch;
-  selectedColour: string | null;
   mixOpen: boolean;
   recipe: Record<string, number>;
   onTap: (key: string) => void;
@@ -535,7 +527,7 @@ function CustomCell({
           mixOpen ? ", or tap to add a part" : ", or tap to add to the target"
         }. Drop a selection here to replace it.`}
         ariaLabel={`Custom hue: ${swatch.phrase}`}
-        active={!mixOpen && selectedColour === swatch.id}
+        active={false}
         badge={mixOpen ? recipe[swatch.id] : undefined}
         onToggle={() => onTap(swatch.id)}
         onRemovePart={mixOpen ? () => onRemovePart(swatch.id) : undefined}
@@ -666,7 +658,7 @@ function Swatch({
 function Beaker({
   fillCss,
   totalParts,
-  phrase,
+  parts,
   pour,
   canPour,
   onAccept,
@@ -674,7 +666,7 @@ function Beaker({
 }: {
   fillCss: string | undefined;
   totalParts: number;
-  phrase: string;
+  parts: { phrase: string; count: number }[];
   pour: { token: number; css: string };
   canPour: boolean;
   onAccept: () => void;
@@ -763,7 +755,24 @@ function Beaker({
         </svg>
       </div>
       {totalParts > 0 ? (
-        <p className="text-[11px] italic leading-snug text-muted-foreground">{phrase}</p>
+        <div className="space-y-1">
+          <div className="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+            Mix recipe
+          </div>
+          <p className="max-h-16 overflow-y-auto text-[11px] leading-relaxed text-muted-foreground">
+            {parts.map((part) => (
+              <span
+                key={part.phrase}
+                title={`${part.count} ${part.count === 1 ? "part" : "parts"} ${part.phrase}`}
+                className="mr-1.5 inline-block whitespace-nowrap"
+              >
+                <span className="font-semibold tabular-nums text-ink-deep">{part.count}x</span>{" "}
+                {part.phrase}
+                {part !== parts[parts.length - 1] ? "," : ""}
+              </span>
+            ))}
+          </p>
+        </div>
       ) : (
         <p className="text-[11px] italic leading-snug text-muted-foreground">
           Tap the colours above to mix the hue — each one falls a part into the beaker.

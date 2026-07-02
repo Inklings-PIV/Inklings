@@ -133,9 +133,8 @@ export default function QuillPage() {
   const [currentVersionKey, setCurrentVersionKey] = useState<string | null>(null);
   const [leftPanel, setLeftPanel] = useState<LeftPanel>("hue");
   const [rightPanel, setRightPanel] = useState<RightPanel>("colour");
-  // Live selection drives the sidebar indicator + persistent editor mark;
-  // committed selection is
-  // frozen at request-time and used to splice the rewrite back in on accept.
+  // Live selection drives the sidebar indicator; committed selection is frozen
+  // at request-time and used to keep the loading mark connected to the rewrite.
   const [liveSelection, setLiveSelection] = useState<SelectionRange | null>(null);
   const [committedSelection, setCommittedSelection] = useState<SelectionRange | null>(null);
   // Diff state — computed from the active rewrite vs the committed text.
@@ -164,6 +163,16 @@ export default function QuillPage() {
 
   const targetActive = true;
 
+  const updateDraft = (nextDraft: string) => {
+    setDraft(nextDraft);
+    if (!currentVersionKey) return;
+    setVersions((stack) =>
+      stack.map((entry) =>
+        versionMatchesKey(entry, currentVersionKey) ? { ...entry, html: nextDraft } : entry,
+      ),
+    );
+  };
+
   // Paragraph hue strip. Cache hues by paragraph text so a typing burst only
   // re-derives the block that actually changed; the strip shows the hue trail across
   // the whole draft in Readout mode.
@@ -182,6 +191,7 @@ export default function QuillPage() {
   // paragraph in the editor (tinted in that segment's own hue); clicking one
   // jumps to it. The editor handle lets the click select the block imperatively.
   const editorRef = useRef<EditorHandle>(null);
+  const diffScrollRef = useRef<HTMLDivElement>(null);
   const [highlight, setHighlight] = useState<{ index: number; tint: string | null } | null>(null);
 
   // Live stylometric fingerprint of the draft (style-level). Cheap CPU-only
@@ -258,6 +268,24 @@ export default function QuillPage() {
     wasRewritingRef.current = isRewriting;
   }, [isRewriting, rewrite]);
 
+  useEffect(() => {
+    if (!rewrite) return;
+    const frame = window.requestAnimationFrame(() => {
+      const scroller = diffScrollRef.current;
+      const firstHunk = scroller?.querySelector<HTMLElement>("[data-diff-hunk='true']");
+      if (!scroller || !firstHunk) return;
+
+      const scrollerTop = scroller.getBoundingClientRect().top;
+      const hunkTop = firstHunk.getBoundingClientRect().top;
+      scroller.scrollTo({
+        top: Math.max(0, scroller.scrollTop + hunkTop - scrollerTop - 28),
+        behavior: "smooth",
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [rewrite]);
+
   // Mirror every draft change to localStorage — implicit, no UI signal
   // needed since this is the privacy default.
   useEffect(() => {
@@ -317,7 +345,7 @@ export default function QuillPage() {
     if (index === -1) return;
 
     const isOriginal = index === versions.length - 1;
-    const isCurrent = currentVersionKey === key || draft === version.html;
+    const isCurrent = versionMatchesKey(version, currentVersionKey) || draft === version.html;
     const nextVersions = versions.filter((entry) => versionKey(entry) !== key);
 
     if (isOriginal) {
@@ -657,7 +685,7 @@ export default function QuillPage() {
 
   const restoreVersion = (version: DraftVersion) => {
     const key = versionKey(version);
-    if (currentVersionKey === key || draft === version.html) {
+    if (versionMatchesKey(version, currentVersionKey) || draft === version.html) {
       setCurrentVersionKey(key);
       return;
     }
@@ -775,7 +803,10 @@ export default function QuillPage() {
                     />
                     {/* One block-flow prose container mirroring the editor exactly,
                       so before/diff/after paragraphs collapse margins uniformly. */}
-                    <div className="mt-4 max-h-[min(430px,calc(100vh-31rem))] min-h-[260px] w-full overflow-y-auto overscroll-contain px-3 pt-8 pb-8 font-serif text-lg leading-relaxed text-ink-deep">
+                    <div
+                      ref={diffScrollRef}
+                      className="mt-4 max-h-[min(430px,calc(100vh-31rem))] min-h-[260px] w-full overflow-y-auto overscroll-contain px-3 pt-8 pb-8 font-serif text-lg leading-relaxed text-ink-deep"
+                    >
                       {blockBefore.map((para) => (
                         <p key={para} className="my-3 first:mt-0 text-ink-deep/40 select-none">
                           {para}
@@ -805,7 +836,7 @@ export default function QuillPage() {
                     ref={editorRef}
                     initialContent={draft}
                     placeholder="Write a paragraph and watch the ink reveal itself…"
-                    onChange={setDraft}
+                    onChange={updateDraft}
                     onDeriveHue={deriveTextColour}
                     onCaptureHue={(c) =>
                       addSwatch({
@@ -817,7 +848,7 @@ export default function QuillPage() {
                     onSelectionChange={setLiveSelection}
                     blockHues={showRail && bandVisible ? blockHues : undefined}
                     highlightBlock={highlight}
-                    pendingRewriteRange={isRewriting ? committedSelection : liveSelection}
+                    pendingRewriteRange={isRewriting ? committedSelection : null}
                     pendingRewriteLoading={isRewriting && !!committedSelection}
                     onColourDrop={handleColourDrop}
                     brushSize={brushSize}
@@ -848,7 +879,6 @@ export default function QuillPage() {
           <RewritePanel
             openPanel={rightPanel === "colour" || rightPanel === "words" ? rightPanel : null}
             onOpenPanelChange={(panel) => setRightPanel(panel)}
-            selectedColour={selectedColour}
             onToggleColour={toggleColour}
             customSwatches={customSwatches}
             onAddHue={addSwatch}
@@ -1515,7 +1545,8 @@ function VersionHistory({
       key,
       fallback: chronologicalIndex === 0 ? "Original" : `Version ${chronologicalIndex}`,
       time: formatVersionTime(version.takenAt),
-      current: currentKey === key || (!currentKey && version.html === currentHtml),
+      current:
+        versionMatchesKey(version, currentKey) || (!currentKey && version.html === currentHtml),
       restore: version,
     };
   });
@@ -1645,7 +1676,12 @@ function VersionHistory({
 }
 
 function versionKey(version: DraftVersion): string {
-  return `${version.takenAt}:${version.html.length}`;
+  return String(version.takenAt);
+}
+
+function versionMatchesKey(version: DraftVersion, key: string | null): boolean {
+  if (!key) return false;
+  return key === versionKey(version) || key.startsWith(`${version.takenAt}:`);
 }
 
 function formatVersionTime(takenAt: number): string {

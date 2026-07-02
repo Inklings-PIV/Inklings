@@ -28,7 +28,7 @@ import {
   Undo2,
   WandSparkles,
 } from "lucide-react";
-import { type Ref, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { type Ref, useEffect, useImperativeHandle, useRef, useState, type WheelEvent } from "react";
 import { toast } from "sonner";
 import {
   ContextMenu,
@@ -744,6 +744,15 @@ export function Editor({
     setHasText(!editor.isEmpty);
   }, [editor]);
 
+  const passEmptyEditorWheelToPage = (e: WheelEvent<HTMLDivElement>) => {
+    if (hasText) return;
+    const pageCanScroll = document.documentElement.scrollHeight > window.innerHeight;
+    if (!pageCanScroll) return;
+
+    e.preventDefault();
+    window.scrollBy({ top: e.deltaY, left: e.deltaX, behavior: "auto" });
+  };
+
   return (
     <div className={cn("flex flex-col gap-3", className)}>
       <div className="flex flex-wrap items-start justify-between gap-2">
@@ -759,6 +768,7 @@ export function Editor({
             ref={scrollRef}
             onDragOver={handleColourDragOver}
             onDrop={handleColourDrop}
+            onWheel={passEmptyEditorWheelToPage}
             className={cn(
               "relative max-h-[min(540px,calc(100vh-24rem))] overflow-y-auto overscroll-contain pr-2 pb-8",
               focusMode && [

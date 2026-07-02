@@ -39,7 +39,7 @@ export function HueExplainer({
 
   return (
     <Card className="bg-card/60">
-      <CardContent className="flex flex-col gap-3 p-5 sm:p-6">
+      <CardContent className="flex flex-col gap-2.5 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">
             Why this colour

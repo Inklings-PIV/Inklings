@@ -128,3 +128,43 @@ export function sentenceWindowAt(
   if (i === -1) i = sentences.length - 1;
   return windowAround(sentences, i, radius);
 }
+
+function wordCount(text: string): number {
+  return text.split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * Sentence brush with a minimum useful span. Starts at the dropped-on sentence,
+ * then expands forward, then backward, until it has enough words or no prose is
+ * left to include.
+ */
+export function sentenceWindowAtMinWords(
+  doc: ProseMirrorNode,
+  pos: number,
+  minWords: number,
+): { from: number; to: number } | null {
+  const sentences = documentSentences(doc);
+  if (sentences.length === 0) return null;
+  const clamped = Math.min(Math.max(pos, 0), doc.content.size);
+  let sentenceIndex = sentences.findIndex((s) => clamped < s.to);
+  if (sentenceIndex === -1) sentenceIndex = sentences.length - 1;
+
+  let start = sentenceIndex;
+  let end = sentenceIndex;
+  const rangeText = () => {
+    const first = sentences[start];
+    const last = sentences[end];
+    if (!first || !last) return "";
+    return doc.textBetween(first.from, last.to, " ");
+  };
+
+  while (wordCount(rangeText()) < minWords && (end < sentences.length - 1 || start > 0)) {
+    if (end < sentences.length - 1) end += 1;
+    else if (start > 0) start -= 1;
+  }
+
+  const first = sentences[start];
+  const last = sentences[end];
+  if (!first || !last) return null;
+  return { from: first.from, to: last.to };
+}

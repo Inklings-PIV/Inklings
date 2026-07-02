@@ -1,7 +1,17 @@
 "use client";
 
-import { Brush, Check, ChevronDown, Loader2, Plus, Sparkles, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import {
+  BookOpen,
+  Brush,
+  Check,
+  ChevronDown,
+  Loader2,
+  Palette,
+  Plus,
+  Sparkles,
+  X,
+} from "lucide-react";
+import { type ReactNode, useMemo, useState } from "react";
 import {
   ALL_PIGMENTS,
   blendHues,
@@ -28,28 +38,29 @@ const INTENSITY_LABELS: Record<number, string> = {
   5: "Full",
 };
 
-// Brush = how many sentences the colour drop covers. Selection always wins over
-// this; it only governs a drop point. The brush icon grows with the size.
-const BRUSH_SIZES = [
-  { size: 1, iconClass: "size-3", title: "Fine — just the sentence" },
-  { size: 3, iconClass: "size-4", title: "Medium — sentence ± 1" },
-  { size: 7, iconClass: "size-5", title: "Broad — sentence ± 3" },
-] as const;
+const BRUSH_LABELS: Record<number, string> = {
+  1: "Sentence",
+  3: "Passage",
+  7: "Whole draft",
+};
+
+// Brush = how much prose a colour drop covers when there is no selected text.
+// Selection always wins over this; it only governs a drop point.
+const BRUSH_SIZES = [1, 3, 7] as const;
 
 function countWords(s: string): number {
   return s.split(/\s+/).filter(Boolean).length;
 }
 
 /**
- * The fused rewrite widget. Three stacked parts: a collapsible colour area (one
- * pigment grid + the beaker that mixes new hues), a collapsible words area (style
- * facets + free-text brief), and a fixed footer (intensity, the animate toggle
- * and the rewrite button). Colour and words compose into one target — colour is
- * optional. Dragging a swatch onto the prose is the quick gesture; clicking one
- * toggles it into the composed target instead.
+ * The fused rewrite widget. Colour and Words are separate accordion sections
+ * controlled by the page's right rail state. Colour is optional; dragging a
+ * swatch onto the prose is the quick gesture, while tapping one folds it into
+ * the composed target.
  */
 export function RewritePanel({
-  selectedColour,
+  openPanel,
+  onOpenPanelChange,
   onToggleColour,
   customSwatches,
   onAddHue,
@@ -65,8 +76,6 @@ export function RewritePanel({
   composedTarget,
   intensity,
   onIntensityChange,
-  animate,
-  onAnimateChange,
   wordCount,
   onRequest,
   isPending,
@@ -75,7 +84,8 @@ export function RewritePanel({
   onClearSelection,
   error,
 }: {
-  selectedColour: string | null;
+  openPanel: "colour" | "words" | null;
+  onOpenPanelChange: (panel: "colour" | "words" | null) => void;
   onToggleColour: (key: string) => void;
   customSwatches: CustomSwatch[];
   onAddHue: (hue: CapturedHue) => void;
@@ -91,8 +101,6 @@ export function RewritePanel({
   composedTarget: string;
   intensity: number;
   onIntensityChange: (n: number) => void;
-  animate: boolean;
-  onAnimateChange: (b: boolean) => void;
   wordCount: number;
   onRequest: () => void;
   isPending: boolean;
@@ -101,8 +109,8 @@ export function RewritePanel({
   onClearSelection: () => void;
   error: string | null;
 }) {
-  const [colourOpen, setColourOpen] = useState(true);
-  const [wordsOpen, setWordsOpen] = useState(true);
+  const colourOpen = openPanel === "colour";
+  const wordsOpen = openPanel === "words";
 
   // Mix mode: the beaker is open and grid taps add parts instead of toggling the
   // target. `recipe` is parts keyed by pigment key / custom-swatch id; `pour`
@@ -143,6 +151,7 @@ export function RewritePanel({
       const next = { ...r };
       if (n <= 0) delete next[key];
       else next[key] = n;
+      setPour({ token: 0, css: "" });
       return next;
     });
 
@@ -172,82 +181,85 @@ export function RewritePanel({
     : hasRewrite
       ? "Try another nudge"
       : "Suggest a nudge";
+  const brushIndex = brushSize <= 1 ? 0 : brushSize <= 3 ? 1 : 2;
 
   return (
-    <Card>
-      <CardContent className="flex flex-col gap-3 p-5">
-        {/* §1 — colour: one grid of pigments + your own swatches, and the beaker
-            that mixes new ones. Collapsing hides the brush row + helper only. */}
-        <section className="flex flex-col gap-2">
+    <>
+      <Card>
+        <CardContent className="flex flex-col gap-2.5 p-4">
           <SectionHeader
             label="Colour"
+            description="Tap a colour to set the target. Drag it onto a sentence, passage, or selection."
+            icon={<Palette className="size-4" />}
             open={colourOpen}
-            onToggle={() => setColourOpen((v) => !v)}
+            onToggle={() => onOpenPanelChange(colourOpen ? null : "colour")}
           />
-          <SwatchGrid
-            customSwatches={customSwatches}
-            selectedColour={selectedColour}
-            mixOpen={mixOpen}
-            recipe={recipe}
-            onTap={onTap}
-            onRemovePart={removePart}
-            onStartMix={startMix}
-            onRemoveSwatch={onRemoveSwatch}
-            onReplaceHue={onReplaceHue}
-            onAddHue={onAddHue}
-            onCaptureText={onCaptureText}
-          />
-          {mixOpen && (
-            <Beaker
-              fillCss={blendCss}
-              totalParts={totalParts}
-              phrase={mixWords}
-              pour={pour}
-              canPour={!!blend}
-              onAccept={acceptMix}
-              onCancel={closeMix}
-            />
-          )}
           {colourOpen && (
             <>
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                  Brush
-                </span>
-                <div className="flex items-center gap-0.5 rounded-md border border-border bg-muted/40 p-0.5">
-                  {BRUSH_SIZES.map((b) => (
-                    <button
-                      key={b.size}
-                      type="button"
-                      aria-pressed={brushSize === b.size}
-                      aria-label={b.title}
-                      title={b.title}
-                      onClick={() => onBrushChange(b.size)}
-                      className={cn(
-                        "inline-flex size-7 items-center justify-center rounded transition-colors",
-                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-                        brushSize === b.size
-                          ? "bg-card text-ink-deep shadow-sm"
-                          : "text-muted-foreground hover:text-foreground",
-                      )}
-                    >
-                      <Brush className={b.iconClass} />
-                    </button>
-                  ))}
+              <SwatchGrid
+                customSwatches={customSwatches}
+                mixOpen={mixOpen}
+                recipe={recipe}
+                onTap={onTap}
+                onRemovePart={removePart}
+                onStartMix={startMix}
+                onRemoveSwatch={onRemoveSwatch}
+                onReplaceHue={onReplaceHue}
+                onAddHue={onAddHue}
+                onCaptureText={onCaptureText}
+              />
+              {mixOpen && (
+                <Beaker
+                  fillCss={blendCss}
+                  totalParts={totalParts}
+                  parts={mixEntries.map((s) => ({ phrase: s.phrase, count: recipe[s.key] ?? 0 }))}
+                  pour={pour}
+                  canPour={!!blend}
+                  onAccept={acceptMix}
+                  onCancel={closeMix}
+                />
+              )}
+              <div className="flex flex-col gap-1.5 pt-1">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-muted-foreground">
+                    <Brush className="size-3.5" />
+                    Brush range
+                  </span>
+                  <span className="text-xs text-ink-bleed">{BRUSH_LABELS[brushSize]}</span>
+                </div>
+                <input
+                  type="range"
+                  min={0}
+                  max={BRUSH_SIZES.length - 1}
+                  step={1}
+                  value={brushIndex}
+                  onChange={(e) => onBrushChange(BRUSH_SIZES[Number(e.target.value)] ?? 3)}
+                  className="w-full accent-ink-bleed"
+                  aria-label="Brush range"
+                />
+                <div className="flex justify-between text-[10px] text-muted-foreground">
+                  <span>Small</span>
+                  <span>Big</span>
                 </div>
               </div>
               <p className="text-[11px] italic leading-snug text-muted-foreground">
-                Drag a colour onto a word for an instant nudge, or tap one to fold its mood into the
-                target. Press <Plus className="inline size-3" /> to mix a new hue — or drop a
-                selection (or a Hue-band segment) onto a swatch to capture one from your prose.
+                Brush range controls how much prose is affected when no text is selected. Use{" "}
+                <Plus className="inline size-3" /> to mix or capture a hue.
               </p>
             </>
           )}
-        </section>
+        </CardContent>
+      </Card>
 
-        {/* §2 — words: style facets + a free-text brief. */}
-        <section className="flex flex-col gap-2 border-t border-border/60 pt-3">
-          <SectionHeader label="Words" open={wordsOpen} onToggle={() => setWordsOpen((v) => !v)} />
+      <Card>
+        <CardContent className="flex flex-col gap-2.5 p-4">
+          <SectionHeader
+            label="Words"
+            description="Build a target in words, then nudge when ready."
+            icon={<BookOpen className="size-4" />}
+            open={wordsOpen}
+            onToggle={() => onOpenPanelChange(wordsOpen ? null : "words")}
+          />
           {wordsOpen && (
             <>
               <TargetWidgets selection={selection} onChange={onWidgetChange} />
@@ -259,113 +271,119 @@ export function RewritePanel({
                   type="text"
                   value={target}
                   onChange={(e) => onTargetChange(e.target.value)}
-                  placeholder="warm, melancholy · Hemingway-like · lush, baroque"
+                  placeholder="warm, melancholy · Hemingway-like · lush"
                   className="h-9 rounded-md border border-border bg-card px-3 text-sm placeholder:text-muted-foreground focus:ring-2 focus:ring-ring/40 focus:outline-none"
                 />
               </label>
+              <div className="border-t border-border/60" />
+              <div className="flex flex-col gap-1.5">
+                <div className="flex items-baseline justify-between">
+                  <span className="text-xs uppercase tracking-wider text-muted-foreground">
+                    intensity
+                  </span>
+                  <span className="text-xs text-ink-bleed">{INTENSITY_LABELS[intensity]}</span>
+                </div>
+                <input
+                  type="range"
+                  min={1}
+                  max={5}
+                  step={1}
+                  value={intensity}
+                  onChange={(e) => onIntensityChange(Number(e.target.value))}
+                  className="w-full accent-ink-bleed"
+                  aria-label="Rewrite intensity"
+                />
+                <div className="flex justify-between text-[10px] text-muted-foreground">
+                  <span>Whisper</span>
+                  <span>Full</span>
+                </div>
+              </div>
+              {selectionText && (
+                <div className="flex items-center gap-1 rounded-md bg-ink-bleed/10 px-2 py-1 text-[11px] text-ink-bleed">
+                  <span className="min-w-0 flex-1 truncate italic">
+                    &ldquo;
+                    {selectionText.length > 48 ? `${selectionText.slice(0, 48)}…` : selectionText}
+                    &rdquo;
+                  </span>
+                  <button
+                    type="button"
+                    aria-label="Clear selection"
+                    onClick={onClearSelection}
+                    className="shrink-0 rounded p-0.5 hover:bg-ink-bleed/20 transition-colors"
+                  >
+                    <X className="size-3" />
+                  </button>
+                </div>
+              )}
+              <Button
+                size="sm"
+                variant={canAsk ? "default" : "outline"}
+                onClick={onRequest}
+                disabled={!canAsk}
+                className={cn(
+                  "w-full",
+                  canAsk && "bg-ink-bleed text-ink-paper hover:bg-ink-bleed/90",
+                  canAsk && "cursor-pointer",
+                )}
+              >
+                {isPending ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <Sparkles className="size-4" />
+                )}
+                {buttonLabel}
+              </Button>
+              {isPending && (
+                <p className="text-[11px] italic text-muted-foreground">Claude is rewriting…</p>
+              )}
+              {error && <p className="text-[11px] italic text-destructive">{error}</p>}
             </>
           )}
-        </section>
-
-        {/* §3 — fixed footer. */}
-        <div className="flex flex-col gap-3 border-t border-border/60 pt-3">
-          {composedTarget ? (
-            <p className="text-[11px] leading-snug text-muted-foreground">
-              Aiming for: <span className="italic">{composedTarget}</span>
-            </p>
-          ) : (
-            <p className="text-[11px] italic leading-snug text-muted-foreground">
-              Pick a colour, facets, a brief — or any mix. Claude rewrites toward the combination.
-            </p>
-          )}
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-baseline justify-between">
-              <span className="text-xs uppercase tracking-wider text-muted-foreground">
-                intensity
-              </span>
-              <span className="text-xs text-ink-bleed">{INTENSITY_LABELS[intensity]}</span>
-            </div>
-            <input
-              type="range"
-              min={1}
-              max={5}
-              step={1}
-              value={intensity}
-              onChange={(e) => onIntensityChange(Number(e.target.value))}
-              className="w-full accent-ink-bleed"
-              aria-label="Rewrite intensity"
-            />
-            <div className="flex justify-between text-[10px] text-muted-foreground">
-              <span>Whisper</span>
-              <span>Full</span>
-            </div>
-          </div>
-          <label className="flex cursor-pointer items-center gap-2 text-[11px] text-muted-foreground">
-            <input
-              type="checkbox"
-              checked={animate}
-              onChange={(e) => onAnimateChange(e.target.checked)}
-              className="size-3.5 cursor-pointer accent-ink-bleed"
-            />
-            Splash animation on rewrite
-          </label>
-          {selectionText && (
-            <div className="flex items-center gap-1 rounded-md bg-ink-bleed/10 px-2 py-1 text-[11px] text-ink-bleed">
-              <span className="min-w-0 flex-1 truncate italic">
-                &ldquo;
-                {selectionText.length > 48 ? `${selectionText.slice(0, 48)}…` : selectionText}
-                &rdquo;
-              </span>
-              <button
-                type="button"
-                aria-label="Clear selection"
-                onClick={onClearSelection}
-                className="shrink-0 rounded p-0.5 hover:bg-ink-bleed/20 transition-colors"
-              >
-                <X className="size-3" />
-              </button>
-            </div>
-          )}
-          <Button size="sm" variant="outline" onClick={onRequest} disabled={!canAsk}>
-            {isPending ? (
-              <Loader2 className="size-4 animate-spin" />
-            ) : (
-              <Sparkles className="size-4" />
-            )}
-            {buttonLabel}
-          </Button>
-          {isPending && (
-            <p className="text-[11px] italic text-muted-foreground">Claude is rewriting…</p>
-          )}
-          {error && <p className="text-[11px] italic text-destructive">{error}</p>}
-        </div>
-      </CardContent>
-    </Card>
+        </CardContent>
+      </Card>
+    </>
   );
 }
 
 function SectionHeader({
   label,
+  description,
+  icon,
   open,
   onToggle,
 }: {
   label: string;
+  description: string;
+  icon: ReactNode;
   open: boolean;
   onToggle: () => void;
 }) {
   return (
-    <button
-      type="button"
-      aria-expanded={open}
-      onClick={onToggle}
-      className="flex items-center justify-between text-[10px] tracking-widest text-muted-foreground uppercase transition-colors hover:text-foreground focus-visible:outline-none"
-    >
-      {label}
-      <ChevronDown
-        aria-hidden="true"
-        className={cn("size-3.5 transition-transform", open && "rotate-180")}
-      />
-    </button>
+    <div className="flex items-start justify-between gap-3">
+      <div className="flex min-w-0 gap-2">
+        <span className="mt-0.5 shrink-0 text-muted-foreground" aria-hidden="true">
+          {icon}
+        </span>
+        <div className="min-w-0">
+          <h2 className="text-[10px] tracking-widest text-muted-foreground uppercase">{label}</h2>
+          <p className="mt-1 text-[11px] italic leading-snug text-muted-foreground">
+            {description}
+          </p>
+        </div>
+      </div>
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-label={`${open ? "Collapse" : "Expand"} ${label}`}
+        onClick={onToggle}
+        className="shrink-0 cursor-pointer rounded-md p-1 text-muted-foreground transition-all hover:bg-muted/60 hover:text-foreground active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+      >
+        <ChevronDown
+          aria-hidden="true"
+          className={cn("size-3.5 transition-transform", open && "rotate-180")}
+        />
+      </button>
+    </div>
   );
 }
 
@@ -374,7 +392,6 @@ function SectionHeader({
  *  tap folds the colour into the target; in mix mode a tap pours a part. */
 function SwatchGrid({
   customSwatches,
-  selectedColour,
   mixOpen,
   recipe,
   onTap,
@@ -386,7 +403,6 @@ function SwatchGrid({
   onCaptureText,
 }: {
   customSwatches: CustomSwatch[];
-  selectedColour: string | null;
   mixOpen: boolean;
   recipe: Record<string, number>;
   onTap: (key: string) => void;
@@ -408,7 +424,7 @@ function SwatchGrid({
               mixOpen ? ", or tap to add a part" : ", or tap to add to the target"
             }.`}
             ariaLabel={`${c.label}: ${c.target}`}
-            active={!mixOpen && selectedColour === c.key}
+            active={false}
             badge={mixOpen ? recipe[c.key] : undefined}
             onToggle={() => onTap(c.key)}
             onRemovePart={mixOpen ? () => onRemovePart(c.key) : undefined}
@@ -419,7 +435,6 @@ function SwatchGrid({
         <CustomCell
           key={w.id}
           swatch={w}
-          selectedColour={selectedColour}
           mixOpen={mixOpen}
           recipe={recipe}
           onTap={onTap}
@@ -476,7 +491,6 @@ function useHueDrop(onHue: (h: CapturedHue) => void, onText: (t: string) => void
  *  or text drop to replace its hue (the same capture gesture, per swatch). */
 function CustomCell({
   swatch,
-  selectedColour,
   mixOpen,
   recipe,
   onTap,
@@ -486,7 +500,6 @@ function CustomCell({
   onCaptureText,
 }: {
   swatch: CustomSwatch;
-  selectedColour: string | null;
   mixOpen: boolean;
   recipe: Record<string, number>;
   onTap: (key: string) => void;
@@ -514,7 +527,7 @@ function CustomCell({
           mixOpen ? ", or tap to add a part" : ", or tap to add to the target"
         }. Drop a selection here to replace it.`}
         ariaLabel={`Custom hue: ${swatch.phrase}`}
-        active={!mixOpen && selectedColour === swatch.id}
+        active={false}
         badge={mixOpen ? recipe[swatch.id] : undefined}
         onToggle={() => onTap(swatch.id)}
         onRemovePart={mixOpen ? () => onRemovePart(swatch.id) : undefined}
@@ -555,11 +568,12 @@ function PlusCell({
         onClick={onStartMix}
         title="Mix a new hue — or drop a selection / Hue-band segment to capture one"
         className={cn(
-          "flex size-9 items-center justify-center rounded-full border border-dashed transition-colors",
+          "flex size-9 cursor-pointer items-center justify-center rounded-full border border-dashed transition-colors",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-          over || mixOpen
-            ? "border-ink-deep bg-ink-deep/10 text-ink-deep"
-            : "border-border text-muted-foreground hover:text-foreground",
+          mixOpen
+            ? "border-border/60 text-muted-foreground/70 hover:text-muted-foreground"
+            : "border-foreground/80 text-foreground hover:border-foreground hover:bg-muted/30",
+          over && "border-ink-deep bg-ink-deep/10 text-ink-deep",
         )}
       >
         <Plus className="size-4" />
@@ -569,8 +583,8 @@ function PlusCell({
 }
 
 /** A mood swatch: draggable (the quick gesture) and clickable (toggle into the
- *  composed target, or pour a part in mix mode). In mix mode a count badge shows
- *  its parts and right-click removes one. */
+ *  composed target, or pour a part in mix mode). In mix mode the count chip
+ *  removes one part, with right-click kept as a backup. */
 function Swatch({
   css,
   dragKey,
@@ -591,39 +605,50 @@ function Swatch({
   onRemovePart?: () => void;
 }) {
   return (
-    <button
-      type="button"
-      draggable
-      aria-pressed={active}
-      onDragStart={(e) => {
-        e.dataTransfer.setData(COLOUR_DROP_MIME, dragKey);
-        e.dataTransfer.effectAllowed = "copy";
-      }}
-      onClick={onToggle}
-      onContextMenu={
-        onRemovePart
-          ? (e) => {
-              e.preventDefault();
-              onRemovePart();
-            }
-          : undefined
-      }
-      title={title}
-      aria-label={ariaLabel}
-      className={cn(
-        "relative size-9 shrink-0 cursor-grab rounded-full border shadow-inner transition-transform",
-        "hover:scale-110 active:cursor-grabbing",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
-        active ? "border-ink-deep ring-2 ring-ink-deep/50" : "border-border",
-      )}
-      style={{ backgroundColor: css }}
-    >
+    <span className="relative flex size-9 shrink-0 items-center justify-center">
+      <button
+        type="button"
+        draggable
+        aria-pressed={active}
+        onDragStart={(e) => {
+          e.dataTransfer.setData(COLOUR_DROP_MIME, dragKey);
+          e.dataTransfer.effectAllowed = "copy";
+        }}
+        onClick={onToggle}
+        onContextMenu={
+          onRemovePart
+            ? (e) => {
+                e.preventDefault();
+                onRemovePart();
+              }
+            : undefined
+        }
+        title={title}
+        aria-label={ariaLabel}
+        className={cn(
+          "size-9 cursor-grab rounded-full border shadow-inner transition-transform",
+          "hover:scale-110 active:cursor-grabbing",
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+          active ? "border-ink-deep ring-2 ring-ink-deep/50" : "border-border",
+        )}
+        style={{ backgroundColor: css }}
+      />
       {badge && badge > 0 ? (
-        <span className="absolute -right-1 -top-1 flex min-w-4 items-center justify-center rounded-full bg-ink-deep px-0.5 text-[9px] tabular-nums text-ink-paper">
+        <button
+          type="button"
+          aria-label={`Remove one part from ${ariaLabel}`}
+          title="Remove one part from this mix"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemovePart?.();
+          }}
+          className="absolute -right-2 -top-2 flex h-5 min-w-7 cursor-pointer items-center justify-center gap-1 rounded-full border border-border/70 bg-background/90 px-1.5 text-[10px] font-semibold tabular-nums text-foreground shadow-md shadow-black/30 backdrop-blur transition-transform hover:scale-105 hover:bg-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+        >
           {badge}
-        </span>
+          <X className="size-3 stroke-[3]" />
+        </button>
       ) : null}
-    </button>
+    </span>
   );
 }
 
@@ -633,7 +658,7 @@ function Swatch({
 function Beaker({
   fillCss,
   totalParts,
-  phrase,
+  parts,
   pour,
   canPour,
   onAccept,
@@ -641,44 +666,135 @@ function Beaker({
 }: {
   fillCss: string | undefined;
   totalParts: number;
-  phrase: string;
+  parts: { phrase: string; count: number }[];
   pour: { token: number; css: string };
   canPour: boolean;
   onAccept: () => void;
   onCancel: () => void;
 }) {
-  // Level rises ~16% a part, capped — a full beaker reads as a strong mix.
-  const level = Math.min(totalParts * 16, 100);
+  const liquidCss = fillCss ?? "var(--muted)";
+  const dropCss = pour.css || "hsl(252, 55%, 68%)";
+  const isMixed = totalParts > 0;
+  const liquidLevel = isMixed ? 53 - Math.min(totalParts - 1, 4) * 2.25 : 53;
+  const wavePath = (y: number) =>
+    `M-50,${y} Q-40,${y + 6.5} -30,${y} Q-20,${y - 6.5} -10,${y} Q0,${y + 6.5} 10,${y} Q20,${y - 6.5} 30,${y} Q40,${y + 6.5} 50,${y} Q60,${y - 6.5} 70,${y} Q80,${y + 6.5} 90,${y} Q100,${y - 6.5} 110,${y} Q120,${y + 6.5} 130,${y} L130,80 L-50,80 Z`;
+  const dropPath =
+    "M40 32 C37.8 35.2 36.4 37.5 36.4 39.7 C36.4 42 38 43.8 40 43.8 C42 43.8 43.6 42 43.6 39.7 C43.6 37.5 42.2 35.2 40 32 Z";
   return (
     <div className="flex flex-col gap-2 rounded-md border border-border/60 p-3">
-      <div className="relative mx-auto h-20 w-16 overflow-hidden rounded-b-2xl rounded-t-sm border border-border bg-muted/30">
-        <div
-          className="absolute inset-x-0 bottom-0 transition-[height,background-color] duration-500 ease-out"
-          style={{ height: `${level}%`, backgroundColor: fillCss }}
-        />
-        {pour.token > 0 && (
-          <span
-            key={pour.token}
-            aria-hidden="true"
-            className="inklings-ink-pour absolute left-1/2 top-1 size-3 -translate-x-1/2 rounded-full"
-            style={{ backgroundColor: pour.css }}
+      <div className="relative mx-auto size-20">
+        <svg viewBox="0 0 80 80" role="img" aria-label="Colour mix pool" className="size-20">
+          <defs>
+            <clipPath id="mix-pool-clip">
+              <circle cx="40" cy="40" r="30" />
+            </clipPath>
+            <linearGradient id="mix-empty-liquid" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--muted)" stopOpacity="0.4" />
+              <stop offset="100%" stopColor="var(--muted)" stopOpacity="0.26" />
+            </linearGradient>
+            <linearGradient id="mix-empty-drop" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="hsl(252, 60%, 76%)" />
+              <stop offset="100%" stopColor="hsl(252, 48%, 48%)" />
+            </linearGradient>
+            <linearGradient id="mix-empty-stroke" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="hsl(252, 55%, 68%)" />
+              <stop offset="100%" stopColor="hsl(252, 48%, 46%)" />
+            </linearGradient>
+          </defs>
+          <circle
+            cx="40"
+            cy="40"
+            r="30"
+            fill="var(--card)"
+            stroke="var(--border)"
+            strokeWidth="2"
           />
-        )}
+          <g clipPath="url(#mix-pool-clip)">
+            <rect x="0" y="0" width="80" height="80" fill="var(--card)" />
+            <g>
+              <path
+                d={wavePath(liquidLevel)}
+                fill={isMixed ? liquidCss : "url(#mix-empty-liquid)"}
+                className="transition-all duration-500"
+              />
+            </g>
+          </g>
+          <circle
+            cx="40"
+            cy="40"
+            r="30"
+            fill="none"
+            stroke="var(--border)"
+            strokeOpacity="1"
+            strokeWidth="2"
+            className="transition-colors duration-500"
+          />
+          {!isMixed && (
+            <path
+              d={wavePath(liquidLevel)}
+              fill="none"
+              stroke="url(#mix-empty-stroke)"
+              strokeOpacity="0.7"
+              strokeWidth="1.5"
+              clipPath="url(#mix-pool-clip)"
+            />
+          )}
+          {!isMixed && (
+            <path className="inklings-hue-empty-drop" d={dropPath} fill="url(#mix-empty-drop)" />
+          )}
+          {pour.token > 0 && (
+            <path
+              key={pour.token}
+              className={cn(
+                totalParts === 1 ? "inklings-mix-first-drop" : "inklings-mix-drop-pour",
+              )}
+              d={dropPath}
+              fill={dropCss}
+            />
+          )}
+        </svg>
       </div>
       {totalParts > 0 ? (
-        <p className="text-[11px] italic leading-snug text-muted-foreground">{phrase}</p>
+        <div className="space-y-1">
+          <div className="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">
+            Mix recipe
+          </div>
+          <p className="max-h-16 overflow-y-auto text-[11px] leading-relaxed text-muted-foreground">
+            {parts.map((part) => (
+              <span
+                key={part.phrase}
+                title={`${part.count} ${part.count === 1 ? "part" : "parts"} ${part.phrase}`}
+                className="mr-1.5 inline-block whitespace-nowrap"
+              >
+                <span className="font-semibold tabular-nums text-ink-deep">{part.count}x</span>{" "}
+                {part.phrase}
+                {part !== parts[parts.length - 1] ? "," : ""}
+              </span>
+            ))}
+          </p>
+        </div>
       ) : (
         <p className="text-[11px] italic leading-snug text-muted-foreground">
-          Tap colours above — each one falls a part into the beaker. Right-click a colour to take a
-          part back.
+          Tap the colours above to mix the hue — each one falls a part into the beaker.
         </p>
       )}
-      <div className="flex gap-1.5">
-        <Button size="sm" variant="outline" onClick={onAccept} disabled={!canPour}>
-          <Check className="size-4" /> Pour into a swatch
-        </Button>
-        <Button size="sm" variant="ghost" onClick={onCancel}>
+      <div className="flex justify-end gap-1.5">
+        <Button
+          size="sm"
+          variant={totalParts > 0 ? "secondary" : "outline"}
+          onClick={onCancel}
+          className="cursor-pointer"
+        >
           Cancel
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onAccept}
+          disabled={!canPour}
+          className={cn(canPour ? "cursor-pointer" : "cursor-not-allowed")}
+        >
+          <Check className="size-4" /> Add to palette
         </Button>
       </div>
     </div>

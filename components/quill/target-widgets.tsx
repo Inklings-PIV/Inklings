@@ -19,7 +19,10 @@ export function TargetWidgets({
   return (
     <div className="flex flex-col gap-2.5">
       {STYLE_WIDGETS.map((widget) => (
-        <div key={widget.key} className="flex flex-col gap-1">
+        <div
+          key={widget.key}
+          className="grid grid-cols-[3.65rem_minmax(0,1fr)] items-center gap-1.5"
+        >
           <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
             {widget.label}
           </span>
@@ -29,7 +32,7 @@ export function TargetWidgets({
             onValueChange={(value) => onChange(widget.key, value || null)}
             variant="outline"
             size="sm"
-            className="flex-wrap justify-start"
+            className="w-full flex-nowrap justify-start"
             aria-label={`${widget.label} facet`}
           >
             {widget.options.map((option) => (
@@ -37,7 +40,7 @@ export function TargetWidgets({
                 key={option.value}
                 value={option.value}
                 title={option.phrase}
-                className="h-7 px-2 text-xs"
+                className="h-7 min-w-0 flex-1 cursor-pointer px-1 text-xs"
               >
                 {option.label}
               </ToggleGroupItem>

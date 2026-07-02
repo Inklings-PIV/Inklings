@@ -169,17 +169,19 @@ export function DiffActions({
         <Button variant="outline" size="sm" onClick={onReject}>
           <X className="size-4" /> Keep original
         </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onApply}
-          disabled={resolvedCount === 0}
-          title={resolvedCount === 0 ? "Resolve at least one change first" : undefined}
-        >
-          Apply ({resolvedCount})
-        </Button>
+        {totalChanges > 1 && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onApply}
+            disabled={resolvedCount === 0}
+            title={resolvedCount === 0 ? "Resolve at least one change first" : undefined}
+          >
+            Apply ({resolvedCount})
+          </Button>
+        )}
         <Button size="sm" onClick={onAcceptAll}>
-          <Check className="size-4" /> Accept all
+          <Check className="size-4" /> {totalChanges === 1 ? "Accept change" : "Accept all"}
         </Button>
       </div>
     </div>
@@ -237,6 +239,7 @@ function HunkSpan({
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: mouse-only tooltip reveal; keyboard users interact via the buttons inside
     <span
+      data-diff-hunk="true"
       className={cn(
         "relative inline-block align-baseline transition-all duration-150",
         state !== "pending" && !isOpen && "opacity-60",

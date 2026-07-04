@@ -116,6 +116,9 @@ export default function QuillPage() {
   // Colour-drop splash overlay (null when idle). The page owns the two-step
   // timing; the overlay just paints whatever phase it's handed.
   const [splash, setSplash] = useState<SplashState | null>(null);
+  // The ink colour of the current rewrite, threaded into the diff so its
+  // highlights match the dropped/selected colour instead of the fixed blue.
+  const [rewriteTint, setRewriteTint] = useState<string | null>(null);
   // Fused rewrite controls: an optionally-selected mood colour folded into the
   // target, the brush size (sentence / passage / whole) for colour drops, and
   // whether a button-triggered rewrite plays the splash. Brush + animate persist.
@@ -212,15 +215,6 @@ export default function QuillPage() {
     return [colourPhrase, words].filter(Boolean).join("; ");
   }, [selectedColour, customSwatches, widgetSelection, target]);
 
-  // CSS for a swatch key (predefined pigment or a custom swatch id), for the
-  // splash colour. Falls back to neutral ink when nothing resolves.
-  const swatchCss = (key: string | null): string => {
-    if (!key) return NEUTRAL_INK_CSS;
-    const c = colourDropByKey(key);
-    if (c) return colourCssOf(c);
-    const w = customSwatches.find((w) => w.id === key);
-    return w ? capturedHueCss(w) : NEUTRAL_INK_CSS;
-  };
   // Live writing stats (F1) — cheap, derived from the draft's plain text.
   const stats = useMemo(
     () => computeWritingStats(draft.replace(/<[^>]+>/g, " ").replace(/&nbsp;/g, " ")),
@@ -563,6 +557,7 @@ export default function QuillPage() {
     tooShort: string;
   }) => {
     if (splash) return; // a splash is mid-flight — ignore until it clears
+    setRewriteTint(opts.colourCss);
     setCommittedSelection(opts.span);
     setShowNudgeReady(false);
     setRewriteError(null);
@@ -613,12 +608,17 @@ export default function QuillPage() {
       animateOnRewrite && sel
         ? (editorRef.current?.splashPointsFor(sel.from, sel.to) ?? null)
         : null;
+    // Tint the diff with the prose's own current hue — a words/button nudge
+    // reworks "your ink", so it takes the draft's colour, not a leftover swatch.
+    const readoutCss = readout
+      ? hueFromHSL(readout.hue, readout.saturation, readout.lightness).css
+      : null;
     runRewrite({
       text: sel?.text ?? draft,
       span: sel,
       target: composedTarget,
       coords,
-      colourCss: swatchCss(selectedColour),
+      colourCss: readoutCss ?? NEUTRAL_INK_CSS,
       tooShort: "Write at least 8 words and enter a target before asking for a rewrite.",
     });
   };
@@ -806,6 +806,9 @@ export default function QuillPage() {
                     <div
                       ref={diffScrollRef}
                       className="mt-4 max-h-[min(430px,calc(100vh-31rem))] min-h-[260px] w-full overflow-y-auto overscroll-contain px-3 pt-8 pb-8 font-serif text-lg leading-relaxed text-ink-deep"
+                      // Recolour the diff highlights to this rewrite's ink; every
+                      // *-ink-bleed class inside resolves through this override.
+                      style={rewriteTint ? { ["--ink-bleed" as string]: rewriteTint } : undefined}
                     >
                       {blockBefore.map((para) => (
                         <p key={para} className="my-3 first:mt-0 text-ink-deep/40 select-none">

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { GITHUB_URL, GithubIcon } from "@/components/site-nav";
+import { ReplayTourButton } from "@/components/tour/starting-guide";
 
 // Minimal one-line footer for the tab surfaces. Sits below the page content;
 // on full-viewport pages like /inkwell the canvas fills the screen first so
@@ -11,6 +12,7 @@ export function TabFooter() {
       <div className="mx-auto flex max-w-[1400px] flex-wrap items-center justify-between gap-x-4 gap-y-1 px-4 py-3 text-[11px] text-muted-foreground sm:px-6">
         <span>© {new Date().getFullYear()} Inklings</span>
         <nav className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          <ReplayTourButton className="hover:text-ink-deep" />
           <Link href="/" className="hover:text-ink-deep">
             Home
           </Link>

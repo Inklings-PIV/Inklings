@@ -179,7 +179,7 @@ export function InkwellView({
             </span>
             <LayoutLegend layout={layout} />
           </div>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <div data-tour="inkwell-controls" className="flex flex-wrap items-center gap-x-3 gap-y-2">
             <div className="flex items-center gap-1.5">
               <span className="hidden text-[10px] uppercase tracking-wider text-muted-foreground sm:inline">
                 layout

@@ -715,27 +715,30 @@ export default function QuillPage() {
     <div className="mx-auto w-full max-w-[118rem] px-4 py-6 sm:px-6 sm:py-8">
       <div className="grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)_320px] xl:items-start">
         <aside className="order-2 flex flex-col gap-3 xl:order-1 xl:pt-[4.75rem]">
-          <HueReadout
-            open={leftPanel === "hue"}
-            onToggleOpen={() => setLeftPanel((panel) => (panel === "hue" ? null : "hue"))}
-            targetActive={targetActive}
-            hasText={hasDraftText}
-            wordCount={countWords(draft)}
-            readout={hasDraftText ? readout : null}
-            isPending={isPending}
-            explain={explain}
-            onToggleExplain={() => setExplain((v) => !v)}
-            band={band}
-            showBand={bandVisible}
-            bandPending={bandPending}
-            onBandHover={(index, tint) => setHighlight(index == null ? null : { index, tint })}
-            onBandActivate={(index) => editorRef.current?.focusBlock(index)}
-            showRail={showRail}
-            onToggleRail={() => setShowRail((v) => !v)}
-          />
-          {leftPanel === "hue" && explain && (
-            <HueExplainer segments={explanation} tint={readout} isPending={explainPending} />
-          )}
+          {/* Tour anchor wraps the readout and its explainer as one spotlight. */}
+          <div data-tour="quill-hue" className="flex flex-col gap-3">
+            <HueReadout
+              open={leftPanel === "hue"}
+              onToggleOpen={() => setLeftPanel((panel) => (panel === "hue" ? null : "hue"))}
+              targetActive={targetActive}
+              hasText={hasDraftText}
+              wordCount={countWords(draft)}
+              readout={hasDraftText ? readout : null}
+              isPending={isPending}
+              explain={explain}
+              onToggleExplain={() => setExplain((v) => !v)}
+              band={band}
+              showBand={bandVisible}
+              bandPending={bandPending}
+              onBandHover={(index, tint) => setHighlight(index == null ? null : { index, tint })}
+              onBandActivate={(index) => editorRef.current?.focusBlock(index)}
+              showRail={showRail}
+              onToggleRail={() => setShowRail((v) => !v)}
+            />
+            {leftPanel === "hue" && explain && (
+              <HueExplainer segments={explanation} tint={readout} isPending={explainPending} />
+            )}
+          </div>
           <StyleFingerprint
             open={leftPanel === "fingerprint"}
             onToggleOpen={() =>
@@ -766,7 +769,10 @@ export default function QuillPage() {
           </header>
 
           <div className="flex items-stretch gap-3">
-            <Card className="relative min-w-0 flex-1 overflow-hidden bg-card/60">
+            <Card
+              data-tour="quill-editor"
+              className="relative min-w-0 flex-1 overflow-hidden bg-card/60"
+            >
               <div
                 aria-hidden="true"
                 className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-transparent via-ink-bleed to-transparent opacity-60"
@@ -879,34 +885,38 @@ export default function QuillPage() {
               onDelete={deleteVersion}
             />
           )}
-          <RewritePanel
-            openPanel={rightPanel === "colour" || rightPanel === "words" ? rightPanel : null}
-            onOpenPanelChange={(panel) => setRightPanel(panel)}
-            onToggleColour={toggleColour}
-            customSwatches={customSwatches}
-            onAddHue={addSwatch}
-            onReplaceHue={replaceSwatch}
-            onRemoveSwatch={removeSwatch}
-            onCaptureText={captureHueFromText}
-            brushSize={brushSize}
-            onBrushChange={changeBrushSize}
-            selection={widgetSelection}
-            onWidgetChange={(key, value) =>
-              setWidgetSelection((prev) => ({ ...prev, [key]: value }))
-            }
-            target={target}
-            onTargetChange={setTarget}
-            composedTarget={composedTarget}
-            intensity={intensity}
-            onIntensityChange={setIntensity}
-            wordCount={countWords(draft)}
-            onRequest={requestRewrite}
-            isPending={isRewriting}
-            hasRewrite={rewrite !== null}
-            selectionText={liveSelection?.text ?? null}
-            onClearSelection={() => setLiveSelection(null)}
-            error={rewriteError}
-          />
+          {/* Tour anchor: RewritePanel renders sibling cards, so the wrapper
+              keeps the aside's stacking gap intact. */}
+          <div data-tour="quill-target" className="flex flex-col gap-3">
+            <RewritePanel
+              openPanel={rightPanel === "colour" || rightPanel === "words" ? rightPanel : null}
+              onOpenPanelChange={(panel) => setRightPanel(panel)}
+              onToggleColour={toggleColour}
+              customSwatches={customSwatches}
+              onAddHue={addSwatch}
+              onReplaceHue={replaceSwatch}
+              onRemoveSwatch={removeSwatch}
+              onCaptureText={captureHueFromText}
+              brushSize={brushSize}
+              onBrushChange={changeBrushSize}
+              selection={widgetSelection}
+              onWidgetChange={(key, value) =>
+                setWidgetSelection((prev) => ({ ...prev, [key]: value }))
+              }
+              target={target}
+              onTargetChange={setTarget}
+              composedTarget={composedTarget}
+              intensity={intensity}
+              onIntensityChange={setIntensity}
+              wordCount={countWords(draft)}
+              onRequest={requestRewrite}
+              isPending={isRewriting}
+              hasRewrite={rewrite !== null}
+              selectionText={liveSelection?.text ?? null}
+              onClearSelection={() => setLiveSelection(null)}
+              error={rewriteError}
+            />
+          </div>
         </aside>
       </div>
     </div>

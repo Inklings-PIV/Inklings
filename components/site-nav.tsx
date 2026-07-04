@@ -47,7 +47,12 @@ export function SiteNav() {
           <ul className="hidden items-center gap-1 md:flex">
             {TABS.map((t) => (
               <li key={t.href}>
-                <TabLink href={t.href} label={t.label} active={isActive(pathname, t.href)} />
+                <TabLink
+                  href={t.href}
+                  label={t.label}
+                  active={isActive(pathname, t.href)}
+                  tourId={`tab-${t.href.slice(1)}`}
+                />
               </li>
             ))}
           </ul>
@@ -120,11 +125,22 @@ function Brand() {
   );
 }
 
-function TabLink({ href, label, active }: { href: string; label: string; active: boolean }) {
+function TabLink({
+  href,
+  label,
+  active,
+  tourId,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+  tourId?: string;
+}) {
   return (
     <Link
       href={href}
       aria-current={active ? "page" : undefined}
+      data-tour={tourId}
       className={cn(
         "relative rounded-md px-3 py-1.5 text-sm transition-colors",
         active

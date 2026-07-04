@@ -93,6 +93,7 @@ export function CanvasShell({
       <div className="flex flex-1 overflow-hidden">
         <section
           aria-label="The Inkwell — pan and zoom the canvas of blots"
+          data-tour="inkwell-canvas"
           className="relative flex-1"
         >
           <div

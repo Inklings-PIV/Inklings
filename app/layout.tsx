@@ -3,6 +3,7 @@ import { EB_Garamond, Fraunces } from "next/font/google";
 import type { ReactNode } from "react";
 import { Providers } from "@/components/providers";
 import { SiteNav } from "@/components/site-nav";
+import { StartingGuide } from "@/components/tour/starting-guide";
 import "./globals.css";
 
 // Body / serif: EB Garamond — old-style, narrow, reads like a printed page.
@@ -116,6 +117,9 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
           <main id="main" className="flex flex-1 flex-col">
             {children}
           </main>
+          {/* First-visit guided tour — the mascot walks new visitors through
+              the surfaces. Renders nothing until it opens. */}
+          <StartingGuide />
         </Providers>
       </body>
     </html>

@@ -52,6 +52,7 @@ import {
   deriveDraftStylometry,
   deriveParagraphHues,
   deriveTextColour,
+  describeMix,
   explainHue,
   type HueSegment,
   loadCloudDraft,
@@ -897,6 +898,7 @@ export default function QuillPage() {
               onReplaceHue={replaceSwatch}
               onRemoveSwatch={removeSwatch}
               onCaptureText={captureHueFromText}
+              onDescribeMix={describeMix}
               brushSize={brushSize}
               onBrushChange={changeBrushSize}
               selection={widgetSelection}

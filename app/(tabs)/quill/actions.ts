@@ -90,6 +90,29 @@ export async function deriveTargetColour(target: string): Promise<TextColour | n
   return object;
 }
 
+const DESCRIBE_MIX_PROMPT = `You are a synaesthetic critic. Given a colour and the moods it was mixed from, name its combined *feel* in a 4–8 word phrase like "warm, melancholy, restrained". No periods, no sentences — just the feel.`;
+
+/**
+ * The inverse of {@link deriveTextColour}: given a mixed HSL and the moods that
+ * went into it, returns a single feel-phrase in the same voice as the text
+ * readout. Powers the beaker's live description (#3) — the client debounces and
+ * caches by recipe, so it fires at most once per distinct recipe. Falls back to
+ * the mechanical recipe string on the client if this returns null.
+ */
+export async function describeMix(
+  hsl: { hue: number; saturation: number; lightness: number },
+  recipe: string,
+): Promise<string | null> {
+  const { object } = await generateObject({
+    model: anthropic("claude-sonnet-4-6"),
+    schema: z.object({ phrase: z.string().min(3).max(120) }),
+    system: DESCRIBE_MIX_PROMPT,
+    prompt: `Colour: hsl(${Math.round(hsl.hue)}, ${Math.round(hsl.saturation)}%, ${Math.round(hsl.lightness)}%). Mixed from: ${recipe}.`,
+    maxRetries: 2,
+  });
+  return object.phrase;
+}
+
 const EXPLAIN_SYSTEM_PROMPT = `You earlier mapped this prose to a single colour. Now explain that colour: pick the words and short phrases that MOST drive it — the ones that, if removed or changed, would shift the hue.
 
 For each, return:

@@ -11,7 +11,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   ALL_PIGMENTS,
   blendHues,
@@ -67,6 +67,7 @@ export function RewritePanel({
   onReplaceHue,
   onRemoveSwatch,
   onCaptureText,
+  onDescribeMix,
   brushSize,
   onBrushChange,
   selection,
@@ -92,6 +93,10 @@ export function RewritePanel({
   onReplaceHue: (id: string, hue: CapturedHue) => void;
   onRemoveSwatch: (id: string) => void;
   onCaptureText: (text: string, targetId?: string) => void;
+  onDescribeMix: (
+    hsl: { hue: number; saturation: number; lightness: number },
+    recipe: string,
+  ) => Promise<string | null>;
   brushSize: number;
   onBrushChange: (n: number) => void;
   selection: WidgetSelection;
@@ -118,6 +123,13 @@ export function RewritePanel({
   const [mixOpen, setMixOpen] = useState(false);
   const [recipe, setRecipe] = useState<Record<string, number>>({});
   const [pour, setPour] = useState<{ token: number; css: string }>({ token: 0, css: "" });
+
+  // Claude's feel-phrase for the running blend (#3). The mechanical recipe shows
+  // instantly; this swaps in ~800ms after the last tap. Cached by recipe string
+  // so re-landing on a recipe (or toggling a part back) never re-calls.
+  const [mixDesc, setMixDesc] = useState<string | null>(null);
+  const [descPending, setDescPending] = useState(false);
+  const descCache = useRef<Map<string, string>>(new Map());
 
   // Every source you can pour a part of: the predefined pigments + your own
   // swatches. Keyed uniformly so the recipe and blend treat them the same.
@@ -163,13 +175,55 @@ export function RewritePanel({
   const totalParts = mixEntries.reduce((n, s) => n + (recipe[s.key] ?? 0), 0);
   const blendCss = blend ? hueFromHSL(blend.hue, blend.saturation, blend.lightness).css : undefined;
 
+  // Debounced feel-phrase for the running blend, cached by recipe string. Same
+  // latest-wins pattern as the page's hue readout: a stale in-flight call is
+  // dropped by the `cancelled` flag. Recipe text (`mixWords`) is the instant
+  // skeleton and the fallback, so `mixDesc` only ever upgrades what's shown.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: blend is a fresh object each render but a pure function of the recipe that produces mixWords — keying on mixWords covers it; adding blend would refire every render.
+  useEffect(() => {
+    if (!mixOpen || !blend || totalParts === 0) {
+      setMixDesc(null);
+      setDescPending(false);
+      return;
+    }
+    const cached = descCache.current.get(mixWords);
+    if (cached !== undefined) {
+      setMixDesc(cached);
+      setDescPending(false);
+      return;
+    }
+    let cancelled = false;
+    setDescPending(true);
+    const handle = setTimeout(async () => {
+      try {
+        const phrase = await onDescribeMix(blend, mixWords);
+        if (cancelled) return;
+        if (phrase) {
+          descCache.current.set(mixWords, phrase);
+          setMixDesc(phrase);
+        } else {
+          setMixDesc(null); // fall back to the recipe skeleton
+        }
+      } catch {
+        if (!cancelled) setMixDesc(null);
+      } finally {
+        if (!cancelled) setDescPending(false);
+      }
+    }, 800);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
+  }, [mixOpen, mixWords, totalParts, onDescribeMix]);
+
   const startMix = () => setMixOpen(true);
   const closeMix = () => {
     setRecipe({});
+    setMixDesc(null);
     setMixOpen(false);
   };
   const acceptMix = () => {
-    if (blend) onAddHue({ hsl: blend, phrase: mixWords });
+    if (blend) onAddHue({ hsl: blend, phrase: mixDesc ?? mixWords });
     closeMix();
   };
   const onTap = (key: string) => (mixOpen ? addPart(key) : onToggleColour(key));
@@ -213,6 +267,8 @@ export function RewritePanel({
                   fillCss={blendCss}
                   totalParts={totalParts}
                   parts={mixEntries.map((s) => ({ phrase: s.phrase, count: recipe[s.key] ?? 0 }))}
+                  description={mixDesc}
+                  descPending={descPending}
                   pour={pour}
                   canPour={!!blend}
                   onAccept={acceptMix}
@@ -659,6 +715,8 @@ function Beaker({
   fillCss,
   totalParts,
   parts,
+  description,
+  descPending,
   pour,
   canPour,
   onAccept,
@@ -667,6 +725,8 @@ function Beaker({
   fillCss: string | undefined;
   totalParts: number;
   parts: { phrase: string; count: number }[];
+  description: string | null;
+  descPending: boolean;
   pour: { token: number; css: string };
   canPour: boolean;
   onAccept: () => void;
@@ -754,6 +814,16 @@ function Beaker({
           )}
         </svg>
       </div>
+      {totalParts > 0 && (description || descPending) && (
+        <p
+          className={cn(
+            "text-center font-serif text-sm italic leading-snug text-ink-deep transition-opacity",
+            descPending && !description && "opacity-50",
+          )}
+        >
+          {description ?? "reading the mix…"}
+        </p>
+      )}
       {totalParts > 0 ? (
         <div className="space-y-1">
           <div className="text-[10px] font-medium tracking-wider text-muted-foreground uppercase">

@@ -90,6 +90,7 @@ export function SourceHues({
   llm,
   crowd,
   blended,
+  showCrowd = true,
 }: {
   bookId: string;
   /** Real HSL row when the algorithmic deriver has run; else placeholder. */
@@ -100,6 +101,8 @@ export function SourceHues({
   crowd?: HSLOverride | null;
   /** Real weighted blend when at least one source has been derived. */
   blended?: HSLOverride | null;
+  /** The Inkwell hides Crowd (#26 not surfaced there); Blots keeps it. */
+  showCrowd?: boolean;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
@@ -109,15 +112,17 @@ export function SourceHues({
         title={titleFor("Algo", algorithmic)}
       />
       <HueChip label="LLM" color={hueFor(bookId, "llm", llm).css} title={titleFor("LLM", llm)} />
-      <HueChip
-        label="Crowd"
-        color={hueFor(bookId, "crowd", crowd).css}
-        title={
-          crowd?.justification
-            ? `Crowd · ${crowd.justification}`
-            : "Crowd · not enough guesses yet — play /game"
-        }
-      />
+      {showCrowd && (
+        <HueChip
+          label="Crowd"
+          color={hueFor(bookId, "crowd", crowd).css}
+          title={
+            crowd?.justification
+              ? `Crowd · ${crowd.justification}`
+              : "Crowd · not enough guesses yet — play /game"
+          }
+        />
+      )}
       <HueChip
         label="Blend"
         color={hueFor(bookId, "blended", blended).css}

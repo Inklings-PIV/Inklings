@@ -99,8 +99,8 @@ export function BlotDetail({ blot, neighbours, source, onClose, onSelectNeighbou
             bookId={blot.bookId}
             algorithmic={blot.algorithmic}
             llm={blot.llm}
-            crowd={blot.crowd}
             blended={blot.blended}
+            showCrowd={false}
           />
         </div>
         <p className="mt-2 text-xs italic leading-snug text-muted-foreground">

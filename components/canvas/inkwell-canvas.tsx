@@ -48,7 +48,7 @@ function smoothstep(edge0: number, edge1: number, x: number) {
 //   Close (zoom ≳ 3) — labels fade in next to each blot
 function zoomDriven(zoom: number) {
   const farness = 1 - smoothstep(-1.5, -0.3, zoom);
-  const closeness = smoothstep(1.5, 3.0, zoom);
+  const closeness = smoothstep(2.5, 4.0, zoom);
   return {
     blotSize: 52 + farness * 28, // 52 → 80 px
     blotOpacity: 1 - farness * 0.45, // 1 → 0.55
@@ -87,29 +87,29 @@ const GRADIENTS: readonly GradientProfile[] = [
   {
     stops: [
       [0, 1],
-      [45, 1],
-      [75, 0.55],
+      [72, 1],
+      [90, 0.55],
       [100, 0],
     ],
-    blur: 2.5,
+    blur: 1,
   },
   {
     stops: [
       [0, 1],
-      [30, 0.85],
-      [65, 0.4],
+      [64, 0.95],
+      [88, 0.5],
       [100, 0],
     ],
-    blur: 3.5,
+    blur: 1.5,
   },
   {
     stops: [
-      [0, 0.9],
-      [15, 0.65],
-      [55, 0.3],
+      [0, 1],
+      [54, 0.9],
+      [80, 0.42],
       [100, 0],
     ],
-    blur: 5,
+    blur: 2,
   },
 ];
 
@@ -156,7 +156,7 @@ const FALLBACK_ICON: DeckIcon = buildIcon(BLOT_SHAPES[0] ?? "M0,0 Z", 0);
 
 // Diffuse gradients carry less visual mass; nudge their size up so a
 // contested blot reads softer, not smaller.
-const SIZE_BY_SOFTNESS = [1, 1.07, 1.15] as const;
+const SIZE_BY_SOFTNESS = [1, 1.04, 1.08] as const;
 
 // ---------------------------------------------------------------------------
 

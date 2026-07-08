@@ -25,7 +25,7 @@ const LAYOUTS = [
   },
   {
     name: "By Hue",
-    body: "Books with similar colours cluster together. The hue vectors (algorithmic + LLM + crowd, blended) are projected to 2D with UMAP — so two books with very different styles can sit next to each other if they feel the same colour.",
+    body: "Books with similar colours cluster together. The hue vectors (algorithmic + LLM, blended) are projected to 2D with UMAP — so two books with very different styles can sit next to each other if they feel the same colour.",
   },
 ];
 
@@ -39,12 +39,8 @@ const SOURCES = [
     body: "Claude reads excerpts plus the algorithmic prior and judges the book's hue with a written justification. Slower and costs tokens, but captures a perceptual layer the algorithm misses.",
   },
   {
-    name: "Crowd",
-    body: "The trimmed mean of hues that scribes assign in the Blotting Game. Outliers filtered, recent votes weighted. Reflects the colour readers actually feel on the page.",
-  },
-  {
     name: "Blended",
-    body: "A weighted combination of algorithmic + LLM + crowd, recomputed nightly. The default hue shown when no source is selected explicitly.",
+    body: "A weighted combination of algorithmic + LLM, recomputed nightly. The default hue shown when no source is selected explicitly.",
   },
 ];
 

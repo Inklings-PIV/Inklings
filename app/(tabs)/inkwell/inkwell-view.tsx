@@ -209,7 +209,6 @@ export function InkwellView({
               >
                 <ToggleGroupItem value="algorithmic">Algo</ToggleGroupItem>
                 <ToggleGroupItem value="llm">LLM</ToggleGroupItem>
-                <ToggleGroupItem value="crowd">Crowd</ToggleGroupItem>
                 <ToggleGroupItem value="blended">Blend</ToggleGroupItem>
               </ToggleGroup>
             </div>
@@ -228,7 +227,9 @@ export function InkwellView({
               classical: selectedBlot.classical,
               algorithmic: selectedBlot.algorithmic,
               llm: selectedBlot.llm,
-              crowd: selectedBlot.crowd,
+              // Crowd is hidden in the Inkwell — null drops it from the Hues
+              // chips and Agreement bar without touching the shared widgets.
+              crowd: null,
               blended: selectedBlot.blended,
             }}
             neighbours={neighbours}

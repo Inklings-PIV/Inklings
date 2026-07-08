@@ -48,7 +48,7 @@ function smoothstep(edge0: number, edge1: number, x: number) {
 //   Close (zoom ≳ 3) — labels fade in next to each blot
 function zoomDriven(zoom: number) {
   const farness = 1 - smoothstep(-1.5, -0.3, zoom);
-  const closeness = smoothstep(2.5, 4.0, zoom);
+  const closeness = smoothstep(3.5, 4.5, zoom);
   return {
     blotSize: 52 + farness * 28, // 52 → 80 px
     blotOpacity: 1 - farness * 0.45, // 1 → 0.55

@@ -1,0 +1,33 @@
+version: 2
+updates:
+  # Dependabot uses the npm ecosystem for pnpm manifests and lockfiles.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    # Node types must follow the deployed Node 24 runtime. Revisit with its next major upgrade.
+    ignore:
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
+    groups:
+      ai-sdk:
+        patterns: ["ai", "@ai-sdk/*"]
+      react:
+        patterns: ["next", "react", "react-dom", "@types/react", "@types/react-dom"]
+      tiptap:
+        patterns: ["@tiptap/*"]
+      tailwind:
+        patterns: ["tailwindcss", "@tailwindcss/*"]
+      minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]

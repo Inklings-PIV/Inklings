@@ -49,8 +49,8 @@ The Quill analyses a writer's draft against the same ideas without adding it to 
 
 ### Prerequisites
 
-- Node.js 24.x
-- pnpm 11 (the repository pins pnpm 11.0.9)
+- Node.js 24.15+ (24.x LTS)
+- pnpm 12 (the repository pins pnpm 12.14.0)
 - A Postgres database with the `vector` extension, such as Neon
 - OpenAI and Anthropic API keys
 
@@ -191,7 +191,7 @@ Quill drafts stay in the browser's local storage by default. Cloud saving is opt
 
 ## Tech stack
 
-- Next.js 16, React 19, TypeScript 6, and Node.js 24
+- Next.js 16, React 19, TypeScript 7, and Node.js 24
 - Tailwind CSS 4, Radix UI primitives, and Motion
 - deck.gl 9 for the Inkwell and Tiptap 3 for the Quill
 - winkNLP and UMAP.js for stylometry and projection

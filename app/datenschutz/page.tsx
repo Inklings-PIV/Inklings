@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { SiteFooter } from "@/components/site-footer";
+import { OPERATOR } from "@/lib/operator";
 
 export const metadata: Metadata = {
   title: "Datenschutzerklärung",
@@ -9,10 +10,9 @@ export const metadata: Metadata = {
   robots: { index: true, follow: false },
 };
 
-// Operator contact lives in /impressum; this file factually describes data flow
-// based on what the codebase actually does today. If you wire a new third-party
-// processor (Sentry, PostHog, Resend, Stripe, …), add it here in the same shape.
-const CONTACT_EMAIL = "inklings@huibers.io";
+// This file factually describes data flow based on what the codebase actually
+// does today. If you wire a new third-party processor (Sentry, PostHog, Resend,
+// Stripe, …), add it here in the same shape.
 
 const PROCESSORS: Array<{
   name: string;
@@ -94,17 +94,24 @@ function DatenschutzBody() {
       </p>
 
       <Section title="1. Verantwortlicher">
+        <p>Verantwortlich für die Datenverarbeitung auf dieser Website (Art. 4 Nr. 7 DSGVO) ist:</p>
+        <div>
+          <p>{OPERATOR.name}</p>
+          {OPERATOR.addressLines.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
+        </div>
         <p>
-          Verantwortlich für die Datenverarbeitung auf dieser Website ist die im{" "}
+          Weitere Angaben finden Sie im{" "}
           <Link href="/impressum" className="underline">
             Impressum
-          </Link>{" "}
-          genannte Person.
+          </Link>
+          .
         </p>
         <p>
           Kontakt für Datenschutzanfragen:{" "}
-          <a className="underline" href={`mailto:${CONTACT_EMAIL}`}>
-            {CONTACT_EMAIL}
+          <a className="underline" href={`mailto:${OPERATOR.email}`}>
+            {OPERATOR.email}
           </a>
         </p>
       </Section>
@@ -125,7 +132,7 @@ function DatenschutzBody() {
             <code className="rounded bg-muted px-1">inklings_scribe</code> gesetzt. Es enthält eine
             zufällige UUID und keinerlei personenbezogene Daten. Es dient dazu, Spiel-Stimmen und
             Sitzungen anonym zuzuordnen. Da es technisch notwendig für die Funktion der Anwendung
-            ist, ist keine gesonderte Einwilligung erforderlich (§ 25 Abs. 2 Nr. 2 TTDSG).
+            ist, ist keine gesonderte Einwilligung erforderlich (§ 25 Abs. 2 Nr. 2 TDDDG).
           </li>
           <li>
             <strong>Spiel-Stimmen (Blotting Game):</strong> Wenn Sie im Spiel eine Farbe wählen,
@@ -197,8 +204,8 @@ function DatenschutzBody() {
         </p>
         <p>
           Für sonstige Anfragen wenden Sie sich an{" "}
-          <a className="underline" href={`mailto:${CONTACT_EMAIL}`}>
-            {CONTACT_EMAIL}
+          <a className="underline" href={`mailto:${OPERATOR.email}`}>
+            {OPERATOR.email}
           </a>
           .
         </p>
@@ -206,9 +213,10 @@ function DatenschutzBody() {
 
       <Section title="6. Beschwerderecht">
         <p>
-          Sie haben das Recht, sich bei einer Datenschutz-Aufsichtsbehörde über die Verarbeitung
-          Ihrer personenbezogenen Daten zu beschweren. Zuständig ist in der Regel die
-          Aufsichtsbehörde Ihres üblichen Aufenthaltsorts.
+          Sie haben gemäß Art. 77 DSGVO das Recht, sich bei einer Datenschutz-Aufsichtsbehörde über
+          die Verarbeitung Ihrer personenbezogenen Daten zu beschweren, insbesondere in dem
+          Mitgliedstaat Ihres gewöhnlichen Aufenthaltsorts, Ihres Arbeitsplatzes oder des Orts des
+          mutmaßlichen Verstoßes.
         </p>
       </Section>
 

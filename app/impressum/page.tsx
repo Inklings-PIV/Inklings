@@ -1,19 +1,12 @@
 import type { Metadata } from "next";
 import { SiteFooter } from "@/components/site-footer";
+import { OPERATOR } from "@/lib/operator";
 
 export const metadata: Metadata = {
   title: "Impressum",
-  description: "Angaben gemäß § 5 TMG.",
+  description: "Angaben gemäß § 5 DDG.",
   robots: { index: true, follow: false },
 };
-
-// Legal Impressum per §5 TMG / Germany. The address is deliberately
-// PLZ + Ort only — the operator has chosen not to publish a full
-// street address. §5 TMG strictly requires street + number; that's
-// an accepted trade-off here.
-const PROJECT_LEAD_NAME = "Noel Huibers";
-const PROJECT_LEAD_ADDRESS_LINES = ["81737 München", "Deutschland"];
-const PROJECT_LEAD_EMAIL = "inklings@huibers.io";
 
 export default function ImpressumPage() {
   return (
@@ -28,26 +21,32 @@ function ImpressumBody() {
   return (
     <article className="mx-auto max-w-2xl px-4 py-10 sm:px-6 sm:py-14">
       <h1 className="font-display text-3xl tracking-tight text-ink-deep sm:text-4xl">Impressum</h1>
-      <p className="mt-2 text-sm text-muted-foreground">Angaben gemäß § 5 TMG.</p>
+      <p className="mt-2 text-sm text-muted-foreground">Angaben gemäß § 5 DDG.</p>
 
       <Section title="Anbieter">
-        <p>{PROJECT_LEAD_NAME}</p>
-        {PROJECT_LEAD_ADDRESS_LINES.map((line) => (
+        <p>{OPERATOR.name}</p>
+        {OPERATOR.addressLines.map((line) => (
           <p key={line}>{line}</p>
         ))}
       </Section>
 
       <Section title="Kontakt">
         <p>
+          Telefon:{" "}
+          <a className="underline" href={OPERATOR.phoneHref}>
+            {OPERATOR.phone}
+          </a>
+        </p>
+        <p>
           E-Mail:{" "}
-          <a className="underline" href={`mailto:${PROJECT_LEAD_EMAIL}`}>
-            {PROJECT_LEAD_EMAIL}
+          <a className="underline" href={`mailto:${OPERATOR.email}`}>
+            {OPERATOR.email}
           </a>
         </p>
       </Section>
 
-      <Section title="Verantwortlich für den Inhalt nach § 55 Abs. 2 RStV">
-        <p>{PROJECT_LEAD_NAME}</p>
+      <Section title="Inhaltlich verantwortlich nach § 18 Abs. 2 MStV">
+        <p>{OPERATOR.name}</p>
         <p>(Adresse wie oben.)</p>
       </Section>
 
